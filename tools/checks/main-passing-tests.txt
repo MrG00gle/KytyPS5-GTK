@@ -1,0 +1,74 @@
+# Main_Branch passing-test baseline (Requirement 5.4), read by tools/checks/check_regression.py.
+# Lines that start with '#' are comments. Every other line is one CTest test name that
+# CTest reported as passed at the Main_Branch reference.
+# Main_Branch SHA: c5016d9455fe52bdd090cef7d80beb15fad6a3a5
+# Compiler: clang version 22.1.8 (Fedora 22.1.8-4.fc44) (CMAKE_C_COMPILER=/usr/bin/clang, CMAKE_CXX_COMPILER=/usr/bin/clang++)
+# Linker: LLD 22.1.8 (compatible with GNU linkers) (-fuse-ld=lld in CMAKE_EXE_LINKER_FLAGS, CMAKE_SHARED_LINKER_FLAGS, CMAKE_MODULE_LINKER_FLAGS)
+# Build type: Release
+# Build: cmake version 4.3.0, generator Ninja, default project options, targets kyty_tests and kyty_emulator
+# Host: Fedora Linux 44 (Workstation Edition) x86_64; command: ctest --output-junit <file>
+# Host CPU: KVM guest, "QEMU Virtual CPU version 2.5+" (SSE4.2; no AVX, AVX2, BMI2, or SSE4a)
+# Host Vulkan: no GPU passthrough (QEMU std VGA 1234:1111); lavapipe is the only usable device
+# Host-specific failures: the 19 GPU tests and kernel_file_system need Vulkan features lavapipe lacks;
+#   virtual_memory_allocation exits 190 (instruction emulation fails in TestPackedReciprocalSquareRoot
+#   on this CPU model), so its later memory-subsystem cases never run on this host
+# Passed: 37 of 58 tests
+# Not passed at the Main_Branch reference (not part of the baseline):
+#   kernel_file_system (fail)
+#   shader_recompiler_compute (fail)
+#   shader_recompiler_float_min_max (fail)
+#   shader_recompiler_alignbyte (fail)
+#   graphics_pipeline_rasterization (fail)
+#   virtual_memory_allocation (fail)
+#   command_scheduler_timeline (fail)
+#   stream_buffer_ring (fail)
+#   gpu_command_lane (fail)
+#   pm4_context_state (fail)
+#   gpu_tiler (fail)
+#   texture_cache_layered_image (fail)
+#   host_image_allocation (fail)
+#   texture_cache_image_views (fail)
+#   texture_cache_storage_sampled (fail)
+#   compute_meta_clear_classification (fail)
+#   buffer_cache_dirty_gc (fail)
+#   color_render_target_1d (fail)
+#   texture_cache_image_overlap (fail)
+#   texture_cache_htile_clear (fail)
+#   buffer_cache_ranges (fail)
+archive_file
+audio_out2_port
+audio_out_timing
+avplayer_file
+bit_array
+ces
+controller_settings
+emulator_present_mode_cli
+emulator_present_mode_invalid
+emulator_user_name_cli
+emulator_user_name_too_long
+event_queue_lifetime
+graphics_draw_offsets
+guest_red_zone_patcher
+host_input
+http_uri_parse
+image_page_table
+image_transfer_layout
+ime_dialog
+lru_cache
+memory_tracker
+ngs2_sampler
+pad_haptics
+page_manager
+png_enc
+resource_materialization
+resource_tracking
+save_data_dialog
+save_data_memory
+scalar_provenance
+shader_cfg
+shader_recompiler_tessellation
+shader_vertex_metadata
+sync_on_address
+texture_cache_depth_readback
+trophy_system
+vdecsw

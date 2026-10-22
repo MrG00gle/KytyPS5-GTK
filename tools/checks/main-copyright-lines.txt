@@ -1,0 +1,15 @@
+# Main_Branch copyright and SPDX comment lines (Requirement 21.6).
+# Main_Branch SHA: c5016d9455fe52bdd090cef7d80beb15fad6a3a5
+# Scope: every Git-tracked file under src/ at that commit; each comment line that contains
+# SPDX-FileCopyrightText, SPDX-License-Identifier, or Copyright.
+# Format: <path>:<line number at the Main_Branch SHA>:<exact line text>
+# The line text after the second ':' must stay unchanged; line numbers are informational.
+# Lines: 8
+src/common/alignment.h:1:// SPDX-FileCopyrightText: 2014 Jannik Vogel <email@jannikvogel.de>
+src/common/alignment.h:2:// SPDX-License-Identifier: CC0-1.0
+src/graphics/host_gpu/shaders/fault_buffer_process.comp:1:// SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
+src/graphics/host_gpu/shaders/fault_buffer_process.comp:2:// SPDX-License-Identifier: GPL-2.0-or-later
+src/loader/guestInstructionPatcher.cpp:1:// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+src/loader/guestInstructionPatcher.cpp:2:// SPDX-License-Identifier: GPL-2.0-or-later
+src/loader/guestInstructionPatcher.h:1:// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+src/loader/guestInstructionPatcher.h:2:// SPDX-License-Identifier: GPL-2.0-or-later
