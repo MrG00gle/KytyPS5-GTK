@@ -7,3 +7,5 @@ _Build/
 cmake-build-debug/
 _PipelineCache/
 CMakeUserPresets.json
+.kiro/
+.agents/
