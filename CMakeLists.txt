@@ -172,6 +172,14 @@ config_compiler_and_linker()
 add_subdirectory("${KYTY_THIRD_PARTY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/3rdparty")
 add_subdirectory("${KYTY_SOURCE_DIR}/common" "${CMAKE_CURRENT_BINARY_DIR}/common")
 
+# The Emulator option parser, shared by kyty_emulator and the tests.
+add_library(kyty_emulator_options STATIC
+	"${KYTY_SOURCE_DIR}/emulatorOptions.cpp"
+	"${KYTY_SOURCE_DIR}/emulatorOptions.h"
+)
+target_include_directories(kyty_emulator_options PUBLIC ${KYTY_SOURCE_DIR})
+target_link_libraries(kyty_emulator_options PUBLIC common)
+
 file(GLOB kyty_emulator_src CONFIGURE_DEPENDS
 	"${KYTY_SOURCE_DIR}/libs/*.cpp"
 	"${KYTY_SOURCE_DIR}/libs/*.h"
@@ -715,7 +723,7 @@ add_custom_target(kyty_touch_cursors
 add_dependencies(kyty_emulator kyty_touch_cursors)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/cursors" DESTINATION assets)
 
-target_link_libraries(kyty_emulator ${kyty_emulator_link_libraries})
+target_link_libraries(kyty_emulator kyty_emulator_options ${kyty_emulator_link_libraries})
 if (CLANG)
 	target_link_libraries(kyty_emulator pthread)
 endif()
