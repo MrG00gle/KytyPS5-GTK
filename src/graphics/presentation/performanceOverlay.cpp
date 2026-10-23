@@ -730,12 +730,7 @@ float DrawPerformanceOverlay(const GraphicContext& graphics, vk::Extent2D extent
 		} else {
 			DrawCompact(shown);
 		}
-#if defined(__APPLE__)
-		ImGui::TextDisabled(details ? "Cmd+Shift+P compact   Cmd+P hide"
-		                            : "Cmd+Shift+P details   Cmd+P hide");
-#else
 		ImGui::TextDisabled(details ? "Shift+F2 compact   F2 hide" : "Shift+F2 details   F2 hide");
-#endif
 	}
 	const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
 	ImGui::End();

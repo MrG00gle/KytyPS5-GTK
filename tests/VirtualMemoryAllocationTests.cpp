@@ -31,14 +31,10 @@
 #include <utility>
 #include <vector>
 
-#if defined(__linux__) || KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+#if defined(__linux__)
 #include <csignal>
 #include <immintrin.h>
-#if defined(_MSC_VER)
-#include <intrin.h>
-#else
 #include <x86intrin.h>
-#endif
 #include <Zydis/Zydis.h>
 #include <xbyak/xbyak.h>
 #include <xbyak/xbyak_util.h>
@@ -52,21 +48,7 @@
 #include <unistd.h>
 #endif
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#ifdef DeleteFile
-#undef DeleteFile
-#endif
-#endif
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-namespace Libs::LibKernel::Memory {
-bool TestWindowsBackingViewModes();
-}
-#endif
 
 namespace Libs::Fiber {
 struct FiberObject;
@@ -195,120 +177,9 @@ void InitSubsystems() {
 	initialized = true;
 }
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-void* g_red_zone_fault_page = nullptr;
-
-LONG CALLBACK RedZoneFaultHandler(EXCEPTION_POINTERS* exception) {
-	if (exception == nullptr || exception->ExceptionRecord == nullptr ||
-	    exception->ContextRecord == nullptr ||
-	    exception->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION ||
-	    reinterpret_cast<void*>(exception->ExceptionRecord->ExceptionInformation[1]) !=
-	        g_red_zone_fault_page) {
-		return EXCEPTION_CONTINUE_SEARCH;
-	}
-
-	// Model the Windows exception stack footprint that prompted the static patch:
-	// data below the interrupted RSP is not part of the Windows ABI contract.
-	*reinterpret_cast<uint64_t*>(exception->ContextRecord->Rsp - 0x18) = 0;
-	DWORD old_protection = 0;
-	if (VirtualProtect(g_red_zone_fault_page, 0x1000, PAGE_READWRITE, &old_protection) == FALSE) {
-		return EXCEPTION_CONTINUE_SEARCH;
-	}
-	return EXCEPTION_CONTINUE_EXECUTION;
-}
-
-void TestWindowsGuestRedZoneStaticPatcher() {
-	const char* test = "WindowsGuestRedZoneStaticPatcher";
-	constexpr uint64_t SENTINEL = 0x1122334455667788ull;
-	constexpr uint64_t CODE_SIZE = 0x4000;
-	constexpr uint64_t TRAMPOLINE_SIZE = 0x4000;
-	const auto mapping = Libs::LibKernel::Memory::AllocateProgramMemory(
-	    0x0000000902000000ull, CODE_SIZE + TRAMPOLINE_SIZE,
-	    Common::VirtualMemory::Mode::ExecuteReadWrite, "red_zone_patcher_test");
-	Check(test, mapping != 0, "failed to allocate patch test code");
-
-	g_red_zone_fault_page = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
-	Check(test, g_red_zone_fault_page != nullptr, "failed to allocate fault page");
-	auto* handler = AddVectoredExceptionHandler(1, RedZoneFaultHandler);
-	Check(test, handler != nullptr, "failed to install test exception handler");
-
-	using GuestFunction = uint64_t(KYTY_SYSV_ABI*)(const uint64_t*);
-	const auto function = reinterpret_cast<GuestFunction>(mapping);
-	const std::array<uintptr_t, 1> function_starts = {static_cast<uintptr_t>(mapping)};
-	const auto run_fault = [&] {
-		DWORD old_protection = 0;
-		Check(test, VirtualProtect(g_red_zone_fault_page, 0x1000, PAGE_NOACCESS, &old_protection) != FALSE,
-		      "failed to reset fault page protection");
-		return function(static_cast<const uint64_t*>(g_red_zone_fault_page)) == 1;
-	};
-	bool reproduced = true;
-	bool covered = true;
-	bool preserved = true;
-	// The partial excursions discard opposite halves of [rsp-24, rsp-16). Repair
-	// only the retained half before moving RSP, leaving the discarded half live
-	// across the fault. The zero excursion retains the original fixed-stack case.
-	for (const auto [excursion, live]: {std::pair {0, true}, {0, false}, {8, true}, {20, true},
-	                                    {128, true}, {256, true}, {-108, true}, {-128, true},
-	                                    {-256, true}}) {
-		Xbyak::CodeGenerator code(CODE_SIZE, reinterpret_cast<void*>(mapping));
-		code.mov(code.rax, SENTINEL);
-		code.mov(code.qword[code.rsp - 24], code.rax);
-		code.mov(code.rax, code.ptr[code.rdi]); // Faultable three-byte instruction.
-		if (!live) {
-			code.mov(code.rax, SENTINEL);
-			code.mov(code.qword[code.rsp - 24], code.rax);
-		} else if (excursion < 0) {
-			code.mov(code.dword[code.rsp - 20], static_cast<uint32_t>(SENTINEL >> 32));
-		} else if (excursion > 0) {
-			code.mov(code.dword[code.rsp - 24], static_cast<uint32_t>(SENTINEL));
-		}
-		if (excursion != 0) {
-			code.lea(code.rsp, code.ptr[code.rsp - excursion]);
-			code.lea(code.rsp, code.ptr[code.rsp + excursion]);
-		}
-		code.mov(code.rax, code.qword[code.rsp - 24]);
-		code.mov(code.rcx, SENTINEL);
-		code.cmp(code.rax, code.rcx);
-		code.sete(code.al);
-		code.movzx(code.eax, code.al);
-		code.ret();
-		Check(test, Xbyak::GetError() == 0, "failed to generate red-zone patch fixture");
-		Check(test, Common::VirtualMemory::FlushInstructionCache(mapping, code.getSize()),
-		      "failed to flush generated test code");
-		reproduced &= run_fault() == !live;
-		Loader::RegisterGuestInstructionPatchModule(
-		    reinterpret_cast<void*>(mapping), CODE_SIZE, reinterpret_cast<void*>(mapping + CODE_SIZE),
-		    TRAMPOLINE_SIZE);
-		const auto result = Loader::PatchGuestInstructions(
-		    mapping, code.getSize(), function_starts, true, false);
-		const bool intact = run_fault();
-		const uint64_t expected_patches = live ? 1 : 0;
-		covered &= result.red_zone_function_count == 1 &&
-		           result.memory_instruction_count == expected_patches &&
-		           result.patched_memory_instruction_count == expected_patches &&
-		           result.unrelocatable_memory_instruction_count == 0;
-		preserved &= intact;
-		std::printf("[host]    red-zone excursion=%d live=%d patched=%llu preserved=%d\n", excursion, live,
-		            static_cast<unsigned long long>(result.patched_memory_instruction_count), intact);
-	}
-
-	Loader::UnregisterGuestInstructionPatchModule(reinterpret_cast<void*>(mapping));
-	RemoveVectoredExceptionHandler(handler);
-	VirtualFree(g_red_zone_fault_page, 0, MEM_RELEASE);
-	g_red_zone_fault_page = nullptr;
-	const bool freed = Libs::LibKernel::Memory::FreeGuestMemory(mapping, CODE_SIZE + TRAMPOLINE_SIZE);
-
-	Check(test, reproduced, "test harness did not reproduce red-zone corruption");
-	Check(test, covered, "static patcher did not cover the faultable instruction");
-	Check(test, preserved, "patched fault still corrupted the guest red zone");
-	Check(test, freed, "failed to free patch test code");
-	std::printf("[host]    %-48s ok\n", test);
-}
-#else
 void TestWindowsGuestRedZoneStaticPatcher() {
 	std::printf("[host]    %-48s skipped\n", "WindowsGuestRedZoneStaticPatcher");
 }
-#endif
 
 void RunTest(void (*test_func)()) {
 	if (g_failed_tests != 0) {
@@ -1814,14 +1685,6 @@ void TestPartialUnmapPreservesHostPermissions() {
 }
 #endif
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-void TestWindowsBackingViewPermissions() {
-	const char* test = "WindowsBackingViewPermissions";
-	Check(test, Libs::LibKernel::Memory::TestWindowsBackingViewModes(),
-	      "backing view permissions differ from the requested mode");
-	std::printf("[host]    %-48s ok\n", test);
-}
-#endif
 
 void TestDirectMappingNamesTypesAndValidation() {
 	using namespace Libs::LibKernel::Memory;
@@ -2305,13 +2168,6 @@ void TestDefaultDirectMapUsesSystemAddressRange() {
 	                                                            SceKernelPageSize, "system_direct"),
 	        "KernelMapNamedDirectMemory");
 	Check(test, address != nullptr, "direct mapping returned null");
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	constexpr uint64_t SystemManagedMin = 0x0000040000ull;
-	constexpr uint64_t SystemManagedMax = 0x07fffeffffull;
-	const auto         mapped           = reinterpret_cast<uint64_t>(address);
-	Check(test, mapped >= SystemManagedMin && mapped + SceKernelPageSize - 1 <= SystemManagedMax,
-	      "default direct mapping fell outside the system-managed host range");
-#endif
 
 	CheckOk(test,
 	        Libs::LibKernel::Memory::KernelMunmap(reinterpret_cast<uint64_t>(address),
@@ -2894,7 +2750,6 @@ void TestFixedReserveRangeAddRollbackKeepsPlaceholder() {
 
 void TestExtendedAndUserMappingsDoNotAlias() {
 	const char* test = "ExtendedAndUserMappingsDoNotAlias";
-	// macOS starts its ordinary guest range at 448 GiB.
 	constexpr uint64_t user_address = 0x7000000000ull;
 	const uint64_t addresses[] {
 	    user_address,
@@ -3574,7 +3429,7 @@ void TestModuleRelocationUsesWritableHostMapping() {
 	std::printf("[host]    %-48s ok\n", test);
 }
 
-#if defined(__linux__) || KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+#if defined(__linux__)
 volatile sig_atomic_t g_instruction_traps = 0;
 
 bool EmulateInstructionContext(void* context) {
@@ -3590,76 +3445,38 @@ bool EmulateInstructionContext(void* context) {
 	return true;
 }
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-LONG CALLBACK InstructionHandler(EXCEPTION_POINTERS* exception) {
-	if (exception->ExceptionRecord->ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION ||
-	    !EmulateInstructionContext(exception->ContextRecord)) {
-		return EXCEPTION_CONTINUE_SEARCH;
-	}
-	return EXCEPTION_CONTINUE_EXECUTION;
-}
-#else
 void InstructionHandler(int, siginfo_t*, void* context) {
 	if (!EmulateInstructionContext(context)) {
 		_exit(190);
 	}
 }
-#endif
 
 struct InstructionTestScope {
 	uint64_t mapping;
 	uint64_t size;
 	uint32_t mxcsr = _mm_getcsr();
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	void* handler = nullptr;
-#else
 	struct sigaction previous {};
 	bool             installed = false;
-#endif
 	~InstructionTestScope() {
 		_mm_setcsr(mxcsr);
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-		if (handler != nullptr) {
-			RemoveVectoredExceptionHandler(handler);
-		}
-#else
 		if (installed) {
 			sigaction(SIGILL, &previous, nullptr);
 		}
-#endif
 		Loader::UnregisterGuestInstructionPatchModule(reinterpret_cast<void*>(mapping));
 		Libs::LibKernel::Memory::FreeGuestMemory(mapping, size);
 	}
 
 	void InstallHandler(const char* test) {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-		handler = AddVectoredExceptionHandler(1, InstructionHandler);
-		Check(test, handler != nullptr, "failed to install instruction handler");
-#else
 		struct sigaction action {};
 		action.sa_sigaction = InstructionHandler;
 		action.sa_flags     = SA_SIGINFO;
 		sigemptyset(&action.sa_mask);
 		installed = sigaction(SIGILL, &action, &previous) == 0;
 		Check(test, installed, "failed to install instruction handler");
-#endif
 	}
 };
 
 struct SavedInstructionContext {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	CONTEXT native {};
-	auto&   Gpr(size_t index) {
-		const std::array registers {&native.Rax, &native.Rcx, &native.Rdx, &native.Rbx,
-		                            &native.Rsp, &native.Rbp, &native.Rsi, &native.Rdi,
-		                            &native.R8,  &native.R9,  &native.R10, &native.R11,
-		                            &native.R12, &native.R13, &native.R14, &native.R15};
-		return *registers[index];
-	}
-	auto& Rip() { return native.Rip; }
-	auto& Flags() { return native.EFlags; }
-	void* Xmm() { return &native.Xmm0; }
-#else
 	ucontext_t    native {};
 	_libc_fpstate fpstate {};
 	SavedInstructionContext() { native.uc_mcontext.fpregs = &fpstate; }
@@ -3672,7 +3489,6 @@ struct SavedInstructionContext {
 	auto& Rip() { return native.uc_mcontext.gregs[REG_RIP]; }
 	auto& Flags() { return native.uc_mcontext.gregs[REG_EFL]; }
 	void* Xmm() { return fpstate._xmm; }
-#endif
 };
 
 void TestCpuExtensionContexts() {
@@ -3888,11 +3704,7 @@ void TestPackedReciprocalSquareRoot() {
 				register_module(capacity);
 				const auto exhausted = Loader::PatchGuestInstructions(
 				    mapping, code.getSize(), function_starts, false, true);
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-				const uint64_t expected_traps = capacity == 1 ? 0 : instruction_count;
-#else
 				const uint64_t expected_traps = instruction_count;
-#endif
 				Check(test, exhausted.reciprocal_sqrt.found == instruction_count &&
 				                exhausted.reciprocal_sqrt.native == 0 &&
 				                exhausted.reciprocal_sqrt.trapped == expected_traps,
@@ -4039,15 +3851,10 @@ void TestPackedReciprocalSquareRoot() {
 	                std::all_of(output.begin() + 4, output.begin() + 8,
 	                            [](uint32_t lane) { return lane == 0; }),
 	      "unsafe native relocation fallback did not execute correctly");
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	CONTEXT context {};
-	auto& instruction_pointer = context.Rip;
-#else
 	ucontext_t context {};
 	_libc_fpstate fpstate {};
 	context.uc_mcontext.fpregs = &fpstate;
 	auto& instruction_pointer = context.uc_mcontext.gregs[REG_RIP];
-#endif
 	std::array<uint8_t, 16> unknown {0x0f, 0x0b};
 	instruction_pointer = reinterpret_cast<uintptr_t>(unknown.data());
 	Check(test, !Loader::X64InstructionEmulator::TryEmulate(&context), "unrecognized UD2 was swallowed");
@@ -4550,11 +4357,7 @@ void TestCpuExtensionPatches() {
 				found_flush = true;
 				Check(test,
 				      operands[0].mem.base == ZYDIS_REGISTER_RSP &&
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-				          operands[0].mem.disp.value == 120,
-#else
 				          operands[0].mem.disp.value == -8,
-#endif
 				      "CLWB replacement did not preserve its guest stack address");
 			}
 			offset += instruction.length;
@@ -4779,7 +4582,7 @@ void TestSmallFiberStacksAndMigration() {
 
 } // namespace
 
-#if defined(__linux__) || KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+#if defined(__linux__)
 KYTY_MS_ABI uint8_t* TlsStubTestAddress() {
 	return reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(0x123456789abcull));
 }
@@ -4876,7 +4679,7 @@ int main(int argc, char** argv) {
 		return g_failed_tests == 0 ? 0 : 1;
 	}
 #endif
-#if defined(__linux__) || KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+#if defined(__linux__)
 	if (argc == 2 && std::strcmp(argv[1], "--cpu-extensions-only") == 0) {
 		RunTest(TestCpuExtensionContexts);
 		RunTest(TestPackedBitFieldInsert);
@@ -4900,7 +4703,7 @@ int main(int argc, char** argv) {
 #if defined(__x86_64__) || defined(_M_X64)
 	RunTest(TestSmallFiberStacksAndMigration);
 #endif
-#if defined(__linux__) || KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+#if defined(__linux__)
 	RunTest(TestPackedReciprocalSquareRoot);
 	RunTest(TestPackedBitFieldExtract);
 	RunTest(TestCpuExtensionContexts);
@@ -4941,9 +4744,6 @@ int main(int argc, char** argv) {
 #if defined(__linux__)
 	RunTest(TestPartialUnmapPreservesHostPermissions);
 #endif
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	RunTest(TestWindowsBackingViewPermissions);
-#endif
 	RunTest(TestDirectMappingNamesTypesAndValidation);
 	RunTest(TestBatchMappingOperationsAndPartialFailure);
 	RunTest(TestDirectMapValidationBeforeOwnerMutation);
@@ -4976,7 +4776,7 @@ int main(int argc, char** argv) {
 	RunTest(TestMemoryPoolCommitDecommitQueryFlags);
 	RunTest(TestProgramMemoryAllocationAndProtection);
 	RunTest(TestModuleRelocationUsesWritableHostMapping);
-#if defined(__linux__) || KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+#if defined(__linux__)
 	RunTest(TestTlsStubsPreserveFlags);
 #endif
 

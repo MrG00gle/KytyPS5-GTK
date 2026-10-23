@@ -6,10 +6,6 @@ file(GLOB common_src CONFIGURE_DEPENDS
 
 file(GLOB_RECURSE common_headers CONFIGURE_DEPENDS "*.h")
 
-if(KYTY_CLANG_CL)
-	set_source_files_properties(${common_src} PROPERTIES COMPILE_FLAGS "-Wno-pragma-pack")
-endif()
-
 add_library(common STATIC ${common_src} ${common_headers})
 
 set(localization_dir "${PROJECT_SOURCE_DIR}/assets/localization")
@@ -43,10 +39,6 @@ target_link_libraries(common
 		ZArchive::zarchive
 		nlohmann_json::nlohmann_json
 )
-if(APPLE)
-	# hostStats.cpp reads GPU utilization from the IOAccelerator registry entries.
-	target_link_libraries(common PRIVATE "-framework CoreFoundation" "-framework IOKit")
-endif()
 
 get_property(inc_headers TARGET common PROPERTY INCLUDE_DIRECTORIES)
 set(check_headers ${CMAKE_CURRENT_SOURCE_DIR})

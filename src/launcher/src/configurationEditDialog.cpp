@@ -254,21 +254,9 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 	m_ui->comboBox_gpu->addItem(tr("Auto"));
 	// Keep Auto when Qt is built without Vulkan support.
 #if QT_CONFIG(vulkan)
-#if defined(__APPLE__)
-	if (!qEnvironmentVariableIsSet("QT_VULKAN_LIB")) {
-		const auto base    = QCoreApplication::applicationDirPath();
-		auto       library = base + "/libMoltenVK.dylib";
-		if (!QFileInfo::exists(library)) {
-			library = base + "/../Frameworks/libMoltenVK.dylib";
-		}
-		if (QFileInfo::exists(library)) {
-			qputenv("QT_VULKAN_LIB", library.toUtf8());
-		}
-	}
-#endif
 	QVulkanInstance instance;
 	instance.setApiVersion(QVersionNumber(1, 3, 0));
-#if !defined(__APPLE__) && QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
 	instance.setFlags(QVulkanInstance::NoPortabilityDrivers);
 #endif
 	if (instance.create()) {
@@ -305,14 +293,7 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 	m_ui->checkBox_vulkan_validation->setChecked(info.vulkan_validation_enabled);
 	m_ui->checkBox_renderdoc_capture->setChecked(info.renderdoc_enabled);
 	m_ui->checkBox_amd_cpu->setChecked(info.amd_cpu_enabled);
-#if defined(__APPLE__)
-	m_ui->checkBox_amd_cpu->setVisible(false);
-#endif
-#if defined(_WIN32)
-	m_ui->checkBox_red_zone_protection->setChecked(info.red_zone_protection_enabled);
-#else
 	m_ui->checkBox_red_zone_protection->setVisible(false);
-#endif
 	ListInit(m_ui->comboBox_shader_optimization_type, info.shader_optimization_type);
 	ListInit(m_ui->comboBox_shader_log_direction, info.shader_log_direction);
 	m_ui->lineEdit_shader_log_folder->setText(info.shader_log_folder);
@@ -494,9 +475,6 @@ static void UpdateInfo(Configuration& info, Ui::ConfigurationEditDialog& ui, boo
 	info.shader_validation_enabled = ui.checkBox_shader_validation->isChecked();
 	info.renderdoc_enabled         = ui.checkBox_renderdoc_capture->isChecked();
 	info.amd_cpu_enabled           = ui.checkBox_amd_cpu->isChecked();
-#if defined(_WIN32)
-	info.red_zone_protection_enabled = ui.checkBox_red_zone_protection->isChecked();
-#endif
 	info.shader_optimization_type = TextToEnum<Configuration::ShaderOptimizationType>(
 	    ui.comboBox_shader_optimization_type->currentText());
 	info.shader_log_direction = TextToEnum<Configuration::LogDirection>(
@@ -559,14 +537,6 @@ void ConfigurationEditDialog::add_game_directory() {
 		start_dir = m_game_dirs_list->item(m_game_dirs_list->count() - 1)->text();
 	}
 
-#if defined(__APPLE__)
-	// Use the native macOS picker to browse mounted volumes.
-	const auto dir = QFileDialog::getExistingDirectory(this, tr("Select game folder"), start_dir);
-	if (dir.isEmpty()) {
-		return;
-	}
-	AddGameDirectoryItem(dir);
-#else
 	QFileDialog dialog(this, tr("Select game folders"), start_dir);
 	dialog.setFileMode(QFileDialog::Directory);
 	dialog.setOption(QFileDialog::ShowDirsOnly, true);
@@ -589,7 +559,6 @@ void ConfigurationEditDialog::add_game_directory() {
 	for (const auto& dir: dialog.selectedFiles()) {
 		AddGameDirectoryItem(dir);
 	}
-#endif
 
 	update_game_directory_buttons();
 }

@@ -36,13 +36,8 @@ if(CMAKE_SYSTEM_NAME MATCHES ".*Linux")
 	set(LINUX TRUE)
 endif()
 
-if (NOT (WIN32 OR LINUX OR APPLE))
-    message(FATAL_ERROR "only Windows, Linux, and macOS builds are supported")
-endif()
-
-if(WIN32)
-	# Prevent Windows headers from defining min/max macros in all targets.
-	add_compile_definitions(NOMINMAX)
+if(NOT LINUX)
+    message(FATAL_ERROR "only Linux builds are supported")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -78,8 +73,6 @@ elseif(KYTY_BUILD_ORIGIN STREQUAL "Fork")
 	set(KYTY_FORK_BUILD ON)
 endif()
 
-set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
-
 include(TestBigEndian)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -99,33 +92,15 @@ else()
 	set(KYTY_BUILD KYTY_BUILD_RELEASE)
 endif()
 
-if(LINUX OR APPLE)
-	# macOS rides the POSIX/Linux code paths until it gets a dedicated platform
-	set(KYTY_PLATFORM KYTY_PLATFORM_LINUX)
-else()
-	set(KYTY_PLATFORM KYTY_PLATFORM_WINDOWS)
-endif()
+set(KYTY_PLATFORM KYTY_PLATFORM_LINUX)
 
 set(CLANG FALSE)
 set(GCC FALSE)
-set(KYTY_CLANG_CL FALSE)
-get_filename_component(KYTY_CXX_COMPILER_NAME "${CMAKE_CXX_COMPILER}" NAME_WE)
-string(TOLOWER "${KYTY_CXX_COMPILER_NAME}" KYTY_CXX_COMPILER_NAME)
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 	set(CLANG TRUE)
 	set(KYTY_COMPILER CLANG)
-	if(WIN32 AND KYTY_CXX_COMPILER_NAME STREQUAL "clang-cl")
-		set(KYTY_CLANG_CL TRUE)
-		set(KYTY_LINKER LLD_LINK)
-	elseif(APPLE)
-		set(KYTY_LINKER LD64) # Apple's default linker; lld flags don't apply
-	else()
-		set(KYTY_LINKER LLD)
-	endif()
-	if ((CMAKE_AR MATCHES "llvm") AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 12.0.0) AND (CMAKE_CXX_COMPILER MATCHES "winlibs"))
-		string(REPLACE "llvm-ar.exe" "ar.exe" CMAKE_AR ${CMAKE_AR}) # llvm-ar.exe 11.0.0 from winlibs is broken
-	endif()
+	set(KYTY_LINKER LLD)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	set(GCC TRUE)
 	set(KYTY_COMPILER GCC)
@@ -141,10 +116,6 @@ string(TOLOWER ${KYTY_LINKER} KYTY_LINKER_ID)
 
 if (CLANG AND (KYTY_LINKER STREQUAL LLD))
 	set(KYTY_LD_OPTIONS "-fuse-ld=lld")
-endif()
-
-if (KYTY_LINKER STREQUAL LD AND NOT LINUX)
-	set(KYTY_LD_OPTIONS "-Wl,--image-base=0x100000000000")
 endif()
 
 project(Kyty${KYTY_PROJECT_NAME}${CMAKE_BUILD_TYPE}${KYTY_COMPILER} VERSION 0.3.0)
@@ -332,10 +303,6 @@ list(APPEND kyty_emulator_src
 )
 list(REMOVE_DUPLICATES kyty_emulator_src)
 
-if (KYTY_CLANG_CL)
-	set_source_files_properties(${kyty_emulator_src} PROPERTIES COMPILE_FLAGS "-Wno-pragma-pack -Wno-deprecated-declarations -D_TIMESPEC_DEFINED")
-endif()
-
 set(kyty_emulator_link_libraries common Vulkan::Headers spirv-tools-opt spirv-tools SDL3::SDL3-static imgui xxhash FFmpeg::ffmpeg fmt::fmt nlohmann_json::nlohmann_json LibAtrac9 kyty_git_version Zydis::Zydis xbyak::xbyak opus OpenXR::openxr_loader)
 
 # Linux system libraries.
@@ -356,13 +323,6 @@ set(inc_headers
 	${KYTY_THIRD_PARTY_DIR}/stb
 )
 
-if (KYTY_CLANG_CL)
-	list(APPEND kyty_emulator_link_libraries winpthread)
-	list(APPEND inc_headers
-		${KYTY_THIRD_PARTY_DIR}/winpthread/include
-	)
-endif()
-
 list(APPEND check_headers
 	${KYTY_SOURCE_DIR}
 )
@@ -371,26 +331,6 @@ function(add_kyty_full_emulator_test target source)
 	add_executable(${target} EXCLUDE_FROM_ALL ${source} ${kyty_emulator_src})
 	target_link_libraries(${target} ${kyty_emulator_link_libraries})
 	target_include_directories(${target} PRIVATE ${inc_headers})
-	if (WIN32)
-		target_link_libraries(${target} iphlpapi)
-	endif()
-	if (KYTY_CLANG_CL)
-		target_link_libraries(${target} onecore)
-		add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${KYTY_THIRD_PARTY_DIR}/winpthread/bin/libwinpthread-1.dll" $<TARGET_FILE_DIR:${target}>/libwinpthread-1.dll)
-	endif()
-	# The macOS x86_64 guest address space needs its .zerofill segments anchored
-	# by linker flags, or the kernel kills the binary on load (posix_spawn EIO).
-	configure_macos_guest_address_space(${target})
-endfunction()
-
-function(configure_macos_guest_address_space target)
-	if(APPLE AND (CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" OR
-			(NOT CMAKE_OSX_ARCHITECTURES AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")))
-		target_sources(${target} PRIVATE "${KYTY_SOURCE_DIR}/kernel/macosGuestAddressSpace.cpp")
-		target_compile_definitions(${target} PRIVATE KYTY_LINKED_GUEST_ADDRESS_SPACE=1)
-		target_link_options(${target} PRIVATE
-			-Wl,-ld_classic,-no_pie,-no_fixup_chains,-no_huge,-pagezero_size,0x40000,-segaddr,SYSTEM_MANAGED,0x40000,-segaddr,SYSTEM_RESERVED,0x7ffffc000,-segaddr,USER_AREA,0x7000000000,-image_base,0x700000000000)
-	endif()
 endfunction()
 
 add_kyty_full_emulator_test(shader_cfg_tests "${KYTY_TESTS_DIR}/shaderCfgTests.cpp")
@@ -606,13 +546,19 @@ add_kyty_full_emulator_test(virtual_memory_allocation_tests "${KYTY_TESTS_DIR}/V
 target_compile_definitions(virtual_memory_allocation_tests PRIVATE
 	KYTY_VIRTUAL_MEMORY_ALLOCATION_TESTS=1)
 
+add_executable(sse4a_emulation_tests EXCLUDE_FROM_ALL
+	"${KYTY_TESTS_DIR}/Sse4aEmulationTests.cpp"
+	"${KYTY_SOURCE_DIR}/loader/x64InstructionEmulator.cpp"
+	"${KYTY_SOURCE_DIR}/loader/guestInstructionPatcher.cpp"
+)
+target_link_libraries(sse4a_emulation_tests common fmt::fmt Zydis::Zydis xbyak::xbyak)
+target_include_directories(sse4a_emulation_tests PRIVATE ${inc_headers})
+
 # These tests use exceptions.
-if(NOT KYTY_CLANG_CL)
-	foreach(kyty_exception_test scalar_provenance_tests resource_tracking_tests
-			virtual_memory_allocation_tests)
-		target_compile_options(${kyty_exception_test} PRIVATE -fexceptions)
-	endforeach()
-endif()
+foreach(kyty_exception_test scalar_provenance_tests resource_tracking_tests
+		virtual_memory_allocation_tests)
+	target_compile_options(${kyty_exception_test} PRIVATE -fexceptions)
+endforeach()
 
 if(BUILD_TESTING)
 	add_test(NAME emulator_user_name_cli
@@ -705,6 +651,8 @@ if(BUILD_TESTING)
 		COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --htile-clear-only)
 	add_test(NAME buffer_cache_ranges
 		COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --buffer-cache-range-only)
+	add_test(NAME sse4a_emulation COMMAND $<TARGET_FILE:sse4a_emulation_tests>)
+	set_tests_properties(sse4a_emulation PROPERTIES TIMEOUT 30)
 
 	add_custom_target(kyty_tests DEPENDS
 		ime_dialog_tests
@@ -738,28 +686,11 @@ if(BUILD_TESTING)
 		ces_tests
 		save_data_dialog_tests
 		http_uri_parse_tests
+		sse4a_emulation_tests
 	)
-endif()
-
-# Test Darwin signal-context restoration for SSE4a instructions.
-if(APPLE AND (CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" OR
-		(NOT CMAKE_OSX_ARCHITECTURES AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")))
-	add_executable(macos_sse4a_tests EXCLUDE_FROM_ALL
-		"${KYTY_TESTS_DIR}/macosSse4aTests.cpp"
-		"${KYTY_SOURCE_DIR}/loader/x64InstructionEmulator.cpp"
-		"${KYTY_SOURCE_DIR}/loader/guestInstructionPatcher.cpp"
-	)
-	target_link_libraries(macos_sse4a_tests common fmt::fmt Zydis::Zydis xbyak::xbyak)
-	target_include_directories(macos_sse4a_tests PRIVATE ${inc_headers})
-	if(BUILD_TESTING)
-		add_test(NAME macos_sse4a COMMAND $<TARGET_FILE:macos_sse4a_tests>)
-		set_tests_properties(macos_sse4a PROPERTIES TIMEOUT 15)
-		add_dependencies(kyty_tests macos_sse4a_tests)
-	endif()
 endif()
 
 add_executable(kyty_emulator "${KYTY_SOURCE_DIR}/main.cpp" ${kyty_emulator_src})
-configure_macos_guest_address_space(kyty_emulator)
 
 set(KYTY_TROPHY_UNLOCK_SOUND "${CMAKE_CURRENT_SOURCE_DIR}/assets/sounds/trophy-unlock.wav")
 add_custom_target(kyty_trophy_sound
@@ -779,16 +710,7 @@ add_dependencies(kyty_emulator kyty_touch_cursors)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/cursors" DESTINATION assets)
 
 target_link_libraries(kyty_emulator ${kyty_emulator_link_libraries})
-if (WIN32)
-	target_link_libraries(kyty_emulator opengl32)
-	target_link_libraries(kyty_emulator iphlpapi)
-	target_link_libraries(kyty_emulator setupapi)
-	target_link_libraries(kyty_emulator ws2_32)
-endif()
-if (KYTY_CLANG_CL)
-	target_link_libraries(kyty_emulator onecore)
-endif()
-if (CLANG AND NOT KYTY_CLANG_CL)
+if (CLANG)
 	target_link_libraries(kyty_emulator pthread)
 endif()
 # dlopen/dlsym/dladdr for RenderDoc.
@@ -802,17 +724,8 @@ include_what_you_use(kyty_emulator "${inc_headers}")
 set(KYTY_EMULATOR_MAP_NAME "kyty_emulator_${KYTY_COMPILER_ID}_${KYTY_LINKER_ID}.map")
 
 set(KYTY_EMULATOR_MAP_LINK_PATH "${CMAKE_CURRENT_BINARY_DIR}/${KYTY_EMULATOR_MAP_NAME}")
-set(KYTY_EMULATOR_PDB_LINK_PATH "${CMAKE_CURRENT_BINARY_DIR}/kyty_emulator.pdb")
 
-if(KYTY_CLANG_CL)
-	target_link_options(kyty_emulator PRIVATE
-		"/DYNAMICBASE:NO"
-		"/DEBUG:FULL"
-		"/PDB:${KYTY_EMULATOR_PDB_LINK_PATH}"
-		"/lldmap:${KYTY_EMULATOR_MAP_LINK_PATH}"
-	)
-	add_custom_command(TARGET kyty_emulator POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${KYTY_THIRD_PARTY_DIR}/winpthread/bin/libwinpthread-1.dll" $<TARGET_FILE_DIR:kyty_emulator>/libwinpthread-1.dll)
-elseif(WIN32 OR LINUX)
+if(LINUX)
 	set_target_properties(kyty_emulator PROPERTIES LINK_FLAGS "${KYTY_LD_OPTIONS}")
 	# LINK_FLAGS is a space-delimited string: a -Map path containing spaces would
 	# be split into bogus arguments, so pass it as a discrete link option instead.
@@ -825,18 +738,6 @@ if(LINUX)
     )
 endif()
 
-if(APPLE)
-	# The emulator writes x86-64 trampolines/PLT stubs into memory and executes them, and
-	# runs guest code under Rosetta. That requires the JIT / unsigned-executable-memory
-	# entitlements, so re-sign the binary after every link (an unsigned/relinked binary
-	# reverts to the hardened defaults and aborts when it first executes written code).
-	add_custom_command(TARGET kyty_emulator POST_BUILD
-		COMMAND codesign -s - --force --options runtime
-			--entitlements "${KYTY_SOURCE_DIR}/macos_jit.entitlements"
-			$<TARGET_FILE:kyty_emulator>
-		COMMENT "Codesign kyty_emulator with JIT entitlements (macOS)")
-endif()
-
 install(TARGETS kyty_emulator DESTINATION .)
 if(KYTY_BUILD_LAUNCHER)
 	add_subdirectory("${KYTY_SOURCE_DIR}/launcher" "${CMAKE_CURRENT_BINARY_DIR}/launcher")
@@ -844,7 +745,4 @@ if(KYTY_BUILD_LAUNCHER)
 	if(LINUX)
 		target_link_options(launcher PRIVATE $<$<CONFIG:Release>:-Wl,--strip-all>)
 	endif()
-endif()
-if(KYTY_CLANG_CL)
-	install(FILES "${KYTY_THIRD_PARTY_DIR}/winpthread/bin/libwinpthread-1.dll" DESTINATION .)
 endif()

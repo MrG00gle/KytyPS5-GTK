@@ -36,9 +36,6 @@
 
 #include "ui_main_dialog.h"
 
-#if defined(_WIN32)
-#include <windows.h> // IWYU pragma: keep
-#endif
 
 // IWYU pragma: no_include <minwindef.h>
 // IWYU pragma: no_include <processthreadsapi.h>
@@ -46,20 +43,10 @@
 
 class QWidget;
 
-#if defined(_WIN32)
-constexpr char EMULATOR_EXE[] = "kyty_emulator.exe";
-#else
 constexpr char EMULATOR_EXE[] = "kyty_emulator";
-#endif
 
-#if defined(_WIN32)
-constexpr char CMD_EXE[] = "cmd.exe";
-#elif defined(__linux__)
+#if   defined(__linux__)
 constexpr char KYTY_BASH_FILE[] = "kyty_run.sh";
-#endif
-#if defined(_WIN32)
-constexpr DWORD CMD_X_CHARS = 175;
-constexpr DWORD CMD_Y_CHARS = 1000;
 #endif
 constexpr char SETTINGS_MAIN_DIALOG[]        = "MainDialog";
 constexpr char SETTINGS_MAIN_LAST_GEOMETRY[] = "geometry";
@@ -300,9 +287,6 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 	args << "--printf-output-file" << info.printf_output_file;
 	AddFlag(args, info.profiler_enabled, "--profile");
 	AddFlag(args, info.amd_cpu_enabled, "--amd-cpu");
-#if defined(_WIN32)
-	AddFlag(args, info.red_zone_protection_enabled, "--redzone");
-#endif
 	for (const auto& binding: info.host_input_mapping) {
 		args << "--keymap" << binding;
 	}
@@ -414,22 +398,6 @@ static bool FindTerminal(QString* program, QStringList* prefix) {
 }
 #endif
 
-#if defined(_WIN32)
-// Quote one token for cmd.exe so paths with spaces survive /K parsing.
-static QString WinCmdQuote(QString value) {
-	value.replace(QLatin1Char('"'), QStringLiteral("\\\""));
-	return QLatin1Char('"') + value + QLatin1Char('"');
-}
-
-static QString BuildWinCmdKCommand(const QString& interpreter, const QStringList& args) {
-	QString command = WinCmdQuote(QDir::toNativeSeparators(interpreter));
-	for (const auto& arg: args) {
-		command += QLatin1Char(' ');
-		command += WinCmdQuote(arg);
-	}
-	return command;
-}
-#endif
 
 void MainDialog::RunInterpreter(QProcess* process, const Configuration& info) {
 	const auto& interpreter = m_p->GetInterpreter();
@@ -465,34 +433,12 @@ void MainDialog::RunInterpreter(QProcess* process, const Configuration& info) {
 			process->setArguments({bash_file_name});
 		}
 	}
-#elif defined(_WIN32)
-	{
-		// Use nativeArguments so Qt does not re-quote the /K command string.
-		process->setProgram(CMD_EXE);
-		process->setArguments({});
-		process->setNativeArguments(QStringLiteral("/K \"") +
-		                            BuildWinCmdKCommand(interpreter, args) + QLatin1Char('"'));
-	}
 #else
 	process->setProgram(interpreter);
 	process->setArguments(args);
 #endif
 	process->setWorkingDirectory(dir.path());
-#if defined(_WIN32)
-	process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
-		args->flags |= static_cast<uint32_t>(CREATE_NEW_CONSOLE);
-		args->startupInfo->dwFlags &= ~static_cast<DWORD>(STARTF_USESTDHANDLES);
-		args->startupInfo->dwFlags |= static_cast<DWORD>(STARTF_USECOUNTCHARS);
-		args->startupInfo->dwXCountChars = CMD_X_CHARS;
-		args->startupInfo->dwYCountChars = CMD_Y_CHARS;
-		// args->startupInfo->dwFlags |= static_cast<DWORD>(STARTF_USEFILLATTRIBUTE);
-		// args->startupInfo->dwFillAttribute =
-		//     static_cast<DWORD>(BACKGROUND_BLUE) | static_cast<DWORD>(FOREGROUND_RED) |
-		//     static_cast<DWORD>(FOREGROUND_INTENSITY);
-	});
-#endif
 	process->start();
-#if !defined(_WIN32)
 	// Report immediate launch failures.
 	if (!process->waitForStarted(5000)) {
 		QMessageBox::critical(
@@ -500,7 +446,6 @@ void MainDialog::RunInterpreter(QProcess* process, const Configuration& info) {
 		    tr("Failed to start:\n%1\n\n%2").arg(process->program(), process->errorString()));
 		return;
 	}
-#endif
 	process->waitForFinished(100);
 }
 

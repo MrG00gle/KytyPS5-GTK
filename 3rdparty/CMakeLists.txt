@@ -10,13 +10,6 @@ set(BUILD_TESTING OFF)
 set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
 set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
-	# Opus assumes MSVC accepts SSE4.1 intrinsics without per-file flags, but
-	# clang-cl rejects them in its baseline x64 files. Its AVX2 dispatch also
-	# depends on the SSE4.1 declarations, so retain the x64 SSE2 baseline only.
-	set(OPUS_X86_MAY_HAVE_SSE4_1 OFF CACHE BOOL "" FORCE)
-	set(OPUS_X86_MAY_HAVE_AVX2 OFF CACHE BOOL "" FORCE)
-endif()
 FetchContent_Declare(opus
 	GIT_REPOSITORY https://github.com/xiph/opus.git
 	GIT_TAG ddbe48383984d56acd9e1ab6a090c54ca6b735a6
@@ -37,9 +30,7 @@ FetchContent_MakeAvailable(openxr)
 # Keep the loader's headers and library out of the installed package.
 set_property(DIRECTORY "${openxr_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
 # The loader uses exceptions internally.
-if(NOT KYTY_CLANG_CL)
-	target_compile_options(openxr_loader PRIVATE -fexceptions)
-endif()
+target_compile_options(openxr_loader PRIVATE -fexceptions)
 install(FILES "${openxr_SOURCE_DIR}/LICENSE" DESTINATION "licenses/openxr")
 
 # The guest instruction patcher needs a decoder/encoder and a small
@@ -104,17 +95,9 @@ target_include_directories(zarchive SYSTEM PUBLIC "${zarchive_source_SOURCE_DIR}
 target_include_directories(zarchive PRIVATE "${zstd_SOURCE_DIR}/lib")
 target_link_libraries(zarchive PRIVATE libzstd_static)
 target_compile_features(zarchive PRIVATE cxx_std_20)
-if(MSVC)
-	target_compile_options(zarchive PRIVATE /W0)
-else()
-	target_compile_options(zarchive PRIVATE -w)
-endif()
+target_compile_options(zarchive PRIVATE -w)
 
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-if(APPLE)
-	# SDL's built-in iconv fallback does not support CP932.
-	set(SDL_SYSTEM_ICONV ON CACHE BOOL "Use system iconv for CP932 conversion" FORCE)
-endif()
 add_subdirectory(SDL3)
 
 add_library(Vulkan-Headers INTERFACE)
@@ -136,11 +119,7 @@ target_include_directories(imgui PUBLIC
 )
 target_compile_definitions(imgui PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
 target_link_libraries(imgui PUBLIC Vulkan::Headers)
-if(MSVC)
-	target_compile_options(imgui PRIVATE /W0)
-else()
-	target_compile_options(imgui PRIVATE -w)
-endif()
+target_compile_options(imgui PRIVATE -w)
 
 set(SPIRV_SKIP_TESTS ON CACHE BOOL "" FORCE)
 set(SPIRV_SKIP_EXECUTABLES ON CACHE BOOL "" FORCE)
@@ -172,23 +151,10 @@ set(SPDLOG_BUILD_WARNINGS OFF CACHE BOOL "" FORCE)
 set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
 set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
 set(SPDLOG_NO_EXCEPTIONS ON CACHE BOOL "" FORCE)
-if(WIN32)
-	set(SPDLOG_WCHAR_FILENAMES ON CACHE BOOL "" FORCE)
-endif()
 add_subdirectory(spdlog EXCLUDE_FROM_ALL)
 
 if (NOT TARGET FFmpeg::ffmpeg)
-	# On macOS the target arch is driven by CMAKE_OSX_ARCHITECTURES, not the host
-	# CMAKE_SYSTEM_PROCESSOR (which reports arm64 even for an x86_64/Rosetta build).
-	if(APPLE AND CMAKE_OSX_ARCHITECTURES)
-		if(CMAKE_OSX_ARCHITECTURES MATCHES "^(x86_64)$")
-			set(ARCHITECTURE x86_64)
-		elseif(CMAKE_OSX_ARCHITECTURES MATCHES "^(arm64)$")
-			set(ARCHITECTURE arm64)
-		else()
-			set(ARCHITECTURE x86_64 arm64) # universal
-		endif()
-	elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+	if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
 		set(ARCHITECTURE arm64)
 	else()
 		set(ARCHITECTURE x86_64)
@@ -200,9 +166,6 @@ endif()
 file(GLOB LIBATRAC9_SOURCES LibAtrac9/C/src/*.c)
 add_library(LibAtrac9 STATIC ${LIBATRAC9_SOURCES})
 target_include_directories(LibAtrac9 PUBLIC LibAtrac9/C/src)
-if(MSVC)
-	target_compile_options(LibAtrac9 PRIVATE /W0)
-endif()
 
 set(TRACY_STATIC ON CACHE BOOL "" FORCE)
 set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
@@ -212,9 +175,6 @@ set(TRACY_DELAYED_INIT ON CACHE BOOL "" FORCE)
 set(TRACY_MANUAL_LIFETIME ON CACHE BOOL "" FORCE)
 add_subdirectory(tracy EXCLUDE_FROM_ALL)
 if (TARGET TracyClient)
-	if (MSVC)
-		target_compile_options(TracyClient PRIVATE /WX-)
-	endif()
 	if (CLANG)
 		target_compile_options(TracyClient PRIVATE
 			-Wno-error
@@ -223,8 +183,4 @@ if (TARGET TracyClient)
 			-Wno-unused-variable
 		)
 	endif()
-endif()
-
-if (CLANG AND MSVC)
-add_subdirectory(winpthread)
 endif()

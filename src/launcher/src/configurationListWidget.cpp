@@ -1106,19 +1106,7 @@ void ConfigurationListWidget::open_game_folder() {
 	};
 	if (is_archive) {
 		const auto path = QFileInfo(base).absoluteFilePath();
-#if defined(_WIN32)
-		QProcess explorer;
-		explorer.setProgram("explorer.exe");
-		explorer.setNativeArguments(
-		    QStringLiteral("/select,\"%1\"").arg(QDir::toNativeSeparators(path)));
-		if (explorer.startDetached()) {
-			return;
-		}
-#elif defined(__APPLE__)
-		if (QProcess::startDetached("/usr/bin/open", {"-R", path})) {
-			return;
-		}
-#elif defined(__linux__)
+#if   defined(__linux__)
 		auto request = QDBusMessage::createMethodCall("org.freedesktop.FileManager1",
 		                                              "/org/freedesktop/FileManager1",
 		                                              "org.freedesktop.FileManager1", "ShowItems");

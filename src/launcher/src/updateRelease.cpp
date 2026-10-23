@@ -9,12 +9,8 @@
 namespace UpdateRelease {
 
 QString PlatformSuffix() {
-#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
-	return QStringLiteral("-Windows-x64.zip");
-#elif defined(__linux__) && defined(__x86_64__)
+#if   defined(__linux__) && defined(__x86_64__)
 	return QStringLiteral("-Linux-x86_64.tar.gz");
-#elif defined(__APPLE__) && defined(__x86_64__)
-	return QStringLiteral("-macOS-x86_64.zip");
 #else
 	return {};
 #endif

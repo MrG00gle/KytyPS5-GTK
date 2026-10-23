@@ -220,13 +220,9 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 		vk::PhysicalDeviceVulkan12Features features12 {};
 		vk::PhysicalDeviceVulkan11Features features11 {};
 		vk::PhysicalDeviceRobustness2FeaturesEXT robustness2 {};
-#if defined(__APPLE__)
-		features12.pNext = &depth_clip_control;
-#else
 		vk::PhysicalDeviceFragmentShaderBarycentricFeaturesKHR fragment_barycentric {};
 		fragment_barycentric.pNext = &depth_clip_control;
 		features12.pNext           = &fragment_barycentric;
-#endif
 		robustness2.pNext      = features12.pNext;
 		features11.pNext       = &robustness2;
 		features12.pNext       = &features11;
@@ -249,26 +245,12 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 			}
 		};
 
-#if defined(__APPLE__)
-		if (color_write_ext.colorWriteEnable != VK_TRUE) {
-			LOGF("colorWriteEnable is not supported\n");
-		}
-#else
 		check_feature(color_write_ext.colorWriteEnable, "colorWriteEnable");
-#endif
 		check_feature(image_view_min_lod.minLod, "image view minLod");
 
 		check_feature(depth_clip_control.depthClipControl, "depthClipControl");
-#if defined(__APPLE__)
-		if (depth_clip_enable.depthClipEnable != VK_TRUE) {
-			LOGF("depthClipEnable is not supported\n");
-		}
-#else
 		check_feature(depth_clip_enable.depthClipEnable, "depthClipEnable");
-#endif
-#if !defined(__APPLE__)
 		check_feature(device_features2.features.depthClamp, "depthClamp");
-#endif
 
 		check_feature(features12.samplerMirrorClampToEdge, "samplerMirrorClampToEdge",
 		              required_features12.samplerMirrorClampToEdge);
@@ -313,13 +295,7 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 
 		check_feature(device_features2.features.samplerAnisotropy, "samplerAnisotropy");
 		check_feature(device_features2.features.robustBufferAccess, "robustBufferAccess");
-#if defined(__APPLE__)
-		if (device_features2.features.depthBounds != VK_TRUE) {
-			LOGF("depthBounds is not supported\n");
-		}
-#else
 		check_feature(device_features2.features.depthBounds, "depthBounds");
-#endif
 		check_feature(device_features2.features.shaderStorageImageWriteWithoutFormat,
 		              "shaderStorageImageWriteWithoutFormat");
 
@@ -442,12 +418,7 @@ static vk::Device VulkanCreateDevice(GraphicContext& graphics,
 	vk::PhysicalDeviceImageViewMinLodFeaturesEXT  image_view_min_lod {};
 	image_view_min_lod.minLod = VK_TRUE;
 	depth_clip_control.pNext  = &image_view_min_lod;
-	// MoltenVK lacks VK_EXT_depth_clip_enable and VK_EXT_color_write_enable, so drop those
-	// feature structs from the chain on macOS (the renderer falls back to default depth
-	// clipping and static color-write masks).
-#if !defined(__APPLE__)
 	image_view_min_lod.pNext = &depth_clip_enable;
-#endif
 	depth_clip_control.depthClipControl = VK_TRUE;
 
 	const bool workgroup_layout_extension =
@@ -592,10 +563,8 @@ static vk::Device VulkanCreateDevice(GraphicContext& graphics,
 	device_features.fragmentStoresAndAtomics = VK_TRUE;
 	device_features.samplerAnisotropy        = VK_TRUE;
 	device_features.robustBufferAccess       = VK_TRUE;
-#if !defined(__APPLE__)
-	device_features.depthBounds = VK_TRUE; // unsupported by MoltenVK
+	device_features.depthBounds = VK_TRUE;
 	device_features.depthClamp  = VK_TRUE;
-#endif
 	device_features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
 	device_features.shaderImageGatherExtended            = VK_TRUE;
 	device_features.independentBlend                     = VK_TRUE;
@@ -621,9 +590,6 @@ static vk::Device VulkanCreateDevice(GraphicContext& graphics,
 	// }
 
 	vk::PhysicalDeviceRobustness2FeaturesEXT robustness2 {};
-#if defined(__APPLE__)
-	robustness2.pNext = &features12;
-#else
 	vk::PhysicalDeviceFragmentShaderBarycentricFeaturesKHR fragment_barycentric {};
 	if (barycentric_supported) {
 		fragment_barycentric.pNext                     = &features12;
@@ -632,7 +598,6 @@ static vk::Device VulkanCreateDevice(GraphicContext& graphics,
 	} else {
 		robustness2.pNext = &features12;
 	}
-#endif
 	robustness2.robustBufferAccess2 = supported_robustness2.robustBufferAccess2;
 	robustness2.robustImageAccess2  = supported_robustness2.robustImageAccess2;
 	robustness2.nullDescriptor      = VK_TRUE;
@@ -930,18 +895,6 @@ void WindowContext::CreateVulkan() {
 
 	vk::InstanceCreateInfo inst_info {};
 	inst_info.pNext                   = (r.enable_validation_layers ? &dbg_create_info : nullptr);
-#if defined(__APPLE__)
-	// MoltenVK requires VK_KHR_portability_enumeration + flag to surface
-	// portability devices. Without this, enumeratePhysicalDevices hides the
-	// MoltenVK adapter on some driver versions.
-	if (HasExtension(r.available_extensions, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
-		if (!HasExtension(r.required_extensions, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
-			r.required_extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-		}
-		inst_info.flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
-		LOGF("Vulkan instance: enabled %s\n", VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-	}
-#endif
 	inst_info.pApplicationInfo        = &app_info;
 	inst_info.enabledExtensionCount   = static_cast<uint32_t>(r.required_extensions.size());
 	inst_info.ppEnabledExtensionNames = r.required_extensions.data();
@@ -980,15 +933,8 @@ void WindowContext::CreateVulkan() {
 	    VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 	    VK_EXT_ROBUSTNESS_2_EXTENSION_NAME, "VK_KHR_maintenance1"};
 
-#if defined(__APPLE__)
-	// MoltenVK lacks VK_EXT_depth_clip_enable and VK_EXT_color_write_enable; the renderer
-	// falls back to default depth clipping and static color-write masks on macOS. It also
-	// requires VK_KHR_portability_subset per the Vulkan portability spec.
-	device_extensions.push_back("VK_KHR_portability_subset");
-#else
 	device_extensions.push_back(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME);
 	device_extensions.push_back(VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
-#endif
 
 #ifdef KYTY_ENABLE_DEBUG_PRINTF
 	if (Config::SpirvDebugPrintfEnabled()) {

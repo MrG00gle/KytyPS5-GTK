@@ -15,22 +15,11 @@
 #include <mutex>
 #include <vector>
 
-#if defined(_MSC_VER)
-#include <intrin.h>
-#elif defined(__x86_64__)
+#if   defined(__x86_64__)
 #include <xmmintrin.h>
 #endif
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#undef min
-#undef max
-#else
 #include <unistd.h>
-#endif
 
 namespace Libs::Graphics {
 namespace {
@@ -47,9 +36,6 @@ constexpr uint64_t REGION_PAGES = REGION_SIZE / PAGE_SIZE;
 	std::fputs(reason != nullptr ? reason : "invalid page state", stderr);
 	std::fputc('\n', stderr);
 	std::fflush(stderr);
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	TerminateProcess(GetCurrentProcess(), static_cast<UINT>(EXCEPTION_NONCONTINUABLE_EXCEPTION));
-#endif
 	std::_Exit(322);
 }
 
@@ -149,24 +135,10 @@ struct PageManager::Impl {
 	};
 
 	Impl() {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-		SYSTEM_INFO info {};
-		GetSystemInfo(&info);
-		if (info.dwPageSize != PAGE_SIZE) {
-			Fatal("unsupported host page size 0x%08" PRIx32,
-			      static_cast<uint32_t>(info.dwPageSize));
-		}
-#elif defined(__APPLE__)
-		// Under Rosetta the host page size is 4 KB, matching TRACKER_PAGE_SIZE.
-		if (static_cast<uint64_t>(getpagesize()) != PAGE_SIZE) {
-			Fatal("unsupported host page size 0x%08" PRIx32, static_cast<uint32_t>(getpagesize()));
-		}
-#else
 		const auto host_page_size = ::sysconf(_SC_PAGESIZE);
 		if (host_page_size < 0 || static_cast<uint64_t>(host_page_size) != PAGE_SIZE) {
 			Fatal("unsupported host page size %ld", static_cast<long>(host_page_size));
 		}
-#endif
 		regions = std::make_unique<std::atomic<Region*>[]>(REGION_COUNT);
 	}
 

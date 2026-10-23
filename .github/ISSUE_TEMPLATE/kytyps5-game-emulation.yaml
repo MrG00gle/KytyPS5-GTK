@@ -119,7 +119,7 @@ body:
     attributes:
       label: OS
       description: Include the operating system name, version, and edition when useful.
-      placeholder: "Example: Windows 11 Pro 25H2"
+      placeholder: "Example: Fedora Linux 43 (Workstation Edition)"
     validations:
       required: true
 
@@ -137,7 +137,7 @@ body:
     attributes:
       label: GPU
       description: Include the graphics card model and driver version when available.
-      placeholder: "Example: NVIDIA GeForce RTX 5080, driver 576.80"
+      placeholder: "Example: AMD Radeon RX 7800 XT, Mesa 25.1.5 (RADV)"
     validations:
       required: true
 

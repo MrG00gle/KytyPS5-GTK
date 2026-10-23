@@ -50,11 +50,9 @@
 #include <unordered_set>
 #include <vector>
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
 #include <cerrno>
 #include <sys/wait.h>
 #include <unistd.h>
-#endif
 
 namespace Libs::Graphics {
 namespace {
@@ -66,7 +64,6 @@ void Check(bool value, const char *text) {
   }
 }
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
 template <typename Function>
 void ExpectFatal(Function function, const char *text) {
   const pid_t pid = ::fork();
@@ -84,7 +81,6 @@ void ExpectFatal(Function function, const char *text) {
   Check(waited == pid, "waitpid failed while collecting fatal shader test");
   Check(WIFEXITED(status) && WEXITSTATUS(status) == (321 & 0xff), text);
 }
-#endif
 
 ShaderRecompiler::CompileOptions MakeCompileOptions(ShaderType stage) {
   static const ShaderVertexInputInfo vertex{};
@@ -1478,7 +1474,6 @@ void TestShaderFeatureCollection() {
             !compute_requirements.pixel_valid_mask,
         "stage-specific SPIR-V requirements leaked into compute");
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   ExpectFatal(
       [&] {
         program.stage = ShaderType::Pixel;
@@ -1495,7 +1490,6 @@ void TestShaderFeatureCollection() {
         CollectShaderInfo(program, {.pixel = &pixel_info});
       },
       "invalid export requirement metadata did not terminate analysis");
-#endif
 
   Program add_tid;
   add_tid.resource_tracking_complete = true;
@@ -1521,7 +1515,6 @@ void TestShaderFeatureCollection() {
             !add_tid_requirements.subgroup_shuffle,
         "buffer ADD_TID requested the wrong subgroup contract");
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   ExpectFatal(
       [&] {
         add_tid.memory_info[0].resource = 1;
@@ -1536,7 +1529,6 @@ void TestShaderFeatureCollection() {
         CollectShaderInfo(add_tid, {.vertex = &vertex_info});
       },
       "graphics buffer ADD_TID did not terminate requirements analysis");
-#endif
 
   Program empty;
   empty.stage = ShaderType::Compute;
@@ -2079,13 +2071,11 @@ void TestNativeStoreCompletion() {
   Check(source.find("OpControlBarrier") == std::string::npos &&
             source.find("OpMemoryBarrier") == std::string::npos,
         "other wait counters or VSCNT 63 became a store completion barrier");
-#ifndef _WIN32
   for (const uint32_t word : {EncodeSopk(0x17, 125, 1), register_wait[0]}) {
     const std::array unsupported = {word, EncodeSopp(0x01)};
     ExpectFatal([&] { (void)RecompileForTest(unsupported, options); },
                 "unsupported partial or register-based store wait was dropped");
   }
-#endif
 }
 
 void TestSopkCompareImmediateExtension() {
@@ -4588,12 +4578,10 @@ void CheckNewDecoderUnsupported(const uint32_t *shader, uint32_t words,
   Check((text.find(opcode_name) != std::string::npos),
         "decoder unsupported text did not include opcode name");
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   auto options = MakeCompileOptions(ShaderType::Compute);
   options.dump_ir = true;
   ExpectFatal([&] { (void)RecompileForTest(code, options); },
               "unsupported opcode did not terminate shader compilation");
-#endif
 }
 
 void TestScalarAshrI64Decoder() {
@@ -5298,7 +5286,6 @@ void TestNewShaderRecompilerIrLookupMissFailsExplicitly() {
   options.wave_size = 64u;
   options.input_info.compute = &compute;
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   store.pc = 0u;
   store.family = Decoder::Family::VOP1;
   store.opcode = Decoder::Opcode::UNKNOWN;
@@ -5327,7 +5314,6 @@ void TestNewShaderRecompilerIrLookupMissFailsExplicitly() {
   store.src_count = 1u;
   ExpectFatal([&] { (void)Frontend::TranslateProgram(decoded, cfg, options); },
               "invalid V_MOVRELS_B32 operands did not terminate compilation");
-#endif
 
   store = {};
   store.family = Decoder::Family::SOP1;
@@ -7083,7 +7069,6 @@ void TestPixelAncillaryLayerInput() {
   Check(SpirvSourceHasInstructionUsing(sample_source, "OpLoad", "%int %gl_SampleID"),
         "sample index was not loaded from its scalar integer input");
   CheckSpirvBinaryValidates(sample_result.spirv);
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   shader[1] = EncodeVop3Word1(5 + 256, 128 + 12, 128 + 4);
   ExpectFatal([&] { (void)RecompileForTest(shader, options); },
               "unsupported live ancillary field was silently replaced");
@@ -7092,7 +7077,6 @@ void TestPixelAncillaryLayerInput() {
   shader[5] = EncodeExp1(6, 7, 5, 0);
   ExpectFatal([&] { (void)RecompileForTest(shader, options); },
               "direct raw ancillary export was silently replaced after field lowering");
-#endif
 }
 
 void TestGraphicsCreateInterpolantMapping() {
@@ -9630,12 +9614,10 @@ void TestBoundedMaterialBufferStores(bool scalar_key) {
   Check(materialize(), "restored material batch failed to materialize");
   auto result = ShaderRecompiler::CompileProgram(std::move(translated), options, specialization, 0u);
   CheckSpirvBinaryValidates(result.spirv);
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   auto unbounded = code;
   unbounded[0x3cu / 4u] = EncodeSopc(0x0bu, 14u, 13u); // s_cmp_le_u32 admits wraparound.
   ExpectFatal([&] { ShaderRecompiler::TranslateProgram(unbounded, options); },
               "material selection accepted an inclusive induction bound");
-#endif
 }
 
 void TestNativeDescriptorProvenanceKeepsGpuSelection() {
@@ -10807,7 +10789,6 @@ void TestGraphicsComputeGetreg() {
             MakeStageStaticKey(graphics) != MakeStageStaticKey(async) &&
             MakeStageStaticKey(graphics).size() == MakeStageStaticKey(async).size(),
         "compute input reset or cache identity lost queue provenance");
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   auto options = MakeCompileOptions(ShaderType::Compute);
   options.input_info.compute = &async;
   ExpectFatal([&] { (void)TranslateProgram(shader, options); }, "async GETREG used graphics constants");
@@ -10819,7 +10800,6 @@ void TestGraphicsComputeGetreg() {
   Decoder::DecodeProgram(unsupported, decoded);
   Check(decoded.instructions[0].src0.value == 0xf818u, "GETREG selector was sign extended");
   ExpectFatal([&] { (void)TranslateProgram(unsupported, options); }, "unsupported GETREG field was accepted");
-#endif
 }
 
 void TestMemoryFedScalarLeafCall() {
@@ -10872,10 +10852,8 @@ void TestMemoryFedScalarLeafCall() {
   Check(source.calls.size() == 1 && source.decoded.has_swap_pc &&
             source.decoded.instructions[source.calls.front().instruction].branch_target == UINT32_MAX,
         "memory-fed SWAPPC did not retain an unresolved target");
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   ExpectFatal([&] { (void)TranslateProgram(source.decoded, options); },
               "unresolved SWAPPC silently fell through");
-#endif
   const auto& linked = RefreshShaderSource(source, runtime);
   Check(linked.has_swap_pc && source.revision == 1 && linked.instructions.back().branch_target == 0x40 &&
             linked.instructions[source.calls.front().instruction].branch_target == 0x44 &&
@@ -10944,7 +10922,6 @@ void TestMemoryFedScalarLeafCall() {
   (void)RefreshShaderSource(source, runtime);
   Check(source.revision == 3 && source.reads.back().second == 8,
         "shorter exact-boundary leaf was not decoded after a failed old-span read");
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   memory.clean = false;
   ExpectFatal([&] { (void)RefreshShaderSource(source, runtime); },
               "unreadable call dependencies reused stale linked code");
@@ -10980,7 +10957,6 @@ void TestMemoryFedScalarLeafCall() {
   const uint32_t multiple[] = {EncodeSop1(0x21, 14, 14), EncodeSop1(0x21, 14, 14), EncodeSopp(0x01)};
   ExpectFatal([&] { (void)PrepareShaderSource(multiple, options); },
               "a native return pair was accepted as a later call target");
-#endif
 }
 
 void TestNewShaderRecompilerSetpcBranch() {
@@ -11046,14 +11022,12 @@ void TestFusedShaderHandoffPreservesRegisters() {
   const uint32_t call_front[] = {EncodeSop1(0x21, 14, 14), EncodeSop1(0x20, 0, 6)};
   Check(Decoder::DecodeFrontProgram(call_front).has_swap_pc,
         "front decoder omitted its scalar call");
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   ExpectFatal([&] { (void)PrepareShaderSource(call_front, options); },
               "fused front call bypassed the non-compute rejection");
   const uint32_t call_back[] = {EncodeSop1(0x21, 14, 14), EncodeSopp(0x01)};
   options.back_code = call_back;
   ExpectFatal([&] { (void)PrepareShaderSource(front, options); },
               "fused back call metadata was not propagated");
-#endif
 }
 
 void TestMeshExportStorage() {
@@ -11545,7 +11519,6 @@ void TestEmbeddedVertexFormatSwizzle() {
     ShaderMapUserData(regs.es_regs.data_addr, mapped);
     ShaderVertexInputInfo input{};
     PrepareProgram(regs, HW::Context{}, HW::UserConfig{}, input);
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
     if (&test == cases) {
       for (const auto [word, flag] : {std::pair{1u, 1u << 31u}, std::pair{3u, 1u << 23u}}) {
         buffer[word] |= flag;
@@ -11554,7 +11527,6 @@ void TestEmbeddedVertexFormatSwizzle() {
         buffer[word] &= ~flag;
       }
     }
-#endif
     Frontend::EmbeddedFetchPlan fetch;
     fetch.loads.push_back({.pc = 0, .attrib_id = 0, .components = test.components});
     Frontend::TranslateOptions options{};
@@ -12240,19 +12212,15 @@ void TestDeferredSpirvPhiPatching() {
   const auto result = builder.AllocateId();
   const auto phi = builder.AddDeferredPhi(type, result, 2);
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   ExpectFatal([&] { (void)builder.Build(); }, "unpatched phi was serialized");
   ExpectFatal([&] { builder.PatchDeferredPhi(phi, 2, one, right); },
               "phi patch accepted an incoming outside its encoded length");
-#endif
 
   builder.PatchDeferredPhi(phi, 1, one, right);
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   ExpectFatal([&] { builder.PatchDeferredPhi(phi, 1, zero, left); },
               "phi incoming was patched twice");
   ExpectFatal([&] { (void)builder.Build(); },
               "partially patched phi was serialized");
-#endif
 
   // Appending another instruction must not change the first phi's patch
   // location.
@@ -12491,7 +12459,6 @@ void TestTypedEntryStateIsMinimal() {
   check(64u);
 }
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
 void TestFinalSsaRejectsRegisterStatePseudos() {
   using namespace ShaderRecompiler::IR;
 
@@ -12512,7 +12479,6 @@ void TestFinalSsaRejectsRegisterStatePseudos() {
   check_rejected(false);
   check_rejected(true);
 }
-#endif
 
 void TestValuePhiValidation() {
   using namespace ShaderRecompiler::IR;
@@ -12527,11 +12493,9 @@ void TestValuePhiValidation() {
     AfterInstruction,
   };
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   const auto expect_invalid = [](const Program &program, const char *text) {
     ExpectFatal([&] { ValidateProgram(program, true); }, text);
   };
-#endif
   const auto validate = [&](InvalidPhi invalid) {
     Program program;
     const auto add_block = [&](uint32_t id) {
@@ -12583,16 +12547,13 @@ void TestValuePhiValidation() {
     if (invalid == InvalidPhi::None) {
       ValidateProgram(program, true);
     }
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
     else {
       expect_invalid(program,
                      "malformed Phi did not terminate IR validation");
     }
-#endif
   };
 
   validate(InvalidPhi::None);
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   validate(InvalidPhi::Empty);
   validate(InvalidPhi::MissingParent);
   validate(InvalidPhi::DuplicateParent);
@@ -12805,7 +12766,6 @@ void TestValuePhiValidation() {
                    "non-dominating branch condition did not terminate IR "
                    "validation");
   }
-#endif
 }
 
 void TestLaneMaskProjection() {
@@ -13192,7 +13152,6 @@ void TestU64RegisterPairRoundTrip() {
         "modified SGPR pair incorrectly reused an unrelated native U64 value");
 }
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
 void TestNativeWideValueValidation() {
   using namespace ShaderRecompiler::IR;
 
@@ -13469,7 +13428,6 @@ void TestNativeWideValueValidation() {
     check_rejected(program, "invalid export-info index was accepted");
   }
 }
-#endif
 
 void TestNewShaderRecompilerZeroInitialRegisterState() {
   const uint32_t shader[] = {
@@ -13816,11 +13774,9 @@ void TestAutomaticObjectPrimitiveId() {
           "automatic RT7 lost its integer primitive ID addition");
     CheckSpirvBinaryValidates(result.spirv);
   }
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   pixel.target_shader_mask = 0xf0000000u;
   ExpectFatal([&] { (void)RecompileForTest(shader, options, nullptr, nullptr, prefix); },
               "automatic RT7 silently overlapped an explicit MRT7 export");
-#endif
 }
 
 void TestRenderTargetReverseExportMapping() {
@@ -14053,7 +14009,6 @@ void TestRenderTargetReverseExportMapping() {
             SpirvContainsVectorShuffle(packed_reversed.spirv, {2u, 1u, 0u, 3u}),
         "packed MRT conversion bypassed logical component ordering");
   CheckSpirvBinaryValidates(packed_reversed.spirv);
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   const uint32_t partial_packed[] = {
       EncodeExp0(0, 0x3), EncodeExp1(0, 1, 2, 3), 0xbf810000u};
   ExpectFatal([&] { (void)RecompileForTest(partial_packed, options); },
@@ -14062,7 +14017,6 @@ void TestRenderTargetReverseExportMapping() {
       EncodeExp0(0, 0xf, true, true), EncodeExp1(0, 1, 0, 0), 0xbf810000u};
   ExpectFatal([&] { (void)RecompileForTest(compressed_packed, options); },
               "packed MRT accepted an unsupported compressed export");
-#endif
 }
 
 void TestBlendMappingClassification() {
@@ -14357,7 +14311,6 @@ void TestNewShaderRecompilerNativeBindingPlan() {
             result.program.info.buffers[0].descriptor_index == 0,
         "repeated emission did not rebuild descriptor slots deterministically");
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   ShaderRecompiler::IR::Inst *buffer_handle = nullptr;
   for (auto *block : result.program.blocks) {
     const auto found = std::ranges::find_if(*block, [](const auto &inst) {
@@ -14378,7 +14331,6 @@ void TestNewShaderRecompilerNativeBindingPlan() {
                                                    options.input_info);
       },
       "invalid dense buffer resource did not terminate SPIR-V emission");
-#endif
 }
 
 void BuildTypedPlan(const uint32_t *code, uint32_t words,
@@ -16191,7 +16143,6 @@ void TestNewShaderRecompilerFlatAddressDomainsUseDma() {
   Check((result.ir_dump.find("GetScratchResource") != std::string::npos) &&
             result.program.scratch_dwords == 1,
         "SCRATCH incorrectly entered guest address tracking");
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   // A local aperture proof must not admit a median which can still produce a
   // canonical global address. Such stores need the existing ownership proof.
   const uint32_t mixed_domain_store[] = {
@@ -16214,7 +16165,6 @@ void TestNewShaderRecompilerFlatAddressDomainsUseDma() {
   };
   ExpectFatal([&]() { (void)RecompileForTest(changed_mask_store, options); },
               "FLAT proof discarded a differently predicated address value");
-#endif
 }
 
 void TestCompilerStageInputOwnership() {
@@ -16275,7 +16225,6 @@ void TestCompilerStageInputOwnership() {
         "compilation reinterpreted the translated program's identity");
   CheckSpirvBinaryValidates(compiled.spirv);
 
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   const uint32_t auxiliary_position[] = {
       EncodeExp0(0x0d, 0x1), EncodeExp1(0, 0, 0, 0), EncodeSopp(0x01)};
   for (const auto stage : {ShaderType::Pixel, ShaderType::Compute}) {
@@ -16295,7 +16244,6 @@ void TestCompilerStageInputOwnership() {
   ExpectFatal(
       [&] { (void)Frontend::TranslateProgram(decoded, cfg, invalid_fetch); },
       "embedded vertex fetch accepted another stage's metadata");
-#endif
 }
 
 void TestSpirvRepeatedEmission() {
@@ -16861,9 +16809,7 @@ int main() {
   TestNewShaderRecompilerSetpcDwordJumpTable(6);
   TestNewShaderRecompilerSetpcDwordJumpTable(106);
   TestTypedEntryStateIsMinimal();
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   TestFinalSsaRejectsRegisterStatePseudos();
-#endif
   TestValuePhiValidation();
   TestLaneMaskProjection();
   TestLateConstantPropagation();
@@ -16871,9 +16817,7 @@ int main() {
   TestMaskedShiftConstantPropagation();
   TestU64ShiftConstantPropagation();
   TestU64RegisterPairRoundTrip();
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   TestNativeWideValueValidation();
-#endif
   TestNewShaderRecompilerZeroInitialRegisterState();
   TestNewShaderRecompilerVertexSystemInputsWithoutMirrors();
   TestNewShaderRecompilerVertexExportUsesInvocationExecMask();

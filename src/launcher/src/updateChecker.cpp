@@ -21,33 +21,16 @@ namespace {
 constexpr qint64 MAX_METADATA_SIZE = 2 * 1024 * 1024;
 
 QString LauncherRelativePath() {
-#if defined(_WIN32)
-	return QStringLiteral("kyty_launcher.exe");
-#elif defined(__APPLE__)
-	return QStringLiteral("KytyPS5.app/Contents/MacOS/KytyPS5");
-#else
 	return QStringLiteral("kyty_launcher");
-#endif
 }
 
 QString InstallDirectory() {
 	QDir dir(QCoreApplication::applicationDirPath());
-#if defined(__APPLE__)
-	// Official macOS releases are a bundle; never update a flat development build.
-	if (!dir.cdUp() || !dir.cdUp() || dir.dirName() != QStringLiteral("KytyPS5.app") ||
-	    !dir.cdUp()) {
-		return {};
-	}
-#endif
 	return dir.absolutePath();
 }
 
 QString HelperName() {
-#if defined(_WIN32)
-	return QStringLiteral("kyty_updater.exe");
-#else
 	return QStringLiteral("kyty_updater");
-#endif
 }
 
 QNetworkRequest Request(const QUrl& url) {
@@ -60,13 +43,7 @@ QNetworkRequest Request(const QUrl& url) {
 }
 
 QString TarProgram() {
-#if defined(_WIN32)
-	// Use the OS tool, not a tar.exe from the download or current directory.
-	return QDir(qEnvironmentVariable("SystemRoot", QStringLiteral("C:/Windows")))
-	    .filePath(QStringLiteral("System32/tar.exe"));
-#else
 	return QStringLiteral("/usr/bin/tar");
-#endif
 }
 
 } // namespace

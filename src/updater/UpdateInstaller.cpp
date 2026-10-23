@@ -83,46 +83,28 @@ Plan MakePlan(const fs::path& source, const fs::path& target, const fs::path& la
 	if (IsWithin(plan.target, plan.source)) {
 		throw std::runtime_error("Update source must not contain the installation directory.");
 	}
-	// macOS releases also have flat runtime files; install only the signed bundle.
-	fs::path scope;
-	if (launcher.begin()->extension() == ".app") {
-		scope = *launcher.begin();
-	}
-	const auto source_root = scope.empty() ? plan.source : plan.source / scope;
-	if (Type(source_root) != fs::file_type::directory) {
-		throw std::runtime_error("The release does not contain the application bundle.");
-	}
 	const auto binary_directory = launcher.parent_path();
-#ifdef _WIN32
-	const fs::path suffix = ".exe";
-#else
 	const fs::path suffix;
-#endif
 	for (const auto& required: {launcher, binary_directory / ("kyty_emulator" + suffix.string()),
 	                            binary_directory / ("kyty_updater" + suffix.string())}) {
 		if (Type(plan.source / required) != fs::file_type::regular) {
 			throw std::runtime_error("Release is missing an executable: " + required.string());
 		}
-#ifndef _WIN32
 		const auto executable =
 		    fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec;
 		if ((fs::status(plan.source / required).permissions() & executable) == fs::perms::none) {
 			throw std::runtime_error("Release executable lacks execute permissions: " +
 			                         required.string());
 		}
-#endif
 	}
-	if (!scope.empty()) {
-		plan.entries.push_back({scope, fs::file_type::directory});
-	}
-	for (const auto& item: fs::recursive_directory_iterator(source_root)) {
+	for (const auto& item: fs::recursive_directory_iterator(plan.source)) {
 		const auto relative = item.path().lexically_relative(plan.source);
 		const auto type     = item.symlink_status().type();
 		if (relative.begin()->string().starts_with(".kyty-update")) {
 			throw std::runtime_error("Release uses a reserved updater filename.");
 		}
 		if (type == fs::file_type::symlink) {
-			CheckLink(item.path(), source_root);
+			CheckLink(item.path(), plan.source);
 		} else if (type != fs::file_type::directory && type != fs::file_type::regular) {
 			throw std::runtime_error("Release contains an unsupported file: " + relative.string());
 		}

@@ -16,17 +16,6 @@
 // IWYU pragma: no_include <windows.h>
 // IWYU pragma: no_include <winbase.h>
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-#ifdef CreateDirectory
-#undef CreateDirectory
-#endif
-#ifdef DeleteFile
-#undef DeleteFile
-#endif
-#ifdef CopyFile
-#undef CopyFile
-#endif
-#endif
 
 namespace Common {
 

@@ -5,12 +5,7 @@ set(cpuinfo_src
 	deps/clog/src/clog.c
 )
 
-# On Apple the target arch is driven by CMAKE_OSX_ARCHITECTURES, not the host
-# CMAKE_SYSTEM_PROCESSOR (which is arm64 even for an x86_64/Rosetta build).
 set(CPUINFO_TARGET_PROC "${CMAKE_SYSTEM_PROCESSOR}")
-if(APPLE AND CMAKE_OSX_ARCHITECTURES)
-	list(GET CMAKE_OSX_ARCHITECTURES 0 CPUINFO_TARGET_PROC)
-endif()
 
 if(CPUINFO_TARGET_PROC MATCHES "^(i[3-6]86|AMD64|x86(_64)?)$")
 	list(APPEND cpuinfo_src
@@ -26,8 +21,6 @@ if(CPUINFO_TARGET_PROC MATCHES "^(i[3-6]86|AMD64|x86(_64)?)$")
 		src/x86/cache/deterministic.c)
 	if(LINUX OR ANDROID)
 		list(APPEND cpuinfo_src src/x86/linux/init.c src/x86/linux/cpuinfo.c)
-	elseif(APPLE)
-		list(APPEND cpuinfo_src src/x86/mach/init.c src/mach/topology.c)
 	else()
 		list(APPEND cpuinfo_src src/x86/windows/init.c)
 	endif()

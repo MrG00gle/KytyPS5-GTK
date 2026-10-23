@@ -9,23 +9,11 @@
 #include <mutex>
 #include <utility>
 
-#if defined(_MSC_VER)
-#include <intrin.h>
-#elif defined(__x86_64__)
+#if   defined(__x86_64__)
 #include <xmmintrin.h>
 #endif
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#undef min
-#undef max
-#undef MemoryBarrier
-#elif defined(__APPLE__)
-#include <pthread.h>
-#elif defined(__linux__)
+#if   defined(__linux__)
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
@@ -56,14 +44,7 @@ public:
 
 private:
 	static uint32_t CurrentThread() noexcept {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-		return GetCurrentThreadId();
-#elif defined(__APPLE__)
-		// mach thread port is a nonzero per-thread id (0 is the "no owner" sentinel).
-		static thread_local const uint32_t tid =
-		    static_cast<uint32_t>(pthread_mach_thread_np(pthread_self()));
-		return tid;
-#elif defined(__linux__)
+#if   defined(__linux__)
 		static thread_local const uint32_t tid = static_cast<uint32_t>(::syscall(SYS_gettid));
 		return tid;
 #else

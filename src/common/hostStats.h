@@ -54,7 +54,7 @@ struct HostStats {
 	std::optional<double> disk_read_per_s;
 	std::optional<double> disk_write_per_s;
 
-	// GPU, whole device (macOS IOAccelerator).
+	// GPU, whole device.
 	std::string             gpu_model;
 	std::optional<uint32_t> gpu_cores;
 	std::optional<double>   gpu_percent;

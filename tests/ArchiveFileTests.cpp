@@ -19,9 +19,7 @@
 #include <vector>
 #include <zarchive/zarchivecommon.h>
 
-#if !defined(_WIN32) || defined(_GLIBCXX_GCC_GTHR_POSIX_H)
 #include <pthread.h>
-#endif
 
 namespace {
 
@@ -161,11 +159,9 @@ void CheckPackArchive(const std::filesystem::path &root, const std::vector<uint8
   WriteHostFile(source / "assets/subdir/data.bin", payload.data(), payload.size());
   WriteHostFile(source / unicode, nullptr, 0);
   uint64_t expected = ArchiveTests::Eboot.size() + payload.size();
-#if !defined(_WIN32)
   std::filesystem::create_directory_symlink("assets", source / "linked", error);
   Check(!error, "link a pack source directory");
   expected += payload.size();
-#endif
 
   const auto archive = root / "packed.zar";
   uint64_t done = 0;
@@ -188,9 +184,7 @@ void CheckPackArchive(const std::filesystem::path &root, const std::vector<uint8
           "round-trip packed file contents");
   };
   check_payload("assets/subdir/data.bin");
-#if !defined(_WIN32)
   check_payload("linked/subdir/data.bin");
-#endif
   const auto empty_file = Common::File::GetInfo(packed / unicode);
   Check(empty_file && empty_file->is_file && empty_file->size == 0 &&
             Common::File::IsDirectoryExisting(packed / "empty"),
@@ -210,7 +204,6 @@ void CheckPackArchive(const std::filesystem::path &root, const std::vector<uint8
 #endif
 }
 
-#if !defined(_WIN32) || defined(_GLIBCXX_GCC_GTHR_POSIX_H)
 void CheckCancellation(const std::filesystem::path &path,
                        const std::vector<uint8_t> &payload) {
   // Keep the file and destination on the parent thread: cancellation must only release the
@@ -252,7 +245,6 @@ void CheckCancellation(const std::filesystem::path &path,
   Check(observed == PTHREAD_CANCEL_DISABLE && read.bytes == 97,
         "preserve a caller's disabled cancellation state");
 }
-#endif
 
 } // namespace
 
@@ -390,11 +382,8 @@ int main() {
   }
   Check(concurrent_reads_ok, "read concurrently through independent file handles");
 
-#if !defined(_WIN32) || defined(_GLIBCXX_GCC_GTHR_POSIX_H)
   CheckCancellation(data_path, payload);
-#endif
 
-#if !defined(_WIN32)
   // Guest threads have much smaller stacks than std::thread's default stack.
   pthread_attr_t attributes;
   Check(pthread_attr_init(&attributes) == 0 &&
@@ -417,7 +406,6 @@ int main() {
   pthread_attr_destroy(&attributes);
   Check(pthread_join(thread, nullptr) == 0 && small_stack.passed,
         "decompress a multi-block file on a guest-sized stack");
-#endif
 
   Common::File metadata(root / "sce_sys/param.json", Common::File::Mode::Read);
   const auto metadata_data = metadata.ReadWholeBuffer();

@@ -13,12 +13,9 @@
 #include <utility>
 #include <zarchive/zarchivereader.h>
 
-// POSIX hosts and MinGW's pthread-backed libstdc++ have cancellable condition waits.
-// MSVC/ClangCL and MinGW's native Win32 threading backend do not use pthread waits.
-#if !defined(_WIN32) || defined(_GLIBCXX_GCC_GTHR_POSIX_H)
+// POSIX hosts have cancellable condition waits.
 #include <pthread.h>
 #define KYTY_ARCHIVE_PTHREAD_CANCELLATION
-#endif
 
 namespace Common {
 

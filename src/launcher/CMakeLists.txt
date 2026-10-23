@@ -14,7 +14,7 @@ file(GLOB launcher_forms
 	"forms/*.ui"
 )
 
-add_executable(launcher WIN32
+add_executable(launcher
 	${launcher_src}
 	${launcher_forms}
 	resources.qrc
@@ -27,19 +27,14 @@ if(LINUX)
 	find_package(Qt6 COMPONENTS DBus REQUIRED)
 	target_link_libraries(launcher Qt6::DBus)
 endif()
-if(WIN32)
-target_link_libraries(launcher setupapi)
-endif()
-if (CLANG AND NOT KYTY_CLANG_CL)
+if (CLANG)
 target_compile_options(launcher PRIVATE -frtti)
 target_link_libraries(launcher pthread)
 endif()
 target_include_directories(launcher PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set_target_properties(launcher PROPERTIES AUTOUIC ON AUTOMOC ON AUTORCC ON)
 
-if(WIN32 AND NOT KYTY_CLANG_CL)
-	set_target_properties(launcher PROPERTIES LINK_FLAGS "${KYTY_LD_OPTIONS}")
-elseif(LINUX)
+if(LINUX)
 	# Use the same linker as kyty_emulator.
 	set_target_properties(launcher PROPERTIES LINK_FLAGS "${KYTY_LD_OPTIONS}")
 endif()
@@ -52,101 +47,23 @@ add_custom_target(stage_updater
 	VERBATIM)
 add_dependencies(launcher kyty_emulator stage_updater)
 
-if(KYTY_CLANG_CL)
-	add_custom_command(TARGET launcher POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_PDB_FILE:kyty_emulator> $<TARGET_FILE_DIR:launcher>/$<TARGET_PDB_FILE_NAME:kyty_emulator>
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE_DIR:kyty_emulator>/${KYTY_EMULATOR_MAP_NAME} $<TARGET_FILE_DIR:launcher>/${KYTY_EMULATOR_MAP_NAME}
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${KYTY_THIRD_PARTY_DIR}/winpthread/bin/libwinpthread-1.dll" $<TARGET_FILE_DIR:launcher>/libwinpthread-1.dll
-	)
-endif()
-
-if(WIN32)
-    find_program(QT_WINDEPLOYQT NAMES windeployqt PATHS "${Qt6_DIR}/../../../bin")
-    if(NOT QT_WINDEPLOYQT)
-    	message(FATAL_ERROR "Could not find windeployqt")
-    endif()
-	add_custom_command(TARGET launcher POST_BUILD
-		COMMAND ${QT_WINDEPLOYQT} $<TARGET_FILE:launcher>
-			--no-compiler-runtime
-			--no-system-d3d-compiler
-			--no-system-dxc-compiler
-			--no-opengl-sw
-			--no-translations
-		COMMENT "Deploying Qt runtime and TLS plugins"
-		VERBATIM
-	)
-endif()
-
 set(launcher_name "kyty_launcher")
-if(APPLE)
-	set(launcher_name "KytyPS5")
-endif()
 
 set_target_properties(launcher PROPERTIES OUTPUT_NAME ${launcher_name})
 
-if(APPLE)
-	# macOS bundle: KytyPS5.app with launcher as main executable and
-	# kyty_emulator as helper inside Contents/MacOS. MoltenVK is found
-	# next to a flat executable or in the bundle's Contents/Frameworks;
-	# no rpath fixup is needed because SDL loads it by absolute path.
-	# Qt deployment (Frameworks + plugins) is handled by macdeployqt.
-	set_target_properties(launcher PROPERTIES
-		MACOSX_BUNDLE TRUE
-		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
-		INSTALL_RPATH "@executable_path/../Frameworks"
-		BUILD_WITH_INSTALL_RPATH TRUE
-	)
-endif()
-
 install(TARGETS launcher
-	BUNDLE DESTINATION .
 	RUNTIME DESTINATION .)
 
-if(NOT APPLE)
-	# Older releases require the previous executable name when validating updates.
-	install(CODE "
+# Older releases require the previous executable name when validating updates.
+install(CODE "
 		file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}\"
 			TYPE PROGRAM RENAME \"launcher${CMAKE_EXECUTABLE_SUFFIX}\"
 			FILES \"\${CMAKE_INSTALL_PREFIX}/${launcher_name}${CMAKE_EXECUTABLE_SUFFIX}\")
 	")
-endif()
 
-if(APPLE)
-	install(TARGETS kyty_emulator DESTINATION "KytyPS5.app/Contents/MacOS")
-	install(TARGETS kyty_updater DESTINATION "KytyPS5.app/Contents/MacOS")
-	install(FILES "${KYTY_TROPHY_UNLOCK_SOUND}" DESTINATION "KytyPS5.app/Contents/Resources/assets/sounds")
-	install(DIRECTORY "${CMAKE_SOURCE_DIR}/assets/cursors" DESTINATION "KytyPS5.app/Contents/Resources/assets")
-	# Deploy and ad-hoc sign the Qt frameworks and plugins in the bundle.
-	find_program(KYTY_MACDEPLOYQT NAMES macdeployqt PATHS "${Qt6_DIR}/../../../bin" NO_DEFAULT_PATH)
-	if(NOT KYTY_MACDEPLOYQT)
-		message(FATAL_ERROR "Could not find macdeployqt")
-	endif()
-	install(CODE "
-		execute_process(COMMAND \"${KYTY_MACDEPLOYQT}\" \"\${CMAKE_INSTALL_PREFIX}/KytyPS5.app\"
-			-codesign=-
-			RESULT_VARIABLE _kyty_deploy_result)
-		if(NOT _kyty_deploy_result EQUAL 0)
-			message(FATAL_ERROR \"macdeployqt failed with \${_kyty_deploy_result}\")
-		endif()
-	")
-endif()
+install(TARGETS kyty_updater RUNTIME DESTINATION .)
 
-if(NOT APPLE)
-	install(TARGETS kyty_updater RUNTIME DESTINATION .)
-endif()
-
-if(WIN32)
-    install(CODE "
-    		execute_process(
-    			COMMAND ${QT_WINDEPLOYQT} \"\${CMAKE_INSTALL_PREFIX}/${launcher_name}.exe\"
-				--no-compiler-runtime
-				--no-system-d3d-compiler
-				--no-system-dxc-compiler
-				--no-opengl-sw
-				--no-translations
-    		)
-    ")
-elseif(LINUX)
+if(LINUX)
 	# Bundle the Qt runtime and plugins.
 	set_target_properties(launcher PROPERTIES
 		INSTALL_RPATH "$ORIGIN/lib"

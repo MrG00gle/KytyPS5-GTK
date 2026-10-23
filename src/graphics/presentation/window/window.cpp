@@ -178,7 +178,7 @@ static void GameEventKeyboard(const EventKeyboard& key) {
 	     (key.repeat ? "repeat" : ""), key.scan_code, key.key_code, key.mod);
 #endif
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS || KYTY_PLATFORM == KYTY_PLATFORM_LINUX
+#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 	if (key.down) {
 		switch (key.key_code) {
 			case SDLK_F1:
@@ -472,13 +472,6 @@ void WindowContext::ProcessEvent(double time_s) {
 					Controller::CycleKeyboardPlayer();
 				}
 				return;
-#if defined(__APPLE__)
-			case SDLK_P:
-				if ((event->key.mod & SDL_KMOD_GUI) == 0) {
-					break;
-				}
-				[[fallthrough]];
-#endif
 			case SDLK_F2:
 				if (pressed) {
 					if ((event->key.mod & SDL_KMOD_SHIFT) != 0) {
@@ -798,31 +791,6 @@ static void WindowCreate(WindowContext& context) {
 	LOGF("WindowCreate(): width = %d, height = %d\n", width, height);
 
 	uint32_t window_flags = WindowContext::InitialWindowFlags(Config::FullscreenEnabled());
-#if defined(__APPLE__)
-	// SDL loads Vulkan while creating a Vulkan window, so select the bundled
-	// MoltenVK loader before calling SDL_CreateWindow. Keep an explicit user
-	// override, and fall back to SDL's normal loader search when no bundle is present.
-	if (std::getenv("SDL_VULKAN_LIBRARY") == nullptr) {
-		if (const char* base_path = SDL_GetBasePath(); base_path != nullptr) {
-			const std::string base_path_str = base_path;
-			std::string moltenvk_path = base_path_str + "libMoltenVK.dylib";
-			if (!Common::File::IsFileExisting(moltenvk_path)) {
-				moltenvk_path = base_path_str + "../Frameworks/libMoltenVK.dylib";
-			}
-			if (Common::File::IsFileExisting(moltenvk_path) &&
-			    SDL_setenv_unsafe("SDL_VULKAN_LIBRARY", moltenvk_path.c_str(), 0) == 0) {
-				LOGF("Vulkan loader: %s\n", moltenvk_path.c_str());
-			}
-		}
-	}
-
-	// macOS 26 window chrome (CoreUI asset decode, SwiftUI titlebar) has been observed
-	// throwing NSExceptions under Rosetta during the first CATransaction commit. A
-	// borderless window skips that machinery entirely.
-	if (std::getenv("KYTY_BORDERLESS") != nullptr) {
-		window_flags |= static_cast<uint32_t>(SDL_WINDOW_BORDERLESS);
-	}
-#endif
 	context.window = SDL_CreateWindow(KYTY_SDL_WINDOW_CAPTION, width, height, window_flags);
 
 	if (context.window == nullptr) {

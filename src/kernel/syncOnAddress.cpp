@@ -12,7 +12,7 @@
 #include <mutex>
 #include <unordered_map>
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX && !defined(__APPLE__)
+#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 #include <cerrno>
 #include <linux/futex.h>
 #include <sys/syscall.h>
@@ -81,7 +81,7 @@ void PollSignals(signal_poll_func_t signal_poll) {
 	}
 }
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX && !defined(__APPLE__)
+#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 
 template <typename T>
 int WaitLinux(volatile T* address, T expected, const WaitDeadline& deadline,
@@ -261,7 +261,7 @@ int WaitImpl(volatile T* address, T expected, const WaitDeadline& deadline,
 	}
 
 	int result = OK;
-#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX && !defined(__APPLE__)
+#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 	result = WaitLinux(address, expected, deadline, signal_poll);
 #else
 	result = WaitPortable(address, expected, deadline, signal_poll);
@@ -292,7 +292,7 @@ int Wake(volatile void* address, int32_t count) {
 		return KERNEL_ERROR_EINVAL;
 	}
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX && !defined(__APPLE__)
+#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 	return WakeLinux(address, count);
 #endif
 	return WakePortable(address, count);

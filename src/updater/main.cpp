@@ -8,30 +8,16 @@
 #include <thread>
 #include <vector>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
 #include <cerrno>
 #include <csignal>
 #include <spawn.h>
 #include <unistd.h>
 extern char** environ;
-#endif
 
 namespace {
 namespace fs = std::filesystem;
 
 bool WaitForParent(unsigned long pid) {
-#ifdef _WIN32
-	HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid);
-	if (!process) {
-		return GetLastError() == ERROR_INVALID_PARAMETER;
-	}
-	const auto result = WaitForSingleObject(process, 120000);
-	CloseHandle(process);
-	return result == WAIT_OBJECT_0;
-#else
 	if (pid > static_cast<unsigned long>(std::numeric_limits<pid_t>::max())) {
 		return false;
 	}
@@ -43,23 +29,9 @@ bool WaitForParent(unsigned long pid) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 	return false;
-#endif
 }
 
 bool Launch(const fs::path& launcher, const fs::path& directory) {
-#ifdef _WIN32
-	std::wstring command = L"\"" + launcher.wstring() + L"\"";
-	STARTUPINFOW startup {};
-	startup.cb = sizeof(startup);
-	PROCESS_INFORMATION process {};
-	if (!CreateProcessW(launcher.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr,
-	                    directory.c_str(), &startup, &process)) {
-		return false;
-	}
-	CloseHandle(process.hThread);
-	CloseHandle(process.hProcess);
-	return true;
-#else
 	if (chdir(directory.c_str()) != 0) {
 		return false;
 	}
@@ -67,7 +39,6 @@ bool Launch(const fs::path& launcher, const fs::path& directory) {
 	pid_t child;
 	char* arguments[] = {const_cast<char*>(launcher.c_str()), nullptr};
 	return posix_spawn(&child, launcher.c_str(), nullptr, nullptr, arguments, environ) == 0;
-#endif
 }
 
 void WriteResult(const fs::path& workspace, const fs::path& target,
@@ -153,11 +124,7 @@ int Run(const std::vector<fs::path>& arguments) {
 }
 } // namespace
 
-#ifdef _WIN32
-int wmain(int argc, wchar_t* argv[]) {
-#else
 int main(int argc, char* argv[]) {
-#endif
 	try {
 		return Run(std::vector<fs::path>(argv, argv + argc));
 	} catch (const std::exception& error) {

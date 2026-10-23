@@ -28,7 +28,7 @@ function(include_what_you_use_with_mappings target dirs mappings)
 endfunction()
 
 function(clang_tidy_check target config headers dirs)
-  if (KYTY_ENABLE_CLANG_TIDY AND CLANG AND ("${target}" IN_LIST KYTY_CLANG_TIDY) AND NOT KYTY_CLANG_CL)
+  if (KYTY_ENABLE_CLANG_TIDY AND CLANG AND ("${target}" IN_LIST KYTY_CLANG_TIDY))
     find_program (CLANG_TIDY_EXE NAMES "clang-tidy")
     if (CLANG_TIDY_EXE)
 		set(std_arg "-extra-arg=-std=c++${CMAKE_CXX_STANDARD}")
@@ -55,51 +55,12 @@ set(KYTY_WARNINGS_ARE_ERRORS OFF)
 set(KYTY_C_FLAGS "")
 set(KYTY_CPP_FLAGS "")
 
-# Apple's /usr/bin/ar does not understand @response-file syntax, and macOS has a
-# large ARG_MAX so response files aren't needed. Note: the Ninja generator forces a
-# response file whenever CMAKE_NINJA_FORCE_RESPONSE_FILE is *defined* (it tests
-# definedness, not the value), so on Apple it must be fully unset, not set to 0.
-if(APPLE)
-	unset(CMAKE_NINJA_FORCE_RESPONSE_FILE CACHE)
-else()
-	SET(CMAKE_NINJA_FORCE_RESPONSE_FILE 1 CACHE INTERNAL "")
-endif()
+SET(CMAKE_NINJA_FORCE_RESPONSE_FILE 1 CACHE INTERNAL "")
 
-if(KYTY_CLANG_CL)
-	if(CMAKE_CXX_FLAGS MATCHES "/W[0-4]")
-		string(REGEX REPLACE "/W[0-4]" "/W3" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-	else()
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W3")
-	endif()
-	
-	string(REGEX REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-	string(REGEX REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-	string(REGEX REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-	string(REGEX REPLACE "/MD" "/MT" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
-	string(REGEX REPLACE "/MD" "/MT" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
-	string(REGEX REPLACE "/MD" "/MT" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-			
-	set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} /utf-8 /Oy- /wd4244 /wd4305 /wd4800 /wd4345")
-  
-	if(KYTY_WARNINGS_ARE_ERRORS)
-		#set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} /WX")
-	    add_compile_options(/WX)
-	endif()
-
-	add_compile_options("$<$<CONFIG:Release>:/O2>")
-	add_compile_options("$<$<CONFIG:Release>:/DNDEBUG>")
-	add_compile_options("$<$<CONFIG:RelWithDebInfo>:/O2>")
-	add_compile_options("$<$<CONFIG:RelWithDebInfo>:/DNDEBUG>")
-
-	set(KYTY_C_FLAGS "${KYTY_CPP_FLAGS}")
-	
-elseif(CLANG OR GCC)
+if(CLANG OR GCC)
 
 	if (CLANG)
 	    set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} -fno-rtti -fno-exceptions -fcolor-diagnostics -finput-charset=UTF-8 -fexec-charset=UTF-8 -g -fno-strict-aliasing -fno-omit-frame-pointer -Wall -fmessage-length=0")
-	    if (WIN32)
-	    	set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} -static")
-	    endif()
 	else()
 		set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} -fno-exceptions -fdiagnostics-color=always -finput-charset=UTF-8 -fexec-charset=UTF-8 -static-libgcc -static-libstdc++ -g -fno-strict-aliasing -fno-omit-frame-pointer -Wall -Wno-unused-value -fmessage-length=0")
 	endif()

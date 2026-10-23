@@ -24,24 +24,7 @@
 #include <shared_mutex>
 #include <vector>
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h> // IWYU pragma: keep
-#ifndef MEM_RESERVE_PLACEHOLDER
-#define MEM_RESERVE_PLACEHOLDER 0x00040000
-#endif
-#ifndef MEM_REPLACE_PLACEHOLDER
-#define MEM_REPLACE_PLACEHOLDER 0x00004000
-#endif
-#ifndef MEM_PRESERVE_PLACEHOLDER
-#define MEM_PRESERVE_PLACEHOLDER 0x00000002
-#endif
-#ifndef MEM_COALESCE_PLACEHOLDERS
-#define MEM_COALESCE_PLACEHOLDERS 0x00000001
-#endif
-#elif KYTY_PLATFORM == KYTY_PLATFORM_LINUX
+#if   KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -952,44 +935,7 @@ bool CopySparseMemory(uint64_t vaddr, void* data, uint64_t size) {
 }
 
 static bool SelfTestSub64SharedPlaceholderAlias() {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	constexpr uint64_t PageSize    = 0x4000;
-	const auto         granularity = g_guest_address_space->GetGranularity();
-	if (granularity < PageSize * 2u) {
-		LOGF_COLOR(
-		    Log::Color::Yellow,
-		    "\t direct-memory sub-64K placeholder self-test skipped: granularity too small\n");
-		return true;
-	}
-
-	const auto base = FindGuestFreeRange(0, granularity, granularity);
-	if (base == 0) {
-		LOGF_COLOR(Log::Color::Red,
-		           "\t direct-memory sub-64K placeholder self-test: reserve unavailable\n");
-		return false;
-	}
-
-	const auto alias          = base + PageSize;
-	bool       ok             = false;
-	auto       failure_reason = GuestBackingStore::FailureReason::None;
-	if (g_guest_address_space->MapBacking(alias, PageSize, PageSize, VirtualMemory::Mode::ReadWrite,
-	                                      &failure_reason)) {
-		auto* ptr = reinterpret_cast<uint64_t*>(alias);
-		*ptr      = 0x4b59545953553634ull; // "KYTYSU64"
-		ok        = (*ptr == 0x4b59545953553634ull);
-		std::memset(ptr, 0, PageSize);
-
-		ok = g_guest_address_space->UnmapBacking(alias, PageSize) && ok;
-	}
-
-	LOGF_COLOR(
-	    ok ? Log::Color::Green : Log::Color::Red,
-	    "\t direct-memory sub-64K placeholder self-test: %s%s%s\n", ok ? "ok" : "failed",
-	    ok ? "" : ", reason = ", ok ? "" : GuestBackingStore::GetFailureReasonName(failure_reason));
-	return ok;
-#else
 	return true;
-#endif
 }
 
 static bool ReplaceFixedRangeWithReserved(uint64_t start, uint64_t size);
@@ -3620,35 +3566,6 @@ uint64_t TestGuestBackingSize() {
 	return g_guest_address_space->GetBackingSize();
 }
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-bool TestWindowsBackingViewModes() {
-	constexpr uint64_t size = 0x10000;
-	GuestBackingStore backing(size);
-	void* placeholder = VirtualAlloc2(GetCurrentProcess(), nullptr, size,
-	                                  MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
-	                                  nullptr, 0);
-	if (placeholder == nullptr) {
-		return false;
-	}
-	const auto address = reinterpret_cast<uint64_t>(placeholder);
-	bool valid = true;
-	for (auto [mode, protection]: std::array {
-	         std::pair {VirtualMemory::Mode::NoAccess, DWORD {PAGE_NOACCESS}},
-	         std::pair {VirtualMemory::Mode::Read, DWORD {PAGE_READONLY}},
-	         std::pair {VirtualMemory::Mode::ReadWrite, DWORD {PAGE_READWRITE}},
-	         std::pair {VirtualMemory::Mode::ExecuteReadWrite, DWORD {PAGE_EXECUTE_READWRITE}}}) {
-		if (!backing.MapFixed(address, size, 0, mode)) {
-			valid = false;
-			break;
-		}
-		MEMORY_BASIC_INFORMATION info {};
-		valid = VirtualQuery(placeholder, &info, sizeof(info)) != 0 &&
-		        info.Type == MEM_MAPPED && info.Protect == protection && valid;
-		EXIT_IF(!backing.Unmap(address, size));
-	}
-	return VirtualFree(placeholder, 0, MEM_RELEASE) != 0 && valid;
-}
-#endif
 
 bool TestGuestFreeRangeBounds() {
 	return GuestFreeRangeContains(0x10000, 0x20000, 0x18000, 0x4000) &&

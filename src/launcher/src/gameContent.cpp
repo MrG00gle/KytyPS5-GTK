@@ -11,19 +11,11 @@
 namespace GameContent {
 
 std::filesystem::path ToPath(const QString& path) {
-#if defined(_WIN32)
-	return std::filesystem::path(path.toStdWString());
-#else
 	return std::filesystem::path(path.toStdString());
-#endif
 }
 
 QString FromPath(const std::filesystem::path& path) {
-#if defined(_WIN32)
-	return QString::fromStdWString(path.wstring());
-#else
 	return QString::fromStdString(Common::PathToString(path));
-#endif
 }
 
 bool IsArchive(const QString& base) {

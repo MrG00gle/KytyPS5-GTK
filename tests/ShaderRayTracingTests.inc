@@ -45,7 +45,6 @@ void TestRayTracingInstructions() {
   D::DecodeProgram(literal, decoded);
   Check(decoded.instructions.size() == 2 && decoded.instructions[0].opcode == D::Opcode::S_MOV_B32,
         "BVH-shaped scalar literal was decoded as an instruction");
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
   for (const auto words : {std::array{0xf19c9f01u, 0x40081014u}, // BVH64 A16
                            std::array{0xf1989f01u, 0x40081014u}, // BVH32 A16
                            std::array{0xf1981f01u, 0x00081014u}, // not R128
@@ -63,5 +62,4 @@ void TestRayTracingInstructions() {
       }, "BVH NSA instruction accepted an incomplete ray address");
     }
   }
-#endif
 }

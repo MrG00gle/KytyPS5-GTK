@@ -8,97 +8,13 @@
 #include <condition_variable> // IWYU pragma: keep
 #include <mutex>
 
-// macOS has no clock_nanosleep.
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS && !defined(__APPLE__)
 #define KYTY_POSIX_HIGH_RES_SLEEP
 #include <ctime>
-#endif
 
 #include <sstream>
 #include <string>
 #include <thread>
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-#include <windows.h> // IWYU pragma: keep
-// IWYU pragma: no_include <winbase.h>
-constexpr DWORD KYTY_CS_SPIN_COUNT = 4000;
-
-#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
-#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
-#endif
-
-static void SleepHighResolution100ns(uint64_t units_100ns) {
-	if (units_100ns == 0) {
-		return;
-	}
-
-	thread_local HANDLE timer = CreateWaitableTimerExW(
-	    nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-	if (timer == nullptr) {
-		thread_local HANDLE fallback_timer = CreateWaitableTimerW(nullptr, TRUE, nullptr);
-		timer                              = fallback_timer;
-	}
-
-	if (timer != nullptr) {
-		LARGE_INTEGER due_time {};
-		due_time.QuadPart = -static_cast<LONGLONG>(units_100ns);
-		if (SetWaitableTimerEx(timer, &due_time, 0, nullptr, nullptr, nullptr, 0) != 0) {
-			WaitForSingleObject(timer, INFINITE);
-			return;
-		}
-	}
-
-	std::this_thread::sleep_for(std::chrono::nanoseconds(units_100ns * 100));
-}
-
-// IWYU pragma: no_include <minwindef.h>
-// IWYU pragma: no_include <synchapi.h>
-// IWYU pragma: no_include <minwinbase.h>
-// IWYU pragma: no_include <__mutex_base>
-// IWYU pragma: no_include <__threading_support>
-// IWYU pragma: no_include <errhandlingapi.h>
-// IWYU pragma: no_include <winerror.h>
-
-using InitializeConditionVariable_func_t = /*WINBASEAPI*/ VOID WINAPI (*)(PCONDITION_VARIABLE);
-using WakeConditionVariable_func_t    = /*WINBASEAPI*/ VOID       WINAPI (*)(PCONDITION_VARIABLE);
-using WakeAllConditionVariable_func_t = /*WINBASEAPI*/ VOID    WINAPI (*)(PCONDITION_VARIABLE);
-using SleepConditionVariableCS_func_t = /*WINBASEAPI*/ BOOL    WINAPI (*)(PCONDITION_VARIABLE,
-                                                                          PCRITICAL_SECTION, DWORD);
-
-static InitializeConditionVariable_func_t ResolveInitializeConditionVariable() {
-	if (HMODULE h = GetModuleHandle("KernelBase"); h != nullptr) // @suppress("Invalid arguments")
-	{
-		return reinterpret_cast<InitializeConditionVariable_func_t>(
-		    GetProcAddress(h, "InitializeConditionVariable"));
-	}
-	return nullptr;
-}
-static WakeConditionVariable_func_t ResolveWakeConditionVariable() {
-	if (HMODULE h = GetModuleHandle("KernelBase"); h != nullptr) // @suppress("Invalid arguments")
-	{
-		return reinterpret_cast<WakeConditionVariable_func_t>(
-		    GetProcAddress(h, "WakeConditionVariable"));
-	}
-	return nullptr;
-}
-static WakeAllConditionVariable_func_t ResolveWakeAllConditionVariable() {
-	if (HMODULE h = GetModuleHandle("KernelBase"); h != nullptr) // @suppress("Invalid arguments")
-	{
-		return reinterpret_cast<WakeAllConditionVariable_func_t>(
-		    GetProcAddress(h, "WakeAllConditionVariable"));
-	}
-	return nullptr;
-}
-static SleepConditionVariableCS_func_t ResolveSleepConditionVariableCS() {
-	if (HMODULE h = GetModuleHandle("KernelBase"); h != nullptr) // @suppress("Invalid arguments")
-	{
-		return reinterpret_cast<SleepConditionVariableCS_func_t>(
-		    GetProcAddress(h, "SleepConditionVariableCS"));
-	}
-	return nullptr;
-}
-
-#endif
 
 #ifdef KYTY_POSIX_HIGH_RES_SLEEP
 // An absolute deadline preserves the requested sleep across signal interruptions.
@@ -129,29 +45,11 @@ namespace Common {
 using thread_id_t = std::thread::id;
 
 struct MutexPrivate {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	MutexPrivate() { InitializeCriticalSectionAndSpinCount(&m_cs, KYTY_CS_SPIN_COUNT); }
-	~MutexPrivate() { DeleteCriticalSection(&m_cs); }
-	KYTY_CLASS_NO_COPY(MutexPrivate);
-	CRITICAL_SECTION m_cs {};
-#else
 	std::recursive_mutex m_mutex;
-#endif
 };
 
 struct CondVarPrivate {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	CondVarPrivate() {
-		static auto func = ResolveInitializeConditionVariable();
-		EXIT_NOT_IMPLEMENTED(func == nullptr);
-		func(&m_cv);
-	}
-	~CondVarPrivate() = default;
-	KYTY_CLASS_NO_COPY(CondVarPrivate);
-	CONDITION_VARIABLE m_cv {};
-#else
 	std::condition_variable_any m_cv;
-#endif
 };
 
 static wait_poll_func_t g_cond_wait_poll_callback = nullptr;
@@ -212,9 +110,7 @@ void Thread::Detach() {
 }
 
 void Thread::SleepMicro(uint32_t micros) {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	SleepHighResolution100ns(static_cast<uint64_t>(micros) * 10);
-#elif defined(KYTY_POSIX_HIGH_RES_SLEEP)
+#if   defined(KYTY_POSIX_HIGH_RES_SLEEP)
 	SleepHighResolutionNanos(static_cast<uint64_t>(micros) * 1000);
 #else
 	std::this_thread::sleep_for(std::chrono::microseconds(micros));
@@ -222,9 +118,7 @@ void Thread::SleepMicro(uint32_t micros) {
 }
 
 void Thread::SleepNano(uint64_t nanos) {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	SleepHighResolution100ns((nanos + 99) / 100);
-#elif defined(KYTY_POSIX_HIGH_RES_SLEEP)
+#if   defined(KYTY_POSIX_HIGH_RES_SLEEP)
 	SleepHighResolutionNanos(nanos);
 #else
 	std::this_thread::sleep_for(std::chrono::nanoseconds(nanos));
@@ -258,27 +152,15 @@ Mutex::~Mutex() {
 }
 
 void Mutex::Lock() {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	EnterCriticalSection(&m_mutex->m_cs);
-#else
 	m_mutex->m_mutex.lock();
-#endif
 }
 
 void Mutex::Unlock() {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	LeaveCriticalSection(&m_mutex->m_cs);
-#else
 	m_mutex->m_mutex.unlock();
-#endif
 }
 
 bool Mutex::TryLock() {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	return (TryEnterCriticalSection(&m_mutex->m_cs) != 0);
-#else
 	return m_mutex->m_mutex.try_lock();
-#endif
 }
 
 CondVar::CondVar(): m_cond_var(std::make_unique<CondVarPrivate>()) {}
@@ -288,36 +170,16 @@ CondVar::~CondVar() {
 }
 
 void CondVar::Wait(Mutex* mutex) {
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
 	std::unique_lock<std::recursive_mutex> cpp_lock(mutex->m_mutex->m_mutex, std::adopt_lock_t());
-#endif
 	auto poll_callback = [&] {
 		auto* callback = g_cond_wait_poll_callback;
 		if (callback == nullptr) {
 			return;
 		}
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-		LeaveCriticalSection(&mutex->m_mutex->m_cs);
-		callback();
-		EnterCriticalSection(&mutex->m_mutex->m_cs);
-#else
 		cpp_lock.unlock();
 		callback();
 		cpp_lock.lock();
-#endif
 	};
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	static auto func = ResolveSleepConditionVariableCS();
-	EXIT_NOT_IMPLEMENTED(func == nullptr);
-	if (g_cond_wait_poll_callback == nullptr) {
-		func(&m_cond_var->m_cv, &mutex->m_mutex->m_cs, INFINITE);
-	} else {
-		if (func(&m_cond_var->m_cv, &mutex->m_mutex->m_cs, 10) == 0 &&
-		    GetLastError() == ERROR_TIMEOUT) {
-			poll_callback();
-		}
-	}
-#else
 	if (g_cond_wait_poll_callback == nullptr) {
 		m_cond_var->m_cv.wait(cpp_lock);
 	} else {
@@ -327,7 +189,6 @@ void CondVar::Wait(Mutex* mutex) {
 		}
 	}
 	cpp_lock.release();
-#endif
 }
 
 void CondVar::SetWaitPollCallback(wait_poll_func_t callback) {
@@ -336,41 +197,19 @@ void CondVar::SetWaitPollCallback(wait_poll_func_t callback) {
 
 bool CondVar::WaitFor(Mutex* mutex, uint32_t micros) {
 	bool ok = false;
-#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
 	std::unique_lock<std::recursive_mutex> cpp_lock(mutex->m_mutex->m_mutex, std::adopt_lock_t());
-#endif
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	static auto func = ResolveSleepConditionVariableCS();
-	EXIT_NOT_IMPLEMENTED(func == nullptr);
-	ok = !(func(&m_cond_var->m_cv, &mutex->m_mutex->m_cs, (micros < 1000 ? 1 : micros / 1000)) ==
-	           0 &&
-	       GetLastError() == ERROR_TIMEOUT);
-#else
 	ok = (m_cond_var->m_cv.wait_for(cpp_lock, std::chrono::microseconds(micros)) ==
 	      std::cv_status::no_timeout);
 	cpp_lock.release();
-#endif
 	return ok;
 }
 
 void CondVar::Signal() {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	static auto func = ResolveWakeConditionVariable();
-	EXIT_NOT_IMPLEMENTED(func == nullptr);
-	func(&m_cond_var->m_cv);
-#else
 	m_cond_var->m_cv.notify_one();
-#endif
 }
 
 void CondVar::SignalAll() {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	static auto func = ResolveWakeAllConditionVariable();
-	EXIT_NOT_IMPLEMENTED(func == nullptr);
-	func(&m_cond_var->m_cv);
-#else
 	m_cond_var->m_cv.notify_all();
-#endif
 }
 
 int Thread::GetThreadIdUnique() {

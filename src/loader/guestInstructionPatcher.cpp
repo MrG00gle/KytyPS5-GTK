@@ -974,11 +974,7 @@ bool GenerateInstructionTrap(const DecodedCodeInstruction& decoded,
 }
 
 bool NeedsTrapRedZoneProtection(const DecodedCodeInstruction& decoded) {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	return decoded.red_zone_live.any();
-#else
 	return false;
-#endif
 }
 
 void TrapUnrelocatedInstructions(const PatchModule& module, const DecodedFunction& function,
@@ -1522,9 +1518,6 @@ GuestInstructionPatchResult PatchGuestInstructions(u64 segment_addr, u64 segment
 	std::unique_lock lock {module->mutex};
 	const size_t     trampoline_begin = module->trampoline_gen.getSize();
 	bool analyze_red_zone = protect_memory;
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	analyze_red_zone |= emulate_amd;
-#endif
 	for (size_t function_index = 0; function_index < starts.size(); ++function_index) {
 		const uintptr_t function_start = starts[function_index];
 		const uintptr_t function_end =
