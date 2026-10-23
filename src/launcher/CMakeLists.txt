@@ -36,7 +36,7 @@ set_target_properties(launcher PROPERTIES AUTOUIC ON AUTOMOC ON AUTORCC ON)
 
 if(LINUX)
 	# Use the same linker as kyty_emulator.
-	set_target_properties(launcher PROPERTIES LINK_FLAGS "${KYTY_LD_OPTIONS}")
+	kyty_link_with_lld(launcher)
 endif()
 
 add_custom_target(stage_updater
@@ -67,8 +67,8 @@ if(LINUX)
 	# Bundle the Qt runtime and plugins.
 	set_target_properties(launcher PROPERTIES
 		INSTALL_RPATH "$ORIGIN/lib"
-		BUILD_WITH_INSTALL_RPATH FALSE
-		LINK_FLAGS "${KYTY_LD_OPTIONS} -Wl,--disable-new-dtags")
+		BUILD_WITH_INSTALL_RPATH FALSE)
+	target_link_options(launcher PRIVATE -Wl,--disable-new-dtags)
 
 	# Support distribution and official Qt layouts.
 	get_target_property(kyty_qt_core_lib Qt6::Core IMPORTED_LOCATION_RELEASE)

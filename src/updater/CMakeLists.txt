@@ -3,3 +3,4 @@
 add_executable(kyty_updater main.cpp UpdateInstaller.cpp)
 
 target_compile_options(kyty_updater PRIVATE -fexceptions)
+kyty_link_with_lld(kyty_updater)

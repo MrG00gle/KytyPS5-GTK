@@ -98,7 +98,26 @@ target_compile_features(zarchive PRIVATE cxx_std_20)
 target_compile_options(zarchive PRIVATE -w)
 
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+# The emulator needs these SDL3 backends on Linux.
+set(kyty_sdl_required_backends ALSA PULSEAUDIO WAYLAND X11 LIBUDEV DBUS)
+foreach(kyty_sdl_backend IN LISTS kyty_sdl_required_backends)
+	set(SDL_${kyty_sdl_backend} ON CACHE BOOL "" FORCE)
+endforeach()
 add_subdirectory(SDL3)
+# SDL3 sets HAVE_<backend> in its own directory scope when a backend is enabled. These are the
+# values its "SDL_<backend> (Wanted: ON): ON" summary lines print.
+set(kyty_sdl_missing_backends "")
+foreach(kyty_sdl_backend IN LISTS kyty_sdl_required_backends)
+	get_directory_property(kyty_sdl_have DIRECTORY SDL3 DEFINITION HAVE_${kyty_sdl_backend})
+	if(NOT kyty_sdl_have)
+		list(APPEND kyty_sdl_missing_backends "SDL_${kyty_sdl_backend}")
+	endif()
+endforeach()
+if(kyty_sdl_missing_backends)
+	list(JOIN kyty_sdl_missing_backends ", " kyty_sdl_missing_backends)
+	message(FATAL_ERROR "SDL3 could not enable the required backends: ${kyty_sdl_missing_backends}. "
+		"Install their development packages and reconfigure.")
+endif()
 
 add_library(Vulkan-Headers INTERFACE)
 add_library(Vulkan::Headers ALIAS Vulkan-Headers)

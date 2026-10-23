@@ -10,7 +10,20 @@ if(NOT KYTY_GENERATOR_IS_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
 	set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
 endif()
 
-project(Kyty)
+project(Kyty LANGUAGES NONE)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(KytyPlatform)
+# CMAKE_SYSTEM_NAME and CMAKE_SYSTEM_PROCESSOR are known here, before any compiler check runs.
+kyty_check_platform()
+enable_language(C CXX)
+# Check again now that CMAKE_SIZEOF_VOID_P is known.
+kyty_check_platform()
+
+include(KytyLinker)
+kyty_require_lld()
+
+set(LINUX TRUE)
 
 find_program(SCCACHE_PROGRAM sccache)
 find_program(CCACHE_PROGRAM ccache)
@@ -31,14 +44,6 @@ endforeach()
 set(KYTY_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set(KYTY_TESTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests")
 set(KYTY_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty")
-
-if(CMAKE_SYSTEM_NAME MATCHES ".*Linux")
-	set(LINUX TRUE)
-endif()
-
-if(NOT LINUX)
-    message(FATAL_ERROR "only Linux builds are supported")
-endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -75,10 +80,6 @@ endif()
 
 include(TestBigEndian)
 
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-	message(FATAL_ERROR "only 64-bit builds are supported")
-endif()
-
 test_big_endian(BIG_ENDIAN)
 if(BIG_ENDIAN)
 	set(KYTY_ENDIAN KYTY_ENDIAN_BIG)
@@ -104,7 +105,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	set(GCC TRUE)
 	set(KYTY_COMPILER GCC)
-	set(KYTY_LINKER LD)
+	set(KYTY_LINKER LLD)
 else()
 	message(FATAL_ERROR "only Clang and GCC are supported; found ${CMAKE_CXX_COMPILER_ID}")
 endif()
@@ -114,9 +115,8 @@ set(KYTY_PROJECT_NAME "Emulator" CACHE STRING "Project name suffix")
 string(TOLOWER ${KYTY_COMPILER} KYTY_COMPILER_ID)
 string(TOLOWER ${KYTY_LINKER} KYTY_LINKER_ID)
 
-if (CLANG AND (KYTY_LINKER STREQUAL LLD))
-	set(KYTY_LD_OPTIONS "-fuse-ld=lld")
-endif()
+# kyty_link_with_lld() applies these options to every executable.
+set(KYTY_LD_OPTIONS "-fuse-ld=lld")
 
 project(Kyty${KYTY_PROJECT_NAME}${CMAKE_BUILD_TYPE}${KYTY_COMPILER} VERSION 0.3.0)
 
@@ -560,6 +560,45 @@ foreach(kyty_exception_test scalar_provenance_tests resource_tracking_tests
 	target_compile_options(${kyty_exception_test} PRIVATE -fexceptions)
 endforeach()
 
+# Every test executable. kyty_tests builds them all.
+set(kyty_test_executables
+	ime_dialog_tests
+	shader_cfg_tests
+	scalar_provenance_tests
+	image_page_table_tests
+	memory_tracker_tests
+	page_manager_tests
+	archive_file_tests
+	trophy_system_tests
+	avplayer_file_tests
+	vdecsw_tests
+	bit_array_tests
+	lru_cache_tests
+	shader_vertex_metadata_tests
+	resource_materialization_tests
+	resource_tracking_tests
+	event_queue_lifetime_tests
+	kernel_file_system_tests
+	sync_on_address_tests
+	shader_recompiler_compute_tests
+	virtual_memory_allocation_tests
+	audio_out2_port_tests
+	audio_out_timing_tests
+	ngs2_sampler_tests
+	pad_haptics_tests
+	controller_settings_tests
+	host_input_tests
+	save_data_memory_tests
+	png_enc_tests
+	ces_tests
+	save_data_dialog_tests
+	http_uri_parse_tests
+	sse4a_emulation_tests
+)
+foreach(kyty_test_executable IN LISTS kyty_test_executables)
+	kyty_link_with_lld(${kyty_test_executable})
+endforeach()
+
 if(BUILD_TESTING)
 	add_test(NAME emulator_user_name_cli
 	         COMMAND $<TARGET_FILE:kyty_emulator> --help --user-name 1234567890123456)
@@ -654,40 +693,7 @@ if(BUILD_TESTING)
 	add_test(NAME sse4a_emulation COMMAND $<TARGET_FILE:sse4a_emulation_tests>)
 	set_tests_properties(sse4a_emulation PROPERTIES TIMEOUT 30)
 
-	add_custom_target(kyty_tests DEPENDS
-		ime_dialog_tests
-		shader_cfg_tests
-		scalar_provenance_tests
-		image_page_table_tests
-		memory_tracker_tests
-		page_manager_tests
-		archive_file_tests
-		trophy_system_tests
-		avplayer_file_tests
-		vdecsw_tests
-		bit_array_tests
-		lru_cache_tests
-		shader_vertex_metadata_tests
-		resource_materialization_tests
-		resource_tracking_tests
-		event_queue_lifetime_tests
-		kernel_file_system_tests
-		sync_on_address_tests
-		shader_recompiler_compute_tests
-		virtual_memory_allocation_tests
-		audio_out2_port_tests
-		audio_out_timing_tests
-		ngs2_sampler_tests
-		pad_haptics_tests
-		controller_settings_tests
-		host_input_tests
-		save_data_memory_tests
-		png_enc_tests
-		ces_tests
-		save_data_dialog_tests
-		http_uri_parse_tests
-		sse4a_emulation_tests
-	)
+	add_custom_target(kyty_tests DEPENDS ${kyty_test_executables})
 endif()
 
 add_executable(kyty_emulator "${KYTY_SOURCE_DIR}/main.cpp" ${kyty_emulator_src})
@@ -726,9 +732,8 @@ set(KYTY_EMULATOR_MAP_NAME "kyty_emulator_${KYTY_COMPILER_ID}_${KYTY_LINKER_ID}.
 set(KYTY_EMULATOR_MAP_LINK_PATH "${CMAKE_CURRENT_BINARY_DIR}/${KYTY_EMULATOR_MAP_NAME}")
 
 if(LINUX)
-	set_target_properties(kyty_emulator PROPERTIES LINK_FLAGS "${KYTY_LD_OPTIONS}")
-	# LINK_FLAGS is a space-delimited string: a -Map path containing spaces would
-	# be split into bogus arguments, so pass it as a discrete link option instead.
+	kyty_link_with_lld(kyty_emulator)
+	# Pass the -Map path as a discrete link option, so a path containing spaces stays one argument.
 	target_link_options(kyty_emulator PRIVATE "-Wl,-Map=${KYTY_EMULATOR_MAP_LINK_PATH}")
 endif()
 
