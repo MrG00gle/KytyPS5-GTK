@@ -44,7 +44,7 @@
 
 #include <csignal> // pthread_kill is declared here, not in <pthread.h>
 
-#if defined(_M_X64) || defined(__x86_64__)
+#if defined(__x86_64__)
 #include <x86intrin.h>
 #endif
 
@@ -109,7 +109,7 @@ static uint64_t GetHostThreadId() {
 }
 
 static uint64_t KernelReadTscNative() {
-#if defined(_M_X64) || defined(__x86_64__)
+#if defined(__x86_64__)
 	return __rdtsc();
 #else
 	return Common::Timer::QueryPerformanceCounter();
@@ -118,7 +118,7 @@ static uint64_t KernelReadTscNative() {
 
 static uint64_t KernelGetTscFrequencyNative() {
 	static const uint64_t frequency = [] {
-#if defined(_M_X64) || defined(__x86_64__)
+#if defined(__x86_64__)
 		const auto host_frequency = Common::Timer::QueryPerformanceFrequency();
 		if (host_frequency == 0) {
 			return uint64_t {1000000000};
@@ -662,7 +662,7 @@ bool TestGuestStackOwnerLifecycle(uint64_t* first_address, uint64_t* second_addr
 #endif
 
 static KYTY_SYSV_ABI void* RunOnGuestStack(void* arg, pthread_entry_func_t func, void* stack_top) {
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__)
 	void*      ret = nullptr;
 	const auto aligned_stack_top =
 	    reinterpret_cast<uintptr_t>(stack_top) & ~static_cast<uintptr_t>(0x0f);
@@ -3267,7 +3267,7 @@ void KYTY_SYSV_ABI PthreadTestcancel() {
 void KYTY_SYSV_ABI PthreadExit(void* value) {
 	PRINT_NAME();
 
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__)
 	if (g_guest_entry_return_rsp != 0) {
 		const auto return_rsp    = g_guest_entry_return_rsp;
 		g_guest_entry_return_rsp = 0;

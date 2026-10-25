@@ -17,8 +17,6 @@ std::string Debug::GetLinker() {
 	return "ld";
 #elif KYTY_LINKER == KYTY_LINKER_LLD
 	return "lld";
-#elif KYTY_LINKER == KYTY_LINKER_LLD_LINK
-	return "lld_link";
 #else
 	return "??";
 #endif

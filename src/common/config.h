@@ -8,7 +8,6 @@
 
 #define KYTY_LINKER_LD       1
 #define KYTY_LINKER_LLD      2
-#define KYTY_LINKER_LLD_LINK 3
 
 #define KYTY_BUILD_DEBUG   1
 #define KYTY_BUILD_RELEASE 2
