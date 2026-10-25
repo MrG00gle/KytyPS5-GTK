@@ -426,7 +426,11 @@ void DecodeProgram(std::span<const uint32_t> code, Program& program) {
 			if (branch_targets.empty()) {
 				branch_targets.resize(code.size());
 			}
-			branch_targets[target_index] = true;
+			// A target at the code end is the CFG's exit label, and BuildGraph rejects targets
+			// beyond it, so neither can be a later instruction start.
+			if (target_index < code.size()) {
+				branch_targets[target_index] = true;
+			}
 		}
 		if (inst.opcode == Opcode::S_ENDPGM &&
 		    (word_index >= code.size() || branch_targets.empty() || !branch_targets[word_index])) {
