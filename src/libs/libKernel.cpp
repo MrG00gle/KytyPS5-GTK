@@ -2170,8 +2170,12 @@ static uint32_t FiberLoadState(const FiberObject* fiber) {
 	return std::atomic_ref<uint32_t>(state).load(std::memory_order_acquire);
 }
 
+// Builtins on the fiber stack path: they stay inline at -O0, where std::atomic_ref's helper
+// frames overflow 512-byte guest fiber stacks.
+static_assert(__atomic_always_lock_free(sizeof(FiberObject::state), nullptr));
+
 static void FiberStoreState(FiberObject* fiber, uint32_t state) {
-	std::atomic_ref<uint32_t>(fiber->state).store(state, std::memory_order_release);
+	__atomic_store_n(&fiber->state, state, __ATOMIC_RELEASE);
 }
 
 static void FiberCompleteSwitch(FiberObject* current) {
@@ -2186,9 +2190,8 @@ static void FiberCompleteSwitch(FiberObject* current) {
 }
 
 static bool FiberCompareExchangeState(FiberObject* fiber, uint32_t expected, uint32_t desired) {
-	return std::atomic_ref<uint32_t>(fiber->state)
-	    .compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
-	                             std::memory_order_acquire);
+	return __atomic_compare_exchange_n(&fiber->state, &expected, desired, false, __ATOMIC_ACQ_REL,
+	                                   __ATOMIC_ACQUIRE);
 }
 
 static void FiberSetContextValid(FiberObject* fiber, bool valid) {
