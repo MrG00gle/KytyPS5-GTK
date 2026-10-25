@@ -1,0 +1,16 @@
+{
+  "groups": {
+    "launcher_core": {
+      "paths": ["src/launcher/core/"],
+      "thresholds": {"lines": 90, "functions": 95}
+    },
+    "updater": {
+      "paths": ["src/updater/"],
+      "thresholds": {"lines": 90}
+    },
+    "gtk_presentation": {
+      "paths": ["src/launcher/gtk/"],
+      "thresholds": {"lines": 60}
+    }
+  }
+}
