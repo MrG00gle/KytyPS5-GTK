@@ -1,0 +1,32 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -41,2 +41,29 @@
+ set(FFMPEG_PREBUILT_DIR "" CACHE PATH "Directory containing an unpacked FFmpeg package")
++if(DEFINED KYTY_FFMPEG_PREBUILT_ARCHIVE)
++	# KytyPS5-GTK prefetched sources: unpack the pinned local archive instead of downloading it.
++	file(SHA256 "${KYTY_FFMPEG_PREBUILT_ARCHIVE}" FFMPEG_ARCHIVE_SHA256)
++	if(NOT FFMPEG_ARCHIVE_SHA256 STREQUAL KYTY_FFMPEG_PREBUILT_SHA256)
++		message(FATAL_ERROR "FFmpeg archive ${KYTY_FFMPEG_PREBUILT_ARCHIVE} has SHA-256 "
++			"${FFMPEG_ARCHIVE_SHA256}, expected ${KYTY_FFMPEG_PREBUILT_SHA256}")
++	endif()
++	set(FFMPEG_PREBUILT_DIR "${CMAKE_BINARY_DIR}/externals/ffmpeg-prefetched")
++	set(FFMPEG_PREBUILT_STAMP "${CMAKE_BINARY_DIR}/externals/ffmpeg-prefetched.sha256")
++	set(FFMPEG_PREBUILT_STAMP_SHA256 "")
++	if(EXISTS "${FFMPEG_PREBUILT_STAMP}")
++		file(READ "${FFMPEG_PREBUILT_STAMP}" FFMPEG_PREBUILT_STAMP_SHA256)
++	endif()
++	if(NOT FFMPEG_PREBUILT_STAMP_SHA256 STREQUAL FFMPEG_ARCHIVE_SHA256 OR
++		NOT EXISTS "${FFMPEG_PREBUILT_DIR}/include/libavcodec/avcodec.h")
++		message(STATUS "Extracting prefetched FFmpeg libraries...")
++		file(REMOVE "${FFMPEG_PREBUILT_STAMP}")
++		file(REMOVE_RECURSE "${FFMPEG_PREBUILT_DIR}")
++		file(MAKE_DIRECTORY "${FFMPEG_PREBUILT_DIR}")
++		execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf "${KYTY_FFMPEG_PREBUILT_ARCHIVE}"
++			WORKING_DIRECTORY "${FFMPEG_PREBUILT_DIR}" RESULT_VARIABLE FFMPEG_EXTRACT_RESULT)
++		if(NOT FFMPEG_EXTRACT_RESULT EQUAL 0)
++			message(FATAL_ERROR "Could not extract FFmpeg libraries")
++		endif()
++		file(WRITE "${FFMPEG_PREBUILT_STAMP}" "${FFMPEG_ARCHIVE_SHA256}")
++	endif()
++endif()
+ if(NOT FFMPEG_PREBUILT_DIR)

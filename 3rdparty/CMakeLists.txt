@@ -2,7 +2,9 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(cpuinfo)
 
-include(FetchContent)
+# Configure-time dependencies come from the registry, downloaded or from KYTY_PREFETCHED_SOURCES_DIR.
+include(KytyDependencies)
+kyty_check_prefetched_sources()
 
 # The Bluetooth DualSense transports speaker audio as fixed-size Opus packets.
 set(kyty_build_testing_saved "${BUILD_TESTING}")
@@ -10,11 +12,7 @@ set(BUILD_TESTING OFF)
 set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
 set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(opus
-	GIT_REPOSITORY https://github.com/xiph/opus.git
-	GIT_TAG ddbe48383984d56acd9e1ab6a090c54ca6b735a6
-	GIT_SHALLOW FALSE)
-FetchContent_MakeAvailable(opus)
+kyty_make_dependency_available(opus)
 set(BUILD_TESTING "${kyty_build_testing_saved}")
 install(FILES "${opus_SOURCE_DIR}/COPYING" DESTINATION "licenses/opus")
 
@@ -22,11 +20,7 @@ install(FILES "${opus_SOURCE_DIR}/COPYING" DESTINATION "licenses/opus")
 # (for example SteamVR, Monado or Virtual Desktop) comes from the user's system.
 set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
 set(BUILD_WITH_SYSTEM_JSONCPP OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(openxr
-	GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK.git
-	GIT_TAG f2448a8797c85814aa892efc1ab8707900fbcc78 # release-1.1.63
-	GIT_SHALLOW FALSE)
-FetchContent_MakeAvailable(openxr)
+kyty_make_dependency_available(openxr)
 # Keep the loader's headers and library out of the installed package.
 set_property(DIRECTORY "${openxr_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
 # The loader uses exceptions internally.
@@ -36,26 +30,14 @@ install(FILES "${openxr_SOURCE_DIR}/LICENSE" DESTINATION "licenses/openxr")
 # The guest instruction patcher needs a decoder/encoder and a small
 # trampoline assembler. Pin the same revisions used by shadPS4's implementation.
 set(XBYAK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-	xbyak
-	GIT_REPOSITORY https://github.com/herumi/xbyak.git
-	GIT_TAG 44a72f369268f7d552650891b296693e91db86bb
-	GIT_SHALLOW FALSE
-)
 
 set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(ZYDIS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ZYDIS_BUILD_DOXYGEN OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-	zydis
-	GIT_REPOSITORY https://github.com/zyantific/zydis.git
-	GIT_TAG 120e0e705f8e3b507dc49377ac2879979f0d545c
-	GIT_SUBMODULES_RECURSE TRUE
-	GIT_SHALLOW FALSE
-)
 
-FetchContent_MakeAvailable(xbyak zydis)
+kyty_make_dependency_available(xbyak)
+kyty_make_dependency_available(zydis)
 target_compile_definitions(xbyak INTERFACE XBYAK_NO_EXCEPTION)
 
 # ZArchive provides random-access reads for compressed game dumps. Build only
@@ -67,23 +49,10 @@ set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
 set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-	zstd
-	GIT_REPOSITORY https://github.com/facebook/zstd.git
-	GIT_TAG f8745da6ff1ad1e7bab384bd1f9d742439278e99
-	GIT_SHALLOW FALSE
-	SOURCE_SUBDIR build/cmake
-)
-FetchContent_Declare(
-	zarchive_source
-	GIT_REPOSITORY https://github.com/Exzap/ZArchive.git
-	GIT_TAG d2c717730092c7bf8cbb033b12fd4001b7c4d932
-	GIT_SHALLOW FALSE
-	PATCH_COMMAND "${GIT_EXECUTABLE}" apply --ignore-whitespace
-		"${CMAKE_CURRENT_SOURCE_DIR}/patches/zarchive-reader.patch"
-	SOURCE_SUBDIR kyty-library-only
-)
-FetchContent_MakeAvailable(zstd zarchive_source)
+kyty_make_dependency_available(zstd)
+# The registry applies patches/zarchive-reader.patch to the build-tree copy that
+# zarchive_source_SOURCE_DIR names.
+kyty_make_dependency_available(zarchive_source)
 
 add_library(zarchive STATIC
 	"${zarchive_source_SOURCE_DIR}/src/zarchivereader.cpp"
@@ -178,7 +147,26 @@ if (NOT TARGET FFmpeg::ffmpeg)
 	else()
 		set(ARCHITECTURE x86_64)
 	endif()
-	add_subdirectory(ffmpeg-core)
+	if(KYTY_PREFETCHED_SOURCES_DIR)
+		# ffmpeg-core downloads its archive with file(DOWNLOAD), which no FetchContent setting
+		# redirects, so a patched build-tree copy unpacks the prefetched archive instead.
+		kyty_make_dependency_available(ffmpeg_core_prebuilt)
+		set(KYTY_FFMPEG_PREBUILT_ARCHIVE "${ffmpeg_core_prebuilt_ARCHIVE}")
+		set(KYTY_FFMPEG_PREBUILT_SHA256 "${ffmpeg_core_prebuilt_SHA256}")
+		file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg-core/CMakeLists.txt" kyty_ffmpeg_core_sha256)
+		kyty_patch_source_copy(ffmpeg-core
+			SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg-core"
+			REVISION "CMakeLists.txt sha256 ${kyty_ffmpeg_core_sha256}"
+			PATCHES "${CMAKE_CURRENT_SOURCE_DIR}/patches/ffmpeg-core-prefetch.patch"
+			OUTPUT_VARIABLE kyty_ffmpeg_core_dir)
+		add_subdirectory("${kyty_ffmpeg_core_dir}" "${CMAKE_CURRENT_BINARY_DIR}/ffmpeg-core")
+	else()
+		add_subdirectory(ffmpeg-core)
+		get_directory_property(kyty_ffmpeg_zip DIRECTORY ffmpeg-core DEFINITION FFMPEG_ZIP_PATH)
+		if(kyty_ffmpeg_zip)
+			kyty_dependency_set_source(ffmpeg_core_prebuilt "${kyty_ffmpeg_zip}")
+		endif()
+	endif()
 	add_library(FFmpeg::ffmpeg ALIAS ffmpeg)
 endif()
 
