@@ -5,10 +5,14 @@
 #                       (CMAKE_DISABLE_FIND_PACKAGE_ALSA), so it cannot enable SDL_ALSA.
 #   prefetched_missing  prefetched_missing_sources (Requirement 14.13): KYTY_PREFETCHED_SOURCES_DIR
 #                       is an empty directory.
+#   coverage_requires_clang
+#                       coverage_requires_clang (Requirement 17.12): GCC and G++ as the compilers
+#                       with KYTY_ENABLE_COVERAGE=ON.
 # Each case configures SOURCE_DIR in a fresh WORK_DIR/build and expects the configure step to fail
 # with the guard's message before any build file is generated. WORK_DIR is deleted when the case
-# passes and kept for inspection when it fails. No case makes a network request: non_linux stops
-# before any dependency is declared, and the other two set KYTY_PREFETCHED_SOURCES_DIR.
+# passes and kept for inspection when it fails. No case makes a network request: non_linux and
+# coverage_requires_clang stop before any dependency is declared, and the other two set
+# KYTY_PREFETCHED_SOURCES_DIR.
 #
 #   cmake -DCASE=<case> -DSOURCE_DIR=<repository> -DWORK_DIR=<dir> -DGENERATOR=<generator>
 #         -DMAKE_PROGRAM=<program> -DC_COMPILER=<cc> -DCXX_COMPILER=<c++>
@@ -16,6 +20,7 @@
 #                                          (kyty_dependency_prefetch_entries of this build)
 #         [-DDEPENDENCIES=<name>,<name>...] prefetched_missing: every active dependency, in table
 #                                          order
+#         [-DGCC=<gcc> -DGXX=<g++>]        coverage_requires_clang: the GNU compilers
 #         -P tests/cmake/ConfigureGuardTests.cmake
 cmake_minimum_required(VERSION 3.19)
 
@@ -86,8 +91,22 @@ elseif(CASE STREQUAL "prefetched_missing")
 		"${kyty_dependency_count} of ${kyty_dependency_count} dependencies: ${kyty_dependencies_text}.")
 	# No FetchContent call ran.
 	list(APPEND kyty_absent_paths "${kyty_build_dir}/_deps")
+elseif(CASE STREQUAL "coverage_requires_clang")
+	foreach(kyty_compiler IN ITEMS GCC GXX)
+		if(NOT ${kyty_compiler} OR NOT EXISTS "${${kyty_compiler}}")
+			message(FATAL_ERROR "ConfigureGuardTests: coverage_requires_clang needs gcc and g++, but "
+				"${kyty_compiler}='${${kyty_compiler}}' was not found; install gcc and gcc-c++ and reconfigure")
+		endif()
+	endforeach()
+	list(REMOVE_ITEM kyty_arguments "-DCMAKE_C_COMPILER=${C_COMPILER}" "-DCMAKE_CXX_COMPILER=${CXX_COMPILER}")
+	list(APPEND kyty_arguments "-DCMAKE_C_COMPILER=${GCC}" "-DCMAKE_CXX_COMPILER=${GXX}"
+		-DKYTY_ENABLE_COVERAGE=ON)
+	set(kyty_expected_text "coverage instrumentation requires Clang (found C: GNU, C++: GNU)")
+	# The check runs before any dependency is declared.
+	list(APPEND kyty_absent_paths "${kyty_build_dir}/_deps")
 else()
-	message(FATAL_ERROR "ConfigureGuardTests: unknown CASE '${CASE}' (non_linux, sdl_backend, prefetched_missing)")
+	message(FATAL_ERROR "ConfigureGuardTests: unknown CASE '${CASE}' (non_linux, sdl_backend, prefetched_missing, "
+		"coverage_requires_clang)")
 endif()
 
 list(JOIN kyty_arguments " " kyty_arguments_text)

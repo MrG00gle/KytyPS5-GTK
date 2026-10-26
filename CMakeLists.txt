@@ -22,6 +22,8 @@ kyty_check_platform()
 
 include(KytyLinker)
 kyty_require_lld()
+# KYTY_ENABLE_COVERAGE: its compiler and tool checks run here, before any dependency is downloaded.
+include(KytyCoverage)
 # Once every directory is processed, check that each first-party executable links with lld.
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL kyty_check_lld_executables)
 

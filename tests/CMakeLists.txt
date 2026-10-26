@@ -443,6 +443,16 @@ kyty_add_test(NAME prefetched_missing_sources
 	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
 	TIMEOUT 120
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+# KYTY_ENABLE_COVERAGE=ON with gcc and g++ (Requirement 17.12).
+find_program(KYTY_SELFTEST_GCC NAMES gcc)
+find_program(KYTY_SELFTEST_GXX NAMES g++)
+kyty_add_test(NAME coverage_requires_clang
+	COMMAND "${CMAKE_COMMAND}" -DCASE=coverage_requires_clang
+	        "-DWORK_DIR=${kyty_selftests_dir}/coverage_requires_clang"
+	        "-DGCC=${KYTY_SELFTEST_GCC}" "-DGXX=${KYTY_SELFTEST_GXX}"
+	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 # property_harness_selftest_tests is defined in properties/.
 kyty_add_test(NAME property_harness_selftest
 	COMMAND "${CMAKE_COMMAND}" "-DEXE=$<TARGET_FILE:property_harness_selftest_tests>"
@@ -486,6 +496,15 @@ foreach(kyty_check IN ITEMS license copyright)
 		COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/check_preservation.py"
 		        --repo "${CMAKE_SOURCE_DIR}" --check ${kyty_check}
 		LABELS source-check
+		TIMEOUT 120
+		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+endforeach()
+
+# Unit tests of the coverage tools in tools/coverage/ (report.py and check.py).
+foreach(kyty_tool IN ITEMS report check)
+	kyty_add_test(NAME coverage_${kyty_tool}_tool
+		COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/coverage/tests"
+		        -p test_${kyty_tool}.py -v
 		TIMEOUT 120
 		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 endforeach()

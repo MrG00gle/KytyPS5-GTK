@@ -7,7 +7,8 @@
 #                 [TIMEOUT <1-600, default 120>] [SKIP_RETURN_CODE <0-255>] [ENVIRONMENT <var=value>...]
 #                 [WILL_FAIL])
 #       The only way to register a CTest test. Rejects bad arguments immediately. Tests run in
-#       ${CMAKE_BINARY_DIR}.
+#       ${CMAKE_BINARY_DIR}. With KYTY_ENABLE_COVERAGE ON, LLVM_PROFILE_FILE is added to the test's
+#       environment (cmake/KytyCoverage.cmake).
 #   kyty_add_test_directory(<dir> LINK <target>... [LABELS ...] [TIMEOUT <s>] [ENVIRONMENT ...])
 #       One executable and one test per <dir>/*Tests.cpp (globbed with CONFIGURE_DEPENDS). <Name>Tests.cpp
 #       in tests/<d> becomes test <d>_<snake_case(Name)> (no doubled <d>_ prefix) and executable
@@ -99,6 +100,10 @@ function(kyty_add_test)
 	endif()
 	if(DEFINED kyty_SKIP_RETURN_CODE)
 		set_tests_properties(${kyty_NAME} PROPERTIES SKIP_RETURN_CODE ${kyty_SKIP_RETURN_CODE})
+	endif()
+	# Coverage builds: every test process writes its raw profile for the coverage target.
+	if(KYTY_ENABLE_COVERAGE)
+		list(APPEND kyty_ENVIRONMENT "LLVM_PROFILE_FILE=${KYTY_COVERAGE_PROFILE_FILE}")
 	endif()
 	if(kyty_ENVIRONMENT)
 		set_tests_properties(${kyty_NAME} PROPERTIES ENVIRONMENT "${kyty_ENVIRONMENT}")
