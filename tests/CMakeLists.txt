@@ -391,3 +391,14 @@ kyty_add_test(NAME lld_linked_executables
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 
 kyty_add_test_directory(tests/emulator LINK kyty_emulator_options)
+
+# kyty_emulator --help and --redzone, checked by emulator_options_tests against the parser's own
+# option table and UsageText().
+if(TARGET emulator_options_tests)
+	kyty_add_test(NAME emulator_help
+		COMMAND $<TARGET_FILE:emulator_options_tests> --check-help $<TARGET_FILE:kyty_emulator>
+		TIMEOUT 5)
+	kyty_add_test(NAME emulator_redzone_rejected
+		COMMAND $<TARGET_FILE:emulator_options_tests> --check-redzone $<TARGET_FILE:kyty_emulator>
+		TIMEOUT 30)
+endif()

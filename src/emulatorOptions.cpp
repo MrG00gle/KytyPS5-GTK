@@ -132,11 +132,15 @@ std::string ApplyGame(RunOptions& options, std::string_view name, const std::str
 
 	const std::string fixed = Common::FixFilenameSlash(value);
 	const auto        path  = Common::PathFromUtf8(fixed);
+	// An archive-member path ("game.zar!/eboot.bin") is checked through its host archive.
+	const auto host = Common::IsArchivePath(path) ? Common::GetArchiveHostPath(path) : path;
 
-	if (::access(path.c_str(), F_OK) != 0 && (errno == ENOENT || errno == ENOTDIR)) {
+	if (::access(host.c_str(), F_OK) != 0 && (errno == ENOENT || errno == ENOTDIR)) {
 		return fmt::format("{} path does not exist: {}", name, fixed);
 	}
-	if (::access(path.c_str(), R_OK) != 0) {
+	// A directory game also needs search permission.
+	const int mode = Common::File::IsDirectoryExisting(host) ? (R_OK | X_OK) : R_OK;
+	if (::access(host.c_str(), mode) != 0) {
 		return fmt::format("{} path is not readable: {}", name, fixed);
 	}
 
