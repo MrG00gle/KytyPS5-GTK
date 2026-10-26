@@ -19,6 +19,7 @@
 #include "loader/additionalContent.h"
 #include "loader/runtimeLinker.h"
 #include "loader/symbolDatabase.h"
+#include "support/vulkanDeviceProbe.h"
 
 #include <algorithm>
 #include <array>
@@ -2232,6 +2233,7 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  KytyTests::ExitIfNoVulkanDevice("KernelFileSystemTests");
   Check(SDL_InitSubSystem(SDL_INIT_VIDEO), "initialize Vulkan test video");
   auto graphics = std::make_unique<Libs::Graphics::WindowContext>();
   graphics->graphic_ctx.screen_width = 64;

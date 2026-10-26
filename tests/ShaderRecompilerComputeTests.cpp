@@ -58,6 +58,7 @@
 #include "libs/errno.h"
 #include "loader/symbolDatabase.h"
 #include "spirv-tools/libspirv.hpp"
+#include "support/vulkanDeviceProbe.h"
 
 #if __has_include("graphics/host_gpu/renderer/renderTargetBarriers.h")
 #error "legacy render-target barrier API must remain deleted"
@@ -20442,6 +20443,7 @@ private:
   }
 
   void Init() {
+    KytyTests::ExitIfNoVulkanDevice("ShaderRecompilerComputeTests");
     static vk::detail::DynamicLoader loader;
     const auto get_instance_proc_addr =
         loader.getProcAddress<PFN_vkGetInstanceProcAddr>(
