@@ -13,6 +13,15 @@
 #       in tests/<d> becomes test <d>_<snake_case(Name)> (no doubled <d>_ prefix) and executable
 #       <test>_tests. Skips with a status message when <dir> has no sources or a LINK item is not a
 #       target yet.
+#   kyty_add_property_executable(<target> SOURCES <src>... [LINK <item>...])
+#       A RapidCheck property test executable (Requirements 17.8, 17.9): kyty_add_test_executable() of
+#       SOURCES plus tests/support/propertyMain.cpp, compiled with -fexceptions -frtti, with tests/ on
+#       the include path, and linked with rapidcheck and LINK.
+#   kyty_add_property_group(<group> LINK <target>...)
+#       One property executable <group> from tests/properties/<group>/P<NN>_*.cpp (globbed with
+#       CONFIGURE_DEPENDS), and one test <group>_p<NN> with the property label per file, which runs
+#       "<group> <NN>". Skips with a status message when the group has no sources or a LINK item is
+#       not a target yet.
 #
 # End-of-configure checks fail the configure step, listing every violation at once, when a test has no
 # TIMEOUT or one outside 1-600, a gpu or ui test has no SKIP_RETURN_CODE, a test was not registered
@@ -173,6 +182,53 @@ function(kyty_add_test_directory dir)
 		endif()
 		kyty_add_test_executable(${kyty_test_name}_tests SOURCES "${kyty_source}" LINK ${kyty_LINK})
 		kyty_add_test(NAME ${kyty_test_name} COMMAND $<TARGET_FILE:${kyty_test_name}_tests> ${kyty_test_arguments})
+	endforeach()
+endfunction()
+
+function(kyty_add_property_executable target)
+	cmake_parse_arguments(PARSE_ARGV 1 kyty "" "" "SOURCES;LINK")
+	if(kyty_UNPARSED_ARGUMENTS)
+		message(FATAL_ERROR "kyty_add_property_executable(${target}): unexpected arguments: ${kyty_UNPARSED_ARGUMENTS}")
+	endif()
+	if(NOT kyty_SOURCES)
+		message(FATAL_ERROR "kyty_add_property_executable(${target}): SOURCES is required")
+	endif()
+	if(NOT TARGET rapidcheck)
+		message(FATAL_ERROR "kyty_add_property_executable(${target}): the rapidcheck target does not exist "
+			"(3rdparty/CMakeLists.txt adds it when BUILD_TESTING is ON)")
+	endif()
+	kyty_add_test_executable(${target}
+		SOURCES ${kyty_SOURCES} "${CMAKE_SOURCE_DIR}/tests/support/propertyMain.cpp"
+		LINK rapidcheck ${kyty_LINK})
+	target_include_directories(${target} PRIVATE "${CMAKE_SOURCE_DIR}/tests")
+	target_compile_options(${target} PRIVATE -fexceptions -frtti)
+endfunction()
+
+function(kyty_add_property_group group)
+	cmake_parse_arguments(PARSE_ARGV 1 kyty "" "" "LINK")
+	if(kyty_UNPARSED_ARGUMENTS)
+		message(FATAL_ERROR "kyty_add_property_group(${group}): unexpected arguments: ${kyty_UNPARSED_ARGUMENTS}")
+	endif()
+	set(kyty_dir_text "tests/properties/${group}")
+	file(GLOB kyty_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/${kyty_dir_text}/P[0-9][0-9]_*.cpp")
+	if(NOT kyty_sources)
+		message(STATUS "KytyTesting: skipping property group ${group}: no ${kyty_dir_text}/P<NN>_*.cpp sources")
+		return()
+	endif()
+	foreach(kyty_item IN LISTS kyty_LINK)
+		if(NOT TARGET ${kyty_item})
+			message(STATUS "KytyTesting: skipping property group ${group}: link target ${kyty_item} does not exist yet")
+			return()
+		endif()
+	endforeach()
+
+	list(SORT kyty_sources)
+	kyty_add_property_executable(${group} SOURCES ${kyty_sources} LINK ${kyty_LINK})
+	foreach(kyty_source IN LISTS kyty_sources)
+		get_filename_component(kyty_file_name "${kyty_source}" NAME)
+		string(REGEX REPLACE "^P([0-9][0-9])_.*$" "\\1" kyty_number "${kyty_file_name}")
+		kyty_add_test(NAME ${group}_p${kyty_number} COMMAND $<TARGET_FILE:${group}> ${kyty_number}
+			LABELS property)
 	endforeach()
 endfunction()
 

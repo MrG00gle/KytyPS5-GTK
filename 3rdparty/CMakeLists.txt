@@ -66,6 +66,16 @@ target_link_libraries(zarchive PRIVATE libzstd_static)
 target_compile_features(zarchive PRIVATE cxx_std_20)
 target_compile_options(zarchive PRIVATE -w)
 
+# RapidCheck runs the property tests (tests/properties). It needs exceptions and RTTI, which the
+# global flags turn off, and stays out of the default build and the installed package.
+if(BUILD_TESTING)
+	set(RC_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+	set(RC_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+	kyty_make_dependency_available(rapidcheck)
+	set_property(DIRECTORY "${rapidcheck_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
+	target_compile_options(rapidcheck PRIVATE -fexceptions -frtti)
+endif()
+
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 # The emulator needs these SDL3 backends on Linux.
 set(kyty_sdl_required_backends ALSA PULSEAUDIO WAYLAND X11 LIBUDEV DBUS)

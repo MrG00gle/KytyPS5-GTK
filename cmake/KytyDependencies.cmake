@@ -438,3 +438,9 @@ kyty_declare_dependency(ffmpeg_core_prebuilt
 	URL https://github.com/KytyPS5/ext-ffmpeg-core/releases/download/9ac4cfd195f1/ffmpeg-linux-x64.zip
 	SHA256 f4659ad09e6f2b99ecf0227ca56fe4bbb34572cdd8d85ff85384f74ba38f23ef
 	FILENAME ffmpeg-linux-x64.zip)
+# Property tests only; undeclared, so neither fetched nor checked, when BUILD_TESTING is OFF.
+if(BUILD_TESTING)
+	kyty_declare_dependency(rapidcheck
+		GIT https://github.com/emil-e/rapidcheck.git
+		COMMIT 2c3c4365aca21ef4e612768fdc95b1ce8b39a651)
+endif()

@@ -402,3 +402,59 @@ if(TARGET emulator_options_tests)
 		COMMAND $<TARGET_FILE:emulator_options_tests> --check-redzone $<TARGET_FILE:kyty_emulator>
 		TIMEOUT 30)
 endif()
+
+# Infrastructure self-tests: cmake -P drivers in tests/cmake/. The configure guard tests configure this
+# source tree again in fresh directories under selftests/ of this build tree, without network access
+# (KYTY_PREFETCHED_SOURCES_DIR or a guard that stops first), and delete them when they pass.
+set(kyty_selftests_dir "${CMAKE_CURRENT_BINARY_DIR}/selftests")
+set(kyty_configure_guard_arguments
+	"-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+	"-DGENERATOR=${CMAKE_GENERATOR}"
+	"-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+	"-DC_COMPILER=${CMAKE_C_COMPILER}"
+	"-DCXX_COMPILER=${CMAKE_CXX_COMPILER}")
+set(kyty_configure_guard_script "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ConfigureGuardTests.cmake")
+kyty_add_test(NAME configure_rejects_non_linux
+	COMMAND "${CMAKE_COMMAND}" -DCASE=non_linux "-DWORK_DIR=${kyty_selftests_dir}/configure_rejects_non_linux"
+	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+kyty_add_test(NAME platform_guard
+	COMMAND "${CMAKE_COMMAND}" "-DPLATFORM_SCRIPT=${CMAKE_SOURCE_DIR}/cmake/KytyPlatform.cmake"
+	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PlatformGuardTest.cmake"
+	TIMEOUT 60)
+# The pristine dependency sources of this build, linked into a prefetched directory by the test.
+kyty_dependency_prefetch_entries(kyty_prefetch_entries)
+list(JOIN kyty_prefetch_entries "\n" kyty_prefetch_text)
+file(CONFIGURE OUTPUT "${kyty_selftests_dir}/prefetch-entries.txt" CONTENT "${kyty_prefetch_text}\n" @ONLY)
+kyty_add_test(NAME sdl_backend_guard
+	COMMAND "${CMAKE_COMMAND}" -DCASE=sdl_backend "-DWORK_DIR=${kyty_selftests_dir}/sdl_backend_guard"
+	        "-DPREFETCH_ENTRIES=${kyty_selftests_dir}/prefetch-entries.txt"
+	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
+	TIMEOUT 600
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+# Every dependency that the nested configure (BUILD_TESTING=ON) declares.
+get_property(kyty_active_dependencies GLOBAL PROPERTY KYTY_DEPENDENCIES)
+list(JOIN kyty_active_dependencies "," kyty_active_dependencies)
+kyty_add_test(NAME prefetched_missing_sources
+	COMMAND "${CMAKE_COMMAND}" -DCASE=prefetched_missing
+	        "-DWORK_DIR=${kyty_selftests_dir}/prefetched_missing_sources"
+	        "-DDEPENDENCIES=${kyty_active_dependencies}"
+	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+# property_harness_selftest_tests is defined in properties/.
+kyty_add_test(NAME property_harness_selftest
+	COMMAND "${CMAKE_COMMAND}" "-DEXE=$<TARGET_FILE:property_harness_selftest_tests>"
+	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PropertyHarnessSelfTest.cmake"
+	TIMEOUT 120)
+# Checks exit 77 itself, so no label and no SKIP_RETURN_CODE.
+kyty_add_test(NAME gpu_skip_without_device
+	COMMAND "${CMAKE_COMMAND}" "-DWORK_DIR=${kyty_selftests_dir}/gpu_skip_without_device"
+	        "-DSHADER_RECOMPILER_COMPUTE_TESTS=$<TARGET_FILE:shader_recompiler_compute_tests>"
+	        "-DKERNEL_FILE_SYSTEM_TESTS=$<TARGET_FILE:kernel_file_system_tests>"
+	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectGpuSkip.cmake"
+	TIMEOUT 120)
+
+# Last, so that the property groups see every library.
+add_subdirectory(properties)
