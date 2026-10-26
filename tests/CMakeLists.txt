@@ -456,5 +456,39 @@ kyty_add_test(NAME gpu_skip_without_device
 	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectGpuSkip.cmake"
 	TIMEOUT 120)
 
+# Platform macro source check (Requirements 5.7, 5.10): the scanner library (also linked by the
+# source_check_tests property group), the source_check executable, the scan of src and tests, and the
+# scanner's example tests in source_check/.
+add_library(kyty_source_check STATIC EXCLUDE_FROM_ALL
+	"${CMAKE_CURRENT_SOURCE_DIR}/source_check/platformMacroScanner.cpp")
+target_include_directories(kyty_source_check PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+kyty_add_test_executable(source_check
+	SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/source_check/SourceCheckMain.cpp"
+	LINK kyty_source_check)
+kyty_add_test(NAME source_check_platform_macros
+	COMMAND $<TARGET_FILE:source_check> --root "${CMAKE_SOURCE_DIR}" src tests
+	LABELS source-check)
+kyty_add_test_directory(tests/source_check LINK kyty_source_check LABELS source-check)
+
+# Repository content checks (Requirements 2.3, 3.7, 3.9, 4.1, 4.2, 4.8, 4.9) and license and
+# copyright preservation checks (Requirements 21.1, 21.6) over this source tree.
+foreach(kyty_check IN ITEMS nix_terms windows_terms macos_terms cmake_apple bundle_strings deleted_paths
+		vscode_patterns)
+	kyty_add_test(NAME content_check_${kyty_check}
+		COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/content_checks.py"
+		        --repo "${CMAKE_SOURCE_DIR}" --check ${kyty_check}
+		LABELS source-check
+		TIMEOUT 120
+		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+endforeach()
+foreach(kyty_check IN ITEMS license copyright)
+	kyty_add_test(NAME preservation_${kyty_check}
+		COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/check_preservation.py"
+		        --repo "${CMAKE_SOURCE_DIR}" --check ${kyty_check}
+		LABELS source-check
+		TIMEOUT 120
+		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+endforeach()
+
 # Last, so that the property groups see every library.
 add_subdirectory(properties)
