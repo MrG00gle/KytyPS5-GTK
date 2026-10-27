@@ -217,14 +217,28 @@ void TestAddressesAreIsolated() {
   while (ready.load(std::memory_order_acquire) != 2) {
     std::this_thread::yield();
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  Check(Wake(&first, 1) == OK, "first address wakes");
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  // A wake while the waiter is not blocked in Wait32's futex wait (before it
+  // blocks, or between its 10 ms wait slices) is lost: WakeLinux is a raw
+  // FUTEX_WAKE_PRIVATE and the value does not change. So wake again until the
+  // waiter returns.
+  const auto first_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!first_returned.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < first_deadline) {
+    Check(Wake(&first, 1) == OK, "first address wakes");
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
   Check(first_returned.load(std::memory_order_acquire),
         "first address waiter returned");
   Check(!second_returned.load(std::memory_order_acquire),
         "waking one address does not release another address");
-  Check(Wake(&second, 1) == OK, "second address wakes");
+  const auto second_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!second_returned.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < second_deadline) {
+    Check(Wake(&second, 1) == OK, "second address wakes");
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 
   first_waiter.join();
   second_waiter.join();
