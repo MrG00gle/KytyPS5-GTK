@@ -11,6 +11,8 @@ from decimal import Decimal
 from unittest import mock
 
 TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Keep the local imports below from writing __pycache__ into the checkout.
+sys.dont_write_bytecode = True
 sys.path.insert(0, TOOLS_DIR)
 
 import check  # noqa: E402
@@ -366,6 +368,20 @@ class ChangedLineTests(CheckRun):
         self.assertEqual(status, 1)
         self.assertIn("FAIL changed-line coverage: measured 75.00% (3/4), threshold 80%", stdout)
         self.assertIn("75.00%", self.step_summary_text())
+
+    def test_failure_that_rounds_to_threshold(self):
+        # 19999/25000 = 79.996 % rounds half up to 80.00 % but fails the exact comparison.
+        status, stdout, _ = self.run_pr(self.new_file_diff("src/a.cpp", 25000),
+                                        {"src/a.cpp": {number: int(number <= 19999)
+                                                       for number in range(1, 25001)}},
+                                        ["src/a.cpp"])
+        self.assertEqual(status, 1, stdout)
+        line = "FAIL changed-line coverage: measured 79.996% (below 80%) (19999/25000), threshold 80%"
+        self.assertIn(line, stdout)
+        self.assertIn("- " + line, self.step_summary_text())
+        changed_lines = [text for text in stdout.splitlines() if "changed-line" in text]
+        self.assertEqual(len(changed_lines), 1)
+        self.assertNotIn("80.00%", changed_lines[0])
 
     def test_no_counted_lines(self):
         status, stdout, _ = self.run_pr(self.new_file_diff("src/a.cpp", 3),

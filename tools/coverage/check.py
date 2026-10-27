@@ -36,8 +36,10 @@ import os
 import re
 import subprocess
 import sys
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 
+# Keep the local import below from writing __pycache__ into the checkout.
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import report  # noqa: E402
 
@@ -278,8 +280,16 @@ def check_changed_lines(results, args):
         results.check(True, "changed-line coverage: no changed line counts toward line coverage")
         return
     value = report.percent(covered, counted)
-    results.check(covered * 100 >= CHANGED_LINE_THRESHOLD * counted,
-                  f"changed-line coverage: measured {fmt(value)}% ({covered}/{counted}), "
+    passed = covered * 100 >= CHANGED_LINE_THRESHOLD * counted
+    measured = f"{fmt(value)}%"
+    if not passed and value == CHANGED_LINE_THRESHOLD:
+        # The value rounds up to the threshold: print it truncated so it reads as below it.
+        # Truncating a value below the threshold never reaches the threshold.
+        exact = Decimal(covered) * 100 / Decimal(counted)
+        truncated = exact.quantize(Decimal("0.001"), rounding=ROUND_DOWN)
+        measured = f"{truncated}% (below {CHANGED_LINE_THRESHOLD}%)"
+    results.check(passed,
+                  f"changed-line coverage: measured {measured} ({covered}/{counted}), "
                   f"threshold {CHANGED_LINE_THRESHOLD}%")
 
 

@@ -13,6 +13,8 @@ from decimal import Decimal
 from unittest import mock
 
 TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Keep the local import below from writing __pycache__ into the checkout.
+sys.dont_write_bytecode = True
 sys.path.insert(0, TOOLS_DIR)
 
 import report  # noqa: E402
@@ -278,10 +280,35 @@ class ExportTests(unittest.TestCase):
 
     def test_invalid_export(self):
         for export in ({}, {"data": [{"files": [{"filename": "x"}]}]},
-                       {"data": [{"files": [file_entry("/r/src/a.cpp", (-1, 2), (0, 0), (0, 0))]}]}):
+                       {"data": [{"files": [file_entry("/r/src/a.cpp", (-1, 2), (0, 0), (0, 0))]}]},
+                       {"data": [{"files": [{"filename": "/r/src/a.cpp",
+                                             "summary": {"lines": 5}}]}]}):
             with self.subTest(export=export):
                 with self.assertRaises(report.InputError):
                     report.export_file_counts(export, "/r")
+
+    def test_non_object_metric(self):
+        for metric, value in (("lines", 5), ("functions", [1, 2]), ("branches", "3")):
+            summary = {"lines": {"count": 2, "covered": 1}, metric: value}
+            with self.subTest(metric=metric, value=value), \
+                    tempfile.TemporaryDirectory() as root:
+                export = {"data": [{"files": [{"filename": os.path.join(root, "src", "a.cpp"),
+                                               "summary": summary}]}]}
+                with self.assertRaises(report.InputError) as raised:
+                    report.export_file_counts(export, root)
+                self.assertIn(f"invalid {metric} entry", str(raised.exception))
+                path = os.path.join(root, "export.json")
+                with open(path, "w", encoding="utf-8") as handle:
+                    json.dump(export, handle)
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    status = report.main(["--export", path, "--source-dir", root,
+                                          "--groups", GROUPS_JSON,
+                                          "--output-dir", os.path.join(root, "coverage")])
+                self.assertEqual(status, 2)
+                self.assertIn(f"error: invalid {metric} entry: {value!r} is not an object",
+                              stderr.getvalue())
+                self.assertFalse(os.path.exists(os.path.join(root, "coverage")))
 
     def test_scope_extension_filter(self):
         for name in ("a.c", "a.cc", "a.cpp", "a.cxx", "a.h", "a.hh", "a.hpp", "a.hxx", "a.inc"):

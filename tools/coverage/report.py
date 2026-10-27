@@ -88,7 +88,10 @@ def relative_path(filename, source_dir):
 
 
 def _count(summary, metric, key):
-    value = summary.get(metric, {}).get(key, 0)
+    entry = summary.get(metric, {})
+    if not isinstance(entry, dict):
+        raise InputError(f"invalid {metric} entry: {entry!r} is not an object")
+    value = entry.get(key, 0)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise InputError(f"invalid {metric} {key} value: {value!r}")
     return value
