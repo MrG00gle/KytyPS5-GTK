@@ -2,9 +2,11 @@
 # the end of this file is the only place their revisions and checksums are pinned.
 #
 #   kyty_declare_dependency(<name> GIT <url> COMMIT <40-hex sha> [PATCHES <file>...]
-#                           [SUBMODULES <path>...] [SOURCE_SUBDIR <dir>])
+#                           [SUBMODULES <path>... | NO_SUBMODULES] [SOURCE_SUBDIR <dir>])
 #   kyty_declare_dependency(<name> URL <url> SHA256 <64-hex sha> FILENAME <file>)
-#       Adds a registry entry. PATCHES are relative to the top-level source directory.
+#       Adds a registry entry. PATCHES are relative to the top-level source directory. Online, a GIT
+#       entry clones every submodule of the repository, only the SUBMODULES paths, or, with
+#       NO_SUBMODULES, none (GIT_SUBMODULES "", which CMP0097 makes mean none).
 #   kyty_check_prefetched_sources()
 #       Call once, before any FetchContent call. With KYTY_PREFETCHED_SOURCES_DIR set, it fails once,
 #       naming every dependency whose <dir>/<name> tree (or <dir>/<name>/<FILENAME> archive) or
@@ -61,7 +63,7 @@ endfunction()
 
 function(kyty_declare_dependency name)
 	set(kyty_dep_context "kyty_declare_dependency(${name})")
-	cmake_parse_arguments(PARSE_ARGV 1 kyty_dep "" "GIT;COMMIT;URL;SHA256;FILENAME;SOURCE_SUBDIR"
+	cmake_parse_arguments(PARSE_ARGV 1 kyty_dep "NO_SUBMODULES" "GIT;COMMIT;URL;SHA256;FILENAME;SOURCE_SUBDIR"
 		"PATCHES;SUBMODULES")
 	if(kyty_dep_UNPARSED_ARGUMENTS)
 		message(FATAL_ERROR "${kyty_dep_context}: unexpected arguments: ${kyty_dep_UNPARSED_ARGUMENTS}")
@@ -81,6 +83,9 @@ function(kyty_declare_dependency name)
 		if(NOT kyty_dep_valid)
 			message(FATAL_ERROR "${kyty_dep_context}: COMMIT '${kyty_dep_COMMIT}' is not a 40-character lowercase hexadecimal commit")
 		endif()
+		if(kyty_dep_NO_SUBMODULES AND kyty_dep_SUBMODULES)
+			message(FATAL_ERROR "${kyty_dep_context}: give at most one of SUBMODULES and NO_SUBMODULES")
+		endif()
 		set(kyty_dep_patches "")
 		foreach(kyty_dep_patch IN LISTS kyty_dep_PATCHES)
 			get_filename_component(kyty_dep_patch "${kyty_dep_patch}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
@@ -94,10 +99,12 @@ function(kyty_declare_dependency name)
 		set_property(GLOBAL PROPERTY KYTY_DEPENDENCY_${name}_COMMIT "${kyty_dep_COMMIT}")
 		set_property(GLOBAL PROPERTY KYTY_DEPENDENCY_${name}_PATCHES "${kyty_dep_patches}")
 		set_property(GLOBAL PROPERTY KYTY_DEPENDENCY_${name}_SUBMODULES "${kyty_dep_SUBMODULES}")
+		set_property(GLOBAL PROPERTY KYTY_DEPENDENCY_${name}_NO_SUBMODULES "${kyty_dep_NO_SUBMODULES}")
 		set_property(GLOBAL PROPERTY KYTY_DEPENDENCY_${name}_SOURCE_SUBDIR "${kyty_dep_SOURCE_SUBDIR}")
 	elseif(kyty_dep_URL AND NOT kyty_dep_GIT)
-		if(DEFINED kyty_dep_COMMIT OR kyty_dep_PATCHES OR kyty_dep_SUBMODULES OR DEFINED kyty_dep_SOURCE_SUBDIR)
-			message(FATAL_ERROR "${kyty_dep_context}: COMMIT, PATCHES, SUBMODULES, and SOURCE_SUBDIR belong to GIT entries")
+		if(DEFINED kyty_dep_COMMIT OR kyty_dep_PATCHES OR kyty_dep_SUBMODULES OR kyty_dep_NO_SUBMODULES
+		   OR DEFINED kyty_dep_SOURCE_SUBDIR)
+			message(FATAL_ERROR "${kyty_dep_context}: COMMIT, PATCHES, SUBMODULES, NO_SUBMODULES, and SOURCE_SUBDIR belong to GIT entries")
 		endif()
 		_kyty_dependency_is_hex("${kyty_dep_SHA256}" 64 kyty_dep_valid)
 		if(NOT kyty_dep_valid)
@@ -375,6 +382,7 @@ function(kyty_make_dependency_available name)
 	_kyty_dependency_get(${name} COMMIT kyty_dep_commit)
 	_kyty_dependency_get(${name} PATCHES kyty_dep_patches)
 	_kyty_dependency_get(${name} SUBMODULES kyty_dep_submodules)
+	_kyty_dependency_get(${name} NO_SUBMODULES kyty_dep_no_submodules)
 	_kyty_dependency_get(${name} SOURCE_SUBDIR kyty_dep_subdir)
 	set(kyty_dep_args GIT_REPOSITORY "${kyty_dep_url}" GIT_TAG ${kyty_dep_commit} GIT_SHALLOW FALSE)
 	if(kyty_dep_submodules)
@@ -392,7 +400,12 @@ function(kyty_make_dependency_available name)
 		set(FETCHCONTENT_FULLY_DISCONNECTED ON)
 		set(FETCHCONTENT_SOURCE_DIR_${kyty_dep_upper} "${kyty_dep_prefetched}/${name}")
 	endif()
-	FetchContent_Declare(${name} ${kyty_dep_args})
+	if(kyty_dep_no_submodules)
+		# Quoted here: an empty element of kyty_dep_args would vanish in the unquoted expansion.
+		FetchContent_Declare(${name} ${kyty_dep_args} GIT_SUBMODULES "")
+	else()
+		FetchContent_Declare(${name} ${kyty_dep_args})
+	endif()
 	FetchContent_MakeAvailable(${name})
 	kyty_dependency_set_source(${name} "${${name}_SOURCE_DIR}")
 
@@ -440,7 +453,9 @@ kyty_declare_dependency(ffmpeg_core_prebuilt
 	FILENAME ffmpeg-linux-x64.zip)
 # Property tests only; undeclared, so neither fetched nor checked, when BUILD_TESTING is OFF.
 if(BUILD_TESTING)
+	# ext/catch and ext/googletest are only used by RapidCheck's own tests (RC_ENABLE_TESTS is OFF).
 	kyty_declare_dependency(rapidcheck
 		GIT https://github.com/emil-e/rapidcheck.git
-		COMMIT 2c3c4365aca21ef4e612768fdc95b1ce8b39a651)
+		COMMIT 2c3c4365aca21ef4e612768fdc95b1ce8b39a651
+		NO_SUBMODULES)
 endif()
