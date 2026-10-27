@@ -1,74 +1,83 @@
 # Main_Branch passing-test baseline (Requirement 5.4), read by tools/checks/check_regression.py.
 # Lines that start with '#' are comments. Every other line is one CTest test name that
 # CTest reported as passed at the Main_Branch reference.
+# This capture replaces the phase 1 capture from the QEMU host (commit 1d3e431d: 37 of 58 tests on
+#   "QEMU Virtual CPU version 2.5+", which has no AVX, AVX2, BMI2, or SSE4a).
 # Main_Branch SHA: c5016d9455fe52bdd090cef7d80beb15fad6a3a5
 # Compiler: clang version 22.1.8 (Fedora 22.1.8-4.fc44) (CMAKE_C_COMPILER=/usr/bin/clang, CMAKE_CXX_COMPILER=/usr/bin/clang++)
 # Linker: LLD 22.1.8 (compatible with GNU linkers) (-fuse-ld=lld in CMAKE_EXE_LINKER_FLAGS, CMAKE_SHARED_LINKER_FLAGS, CMAKE_MODULE_LINKER_FLAGS)
 # Build type: Release
 # Build: cmake version 4.3.0, generator Ninja, default project options, targets kyty_tests and kyty_emulator
-# Host: Fedora Linux 44 (Workstation Edition) x86_64; command: ctest --output-junit <file>
-# Host CPU: KVM guest, "QEMU Virtual CPU version 2.5+" (SSE4.2; no AVX, AVX2, BMI2, or SSE4a)
+# Captured: 2026-10-27
+# Host: Fedora Linux 44 (Workstation Edition) x86_64, KVM guest, 4 vCPUs, 11.7 GiB RAM;
+#   command: ctest --output-junit <file> --output-on-failure
+# Host CPU: "Intel(R) Core(TM) i5-6500T CPU @ 2.50GHz" (Skylake; SSE4.2, AVX, AVX2, BMI2; no SSE4a)
 # Host Vulkan: no GPU passthrough (QEMU std VGA 1234:1111); lavapipe is the only usable device
-# Host-specific failures: the 19 GPU tests and kernel_file_system need Vulkan features lavapipe lacks;
-#   virtual_memory_allocation exits 190 (instruction emulation fails in TestPackedReciprocalSquareRoot
-#   on this CPU model), so its later memory-subsystem cases never run on this host
-# Passed: 37 of 58 tests
+# Resource cap: every ctest ran through kyty-limit (systemd slice MemoryMax=2G, MemorySwapMax=0,
+#   CPUQuota=240% = 60% of 4 vCPUs, nice 10; an OOM kills only the largest process), tests run serially
+# Stability: every test below passed in the full run and in 3 more runs (ctest --repeat until-fail:3)
+# Host-specific failures: the 19 VulkanHarness GPU tests print "ShaderRecompilerComputeTests: VulkanHarness
+#   failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image
+#   atomics" (lavapipe lacks them) and are then OOM-killed under the 2 GiB cap; kernel_file_system aborts
+#   with "KernelFileSystemTests: failed: initialize Vulkan test video" (lavapipe)
+# Passed: 38 of 58 tests
 # Not passed at the Main_Branch reference (not part of the baseline):
-#   kernel_file_system (fail)
-#   shader_recompiler_compute (fail)
-#   shader_recompiler_float_min_max (fail)
-#   shader_recompiler_alignbyte (fail)
-#   graphics_pipeline_rasterization (fail)
-#   virtual_memory_allocation (fail)
-#   command_scheduler_timeline (fail)
-#   stream_buffer_ring (fail)
-#   gpu_command_lane (fail)
-#   pm4_context_state (fail)
-#   gpu_tiler (fail)
-#   texture_cache_layered_image (fail)
-#   host_image_allocation (fail)
-#   texture_cache_image_views (fail)
-#   texture_cache_storage_sampled (fail)
-#   compute_meta_clear_classification (fail)
-#   buffer_cache_dirty_gc (fail)
-#   color_render_target_1d (fail)
-#   texture_cache_image_overlap (fail)
-#   texture_cache_htile_clear (fail)
-#   buffer_cache_ranges (fail)
-archive_file
-audio_out2_port
-audio_out_timing
-avplayer_file
-bit_array
-ces
-controller_settings
-emulator_present_mode_cli
-emulator_present_mode_invalid
+#   kernel_file_system (fail: Subprocess aborted; lavapipe features)
+#   shader_recompiler_compute (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   shader_recompiler_float_min_max (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   shader_recompiler_alignbyte (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   graphics_pipeline_rasterization (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   command_scheduler_timeline (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   stream_buffer_ring (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   gpu_command_lane (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   pm4_context_state (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   gpu_tiler (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   texture_cache_layered_image (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   host_image_allocation (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   texture_cache_image_views (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   texture_cache_storage_sampled (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   compute_meta_clear_classification (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   buffer_cache_dirty_gc (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   color_render_target_1d (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   texture_cache_image_overlap (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   texture_cache_htile_clear (fail: Subprocess killed; OOM under the cap; lavapipe features)
+#   buffer_cache_ranges (fail: Subprocess killed; OOM under the cap; lavapipe features)
+# Flaky (excluded): none
 emulator_user_name_cli
 emulator_user_name_too_long
-event_queue_lifetime
-graphics_draw_offsets
-guest_red_zone_patcher
-host_input
-http_uri_parse
-image_page_table
-image_transfer_layout
+emulator_present_mode_cli
+emulator_present_mode_invalid
 ime_dialog
-lru_cache
+shader_cfg
+scalar_provenance
+image_page_table
 memory_tracker
-ngs2_sampler
-pad_haptics
 page_manager
-png_enc
+archive_file
+trophy_system
+avplayer_file
+vdecsw
+bit_array
+lru_cache
+shader_vertex_metadata
 resource_materialization
 resource_tracking
-save_data_dialog
-save_data_memory
-scalar_provenance
-shader_cfg
-shader_recompiler_tessellation
-shader_vertex_metadata
+event_queue_lifetime
 sync_on_address
+audio_out2_port
+audio_out_timing
+ngs2_sampler
+pad_haptics
+controller_settings
+host_input
+save_data_memory
+png_enc
+ces
+save_data_dialog
+http_uri_parse
+shader_recompiler_tessellation
+graphics_draw_offsets
+virtual_memory_allocation
+guest_red_zone_patcher
+image_transfer_layout
 texture_cache_depth_readback
-trophy_system
-vdecsw
