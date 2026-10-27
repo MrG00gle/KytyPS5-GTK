@@ -26,10 +26,12 @@
 #
 # End-of-configure checks fail the configure step, listing every violation at once, when a test has no
 # TIMEOUT or one outside 1-600, a gpu or ui test has no SKIP_RETURN_CODE, a test was not registered
-# with kyty_add_test(), a .cpp file under tests/ is not compiled into a registered test executable
-# (an executable named by $<TARGET_FILE:...> in a kyty_add_test() COMMAND, directly or through a
-# library that only such executables or other tests-only libraries link), or that executable is not
-# a kyty_tests dependency.
+# with kyty_add_test(), a test executable is not a kyty_tests dependency or is not run by any
+# kyty_add_test() COMMAND (Requirement 17.4), a .cpp file under tests/ is not compiled into a
+# registered test executable (an executable named by $<TARGET_FILE:...> in a kyty_add_test() COMMAND,
+# directly or through a library that only such executables or other tests-only libraries link), or
+# no executable that compiles it is a kyty_tests dependency. An ALIAS counts as the target it names,
+# both in LINK_LIBRARIES and in $<TARGET_FILE:...>.
 include_guard(GLOBAL)
 include(KytyLinker)
 include(KytyTargets)
@@ -286,12 +288,29 @@ function(_kyty_testing_target_sources target out)
 	set(${out} "${kyty_result}" PARENT_SCOPE)
 endfunction()
 
+# Sets <out> to the target that an ALIAS <item> names, else to <item>.
+function(_kyty_testing_real_target item out)
+	set(kyty_real "${item}")
+	if(TARGET "${item}")
+		get_target_property(kyty_aliased "${item}" ALIASED_TARGET)
+		if(kyty_aliased)
+			set(kyty_real "${kyty_aliased}")
+		endif()
+	endif()
+	set(${out} "${kyty_real}" PARENT_SCOPE)
+endfunction()
+
 function(_kyty_testing_final_checks)
 	_kyty_testing_check_current_directory_tests()
 
 	get_property(kyty_registered GLOBAL PROPERTY KYTY_TESTING_TESTS)
 	get_property(kyty_executables GLOBAL PROPERTY KYTY_TESTING_EXECUTABLES)
-	get_property(kyty_command_targets GLOBAL PROPERTY KYTY_TESTING_COMMAND_TARGETS)
+	get_property(kyty_command_target_items GLOBAL PROPERTY KYTY_TESTING_COMMAND_TARGETS)
+	set(kyty_command_targets "")
+	foreach(kyty_item IN LISTS kyty_command_target_items)
+		_kyty_testing_real_target("${kyty_item}" kyty_real)
+		list(APPEND kyty_command_targets "${kyty_real}")
+	endforeach()
 	if(kyty_command_targets)
 		list(REMOVE_DUPLICATES kyty_command_targets)
 	endif()
@@ -328,6 +347,10 @@ function(_kyty_testing_final_checks)
 			set_property(GLOBAL APPEND PROPERTY KYTY_TESTING_VIOLATIONS
 				"test executable ${kyty_executable}: not a kyty_tests dependency")
 		endif()
+		if(NOT kyty_executable IN_LIST kyty_command_targets)
+			set_property(GLOBAL APPEND PROPERTY KYTY_TESTING_VIOLATIONS
+				"test executable ${kyty_executable}: not run by any kyty_add_test() COMMAND (Requirement 17.4)")
+		endif()
 	endforeach()
 
 	set(kyty_cpp_note "")
@@ -362,7 +385,8 @@ function(_kyty_testing_final_checks)
 			if(NOT kyty_links)
 				continue()
 			endif()
-			foreach(kyty_link IN LISTS kyty_links)
+			foreach(kyty_link_item IN LISTS kyty_links)
+				_kyty_testing_real_target("${kyty_link_item}" kyty_link)
 				if(TARGET "${kyty_link}")
 					string(MD5 kyty_key "${kyty_link}")
 					list(APPEND kyty_consumers_${kyty_key} ${kyty_target})
@@ -409,7 +433,8 @@ function(_kyty_testing_final_checks)
 			endif()
 			set(kyty_visited "")
 			while(kyty_pending)
-				list(POP_FRONT kyty_pending kyty_library)
+				list(POP_FRONT kyty_pending kyty_library_item)
+				_kyty_testing_real_target("${kyty_library_item}" kyty_library)
 				if(NOT kyty_library IN_LIST kyty_tests_only OR kyty_library IN_LIST kyty_visited)
 					continue()
 				endif()
