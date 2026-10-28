@@ -181,6 +181,7 @@ add_library(kyty_emulator_options STATIC
 )
 target_include_directories(kyty_emulator_options PUBLIC ${KYTY_SOURCE_DIR})
 target_link_libraries(kyty_emulator_options PUBLIC common)
+add_subdirectory("${KYTY_SOURCE_DIR}/launcher/core" "${CMAKE_CURRENT_BINARY_DIR}/launcher/core")
 
 file(GLOB kyty_emulator_src CONFIGURE_DEPENDS
 	"${KYTY_SOURCE_DIR}/libs/*.cpp"
