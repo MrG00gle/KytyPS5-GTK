@@ -138,6 +138,22 @@ void TestContains() {
 	Check(ContainsCaseInsensitive("\xD0\x9C\xD0\x98\xD0\xA0", "\xD0\xBC\xD0\xB8\xD1\x80"),
 	      "Cyrillic capitals match small letters");
 	Check(!ContainsCaseInsensitive("\xC3\x89lan", "elan"), "U+00C9 does not match e");
+	// Code points of different UTF-8 lengths, also in the middle of the haystack.
+	Check(ContainsCaseInsensitive("Skip it", "S\xE2\x84\xAAIP"), "U+212A KELVIN SIGN matches k");
+	Check(ContainsCaseInsensitive("o\xE2\x84\xAAo", "K"), "K matches U+212A");
+	Check(ContainsCaseInsensitive("Ma\xC3\x9Fstab", "MA\xE1\xBA\x9ESTAB"), "U+1E9E matches U+00DF");
+	// Foldings with several code points match only as a whole code point (Requirement 7.14: the
+	// result for needle + x is a subset of the result for needle).
+	Check(!ContainsCaseInsensitive("Ma\xC3\x9Fstab", "massstab"), "sss does not find U+00DF s");
+	Check(!ContainsCaseInsensitive("Ma\xC3\x9F", "mas"), "s does not find U+00DF");
+	Check(ContainsCaseInsensitive("Ma\xC3\x9F", "ma"), "the text before U+00DF");
+	Check(!ContainsCaseInsensitive("massstab", "ma\xC3\x9F"), "U+00DF does not find ss");
+	Check(!ContainsCaseInsensitive("\xEF\xAC\x81le", "file"), "fi does not find U+FB01");
+	Check(ContainsCaseInsensitive("\xEF\xAC\x81le", "\xEF\xAC\x81LE"), "U+FB01 finds itself");
+	// Ill-formed bytes match only themselves.
+	Check(ContainsCaseInsensitive("x\xFFy", "\xFFY"), "an ill-formed byte matches itself");
+	Check(!ContainsCaseInsensitive("x\xFEy", "\xFFy"), "different ill-formed bytes differ");
+	Check(!ContainsCaseInsensitive("x\xEF\xBF\xBDy", "\xFF"), "an ill-formed byte is not U+FFFD");
 	Check(ContainsCaseInsensitive("abc", ""), "an empty needle matches");
 	Check(ContainsCaseInsensitive("", ""), "an empty needle matches an empty haystack");
 	Check(!ContainsCaseInsensitive("", "a"), "nothing is found in an empty haystack");

@@ -100,13 +100,78 @@ std::string_view TrimWhitespace(std::string_view text) {
 	return text;
 }
 
+namespace {
+
+// The first unit of text (not empty): a well-formed sequence, or the maximal subpart of an
+// ill-formed one.
+std::string_view FirstUnit(std::string_view text, bool& valid) {
+	const auto decoded = DecodeFirst(text);
+	valid              = decoded.length != 0;
+	return text.substr(0, valid ? decoded.length : decoded.invalid);
+}
+
+bool IsAsciiUpper(char c) {
+	return c >= 'A' && c <= 'Z';
+}
+
+char AsciiLower(char c) {
+	return IsAsciiUpper(c) ? static_cast<char>(c - 'A' + 'a') : c;
+}
+
+// Two units match when their bytes are equal, or both are well-formed and SDL_strcasecmp finds the
+// single code points equal (their full case foldings are equal).
+bool UnitsMatch(std::string_view a, bool a_valid, std::string_view b, bool b_valid) {
+	if (a == b) {
+		return true;
+	}
+	if (!a_valid || !b_valid) {
+		return false;
+	}
+	if (a.size() == 1 && b.size() == 1) {
+		return AsciiLower(a[0]) == AsciiLower(b[0]);
+	}
+	char a_text[5] = {};
+	char b_text[5] = {};
+	a.copy(a_text, a.size());
+	b.copy(b_text, b.size());
+	return SDL_strcasecmp(a_text, b_text) == 0;
+}
+
+// True when needle (not empty) matches the units at the start of haystack.
+bool MatchesAt(std::string_view haystack, std::string_view needle) {
+	while (!needle.empty()) {
+		if (haystack.empty()) {
+			return false;
+		}
+		bool       haystack_valid = false;
+		bool       needle_valid   = false;
+		const auto haystack_unit  = FirstUnit(haystack, haystack_valid);
+		const auto needle_unit    = FirstUnit(needle, needle_valid);
+		if (!UnitsMatch(haystack_unit, haystack_valid, needle_unit, needle_valid)) {
+			return false;
+		}
+		haystack.remove_prefix(haystack_unit.size());
+		needle.remove_prefix(needle_unit.size());
+	}
+	return true;
+}
+
+} // namespace
+
 bool ContainsCaseInsensitive(std::string_view haystack, std::string_view needle) {
+	haystack = haystack.substr(0, haystack.find('\0'));
+	needle   = needle.substr(0, needle.find('\0'));
 	if (needle.empty()) {
 		return true;
 	}
-	const std::string haystack_text(haystack);
-	const std::string needle_text(needle);
-	return SDL_strcasestr(haystack_text.c_str(), needle_text.c_str()) != nullptr;
+	while (!haystack.empty()) {
+		if (MatchesAt(haystack, needle)) {
+			return true;
+		}
+		bool valid = false;
+		haystack.remove_prefix(FirstUnit(haystack, valid).size());
+	}
+	return false;
 }
 
 int CompareCaseInsensitive(std::string_view a, std::string_view b) {
