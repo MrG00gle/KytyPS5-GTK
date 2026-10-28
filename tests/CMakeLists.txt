@@ -509,5 +509,24 @@ foreach(kyty_tool IN ITEMS report check)
 		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 endforeach()
 
+# Launcher_Core tests run without a display (Requirement 6.7). CTest cannot unset a variable through
+# ENVIRONMENT, so they get these ENVIRONMENT_MODIFICATION operations (also used in properties/).
+set(kyty_no_display "WAYLAND_DISPLAY=unset:" "DISPLAY=unset:")
+
+# Shared test support (fakes, temporary directories): every tests/support/*.cpp except the property
+# harness main(), which kyty_add_property_executable() compiles into each property executable. It
+# compiles with -frtti because property executables derive from its classes.
+file(GLOB kyty_test_support_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/support/*.cpp")
+list(FILTER kyty_test_support_sources EXCLUDE REGEX "/propertyMain\\.cpp$")
+add_library(kyty_test_support STATIC EXCLUDE_FROM_ALL ${kyty_test_support_sources})
+target_include_directories(kyty_test_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(kyty_test_support PUBLIC kyty_launcher_core)
+target_compile_options(kyty_test_support PRIVATE -frtti)
+# Tests run in ${CMAKE_BINARY_DIR}; this finds tests/fixtures/.
+target_compile_definitions(kyty_test_support PUBLIC "KYTY_TEST_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
+
+kyty_add_test_directory(tests/launcher_core LINK kyty_launcher_core kyty_test_support
+	ENVIRONMENT_MODIFICATION ${kyty_no_display})
+
 # Last, so that the property groups see every library.
 add_subdirectory(properties)

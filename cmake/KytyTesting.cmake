@@ -5,11 +5,14 @@
 #       ${CMAKE_BINARY_DIR}, and built by the kyty_tests target (which must already exist).
 #   kyty_add_test(NAME <name> COMMAND <arg>... [LABELS gpu|ui|property|source-check ...]
 #                 [TIMEOUT <1-600, default 120>] [SKIP_RETURN_CODE <0-255>] [ENVIRONMENT <var=value>...]
-#                 [WILL_FAIL])
+#                 [ENVIRONMENT_MODIFICATION <var=op:value>...] [WILL_FAIL])
 #       The only way to register a CTest test. Rejects bad arguments immediately. Tests run in
 #       ${CMAKE_BINARY_DIR}. With KYTY_ENABLE_COVERAGE ON, LLVM_PROFILE_FILE is added to the test's
-#       environment (cmake/KytyCoverage.cmake).
-#   kyty_add_test_directory(<dir> LINK <target>... [LABELS ...] [TIMEOUT <s>] [ENVIRONMENT ...])
+#       environment (cmake/KytyCoverage.cmake). ENVIRONMENT_MODIFICATION sets the CTest property of
+#       that name (for example "DISPLAY=unset:", which ENVIRONMENT cannot express); it needs CMake 3.22
+#       or newer, and an older CMake stops the configure instead of ignoring it.
+#   kyty_add_test_directory(<dir> LINK <target>... [LABELS ...] [TIMEOUT <s>] [ENVIRONMENT ...]
+#                           [ENVIRONMENT_MODIFICATION ...])
 #       One executable and one test per <dir>/*Tests.cpp (globbed with CONFIGURE_DEPENDS). <Name>Tests.cpp
 #       in tests/<d> becomes test <d>_<snake_case(Name)> (no doubled <d>_ prefix) and executable
 #       <test>_tests. Skips with a status message when <dir> has no sources or a LINK item is not a
@@ -18,7 +21,7 @@
 #       A RapidCheck property test executable (Requirements 17.8, 17.9): kyty_add_test_executable() of
 #       SOURCES plus tests/support/propertyMain.cpp, compiled with -fexceptions -frtti, with tests/ on
 #       the include path, and linked with rapidcheck and LINK.
-#   kyty_add_property_group(<group> LINK <target>...)
+#   kyty_add_property_group(<group> LINK <target>... [ENVIRONMENT_MODIFICATION ...])
 #       One property executable <group> from tests/properties/<group>/P<NN>_*.cpp (globbed with
 #       CONFIGURE_DEPENDS), and one test <group>_p<NN> with the property label per file, which runs
 #       "<group> <NN>". Skips with a status message when the group has no sources or a LINK item is
@@ -63,7 +66,7 @@ endfunction()
 
 function(kyty_add_test)
 	cmake_parse_arguments(PARSE_ARGV 0 kyty "WILL_FAIL" "NAME;TIMEOUT;SKIP_RETURN_CODE"
-		"COMMAND;LABELS;ENVIRONMENT")
+		"COMMAND;LABELS;ENVIRONMENT;ENVIRONMENT_MODIFICATION")
 	if(NOT kyty_NAME)
 		message(FATAL_ERROR "kyty_add_test: NAME is required")
 	endif()
@@ -94,6 +97,18 @@ function(kyty_add_test)
 				"from 0 to 255")
 		endif()
 	endif()
+	if(kyty_ENVIRONMENT_MODIFICATION)
+		if(CMAKE_VERSION VERSION_LESS 3.22)
+			message(FATAL_ERROR "${kyty_context}: ENVIRONMENT_MODIFICATION needs CMake 3.22 or newer "
+				"(this is CMake ${CMAKE_VERSION})")
+		endif()
+		foreach(kyty_modification IN LISTS kyty_ENVIRONMENT_MODIFICATION)
+			if(NOT kyty_modification MATCHES "^[A-Za-z_][A-Za-z0-9_]*=(reset|set|unset|string_append|string_prepend|path_list_append|path_list_prepend|cmake_list_append|cmake_list_prepend):")
+				message(FATAL_ERROR "${kyty_context}: ENVIRONMENT_MODIFICATION entry '${kyty_modification}' "
+					"is not <variable>=<operation>:<value>")
+			endif()
+		endforeach()
+	endif()
 
 	add_test(NAME ${kyty_NAME} COMMAND ${kyty_COMMAND} WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
 	set_tests_properties(${kyty_NAME} PROPERTIES TIMEOUT ${kyty_TIMEOUT})
@@ -109,6 +124,9 @@ function(kyty_add_test)
 	endif()
 	if(kyty_ENVIRONMENT)
 		set_tests_properties(${kyty_NAME} PROPERTIES ENVIRONMENT "${kyty_ENVIRONMENT}")
+	endif()
+	if(kyty_ENVIRONMENT_MODIFICATION)
+		set_tests_properties(${kyty_NAME} PROPERTIES ENVIRONMENT_MODIFICATION "${kyty_ENVIRONMENT_MODIFICATION}")
 	endif()
 	if(kyty_WILL_FAIL)
 		set_tests_properties(${kyty_NAME} PROPERTIES WILL_FAIL TRUE)
@@ -146,7 +164,7 @@ function(_kyty_testing_snake_case value out)
 endfunction()
 
 function(kyty_add_test_directory dir)
-	cmake_parse_arguments(PARSE_ARGV 1 kyty "" "TIMEOUT" "LINK;LABELS;ENVIRONMENT")
+	cmake_parse_arguments(PARSE_ARGV 1 kyty "" "TIMEOUT" "LINK;LABELS;ENVIRONMENT;ENVIRONMENT_MODIFICATION")
 	if(kyty_UNPARSED_ARGUMENTS)
 		message(FATAL_ERROR "kyty_add_test_directory(${dir}): unexpected arguments: ${kyty_UNPARSED_ARGUMENTS}")
 	endif()
@@ -173,6 +191,9 @@ function(kyty_add_test_directory dir)
 	endif()
 	if(kyty_ENVIRONMENT)
 		list(APPEND kyty_test_arguments ENVIRONMENT ${kyty_ENVIRONMENT})
+	endif()
+	if(kyty_ENVIRONMENT_MODIFICATION)
+		list(APPEND kyty_test_arguments ENVIRONMENT_MODIFICATION ${kyty_ENVIRONMENT_MODIFICATION})
 	endif()
 
 	get_filename_component(kyty_prefix "${kyty_dir}" NAME)
@@ -212,7 +233,7 @@ function(kyty_add_property_executable target)
 endfunction()
 
 function(kyty_add_property_group group)
-	cmake_parse_arguments(PARSE_ARGV 1 kyty "" "" "LINK")
+	cmake_parse_arguments(PARSE_ARGV 1 kyty "" "" "LINK;ENVIRONMENT_MODIFICATION")
 	if(kyty_UNPARSED_ARGUMENTS)
 		message(FATAL_ERROR "kyty_add_property_group(${group}): unexpected arguments: ${kyty_UNPARSED_ARGUMENTS}")
 	endif()
@@ -229,13 +250,18 @@ function(kyty_add_property_group group)
 		endif()
 	endforeach()
 
+	set(kyty_test_arguments "")
+	if(kyty_ENVIRONMENT_MODIFICATION)
+		list(APPEND kyty_test_arguments ENVIRONMENT_MODIFICATION ${kyty_ENVIRONMENT_MODIFICATION})
+	endif()
+
 	list(SORT kyty_sources)
 	kyty_add_property_executable(${group} SOURCES ${kyty_sources} LINK ${kyty_LINK})
 	foreach(kyty_source IN LISTS kyty_sources)
 		get_filename_component(kyty_file_name "${kyty_source}" NAME)
 		string(REGEX REPLACE "^P([0-9][0-9])_.*$" "\\1" kyty_number "${kyty_file_name}")
 		kyty_add_test(NAME ${group}_p${kyty_number} COMMAND $<TARGET_FILE:${group}> ${kyty_number}
-			LABELS property)
+			LABELS property ${kyty_test_arguments})
 	endforeach()
 endfunction()
 
