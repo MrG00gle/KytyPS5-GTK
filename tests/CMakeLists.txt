@@ -509,6 +509,18 @@ foreach(kyty_tool IN ITEMS report check)
 		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 endforeach()
 
+# Process test helpers (task 15.6): argv_echo writes its arguments NUL-terminated and fake_emulator
+# stands in for the Emulator in spawn tests (tests/support/helperPaths.h finds both). Each one has a
+# self-test (Requirement 17.4) that checks its output bytes, exit codes, and signal deaths.
+kyty_add_test_executable(argv_echo SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/helpers/ArgvEcho.cpp")
+kyty_add_test_executable(fake_emulator SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/helpers/FakeEmulator.cpp")
+foreach(kyty_helper IN ITEMS argv_echo fake_emulator)
+	kyty_add_test(NAME ${kyty_helper}_selftest
+		COMMAND "${CMAKE_COMMAND}" -DCASE=${kyty_helper} "-DEXE=$<TARGET_FILE:${kyty_helper}>"
+		        "-DWORK_DIR=${kyty_selftests_dir}/${kyty_helper}_selftest"
+		        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ProcessHelperSelfTest.cmake")
+endforeach()
+
 # Launcher_Core tests run without a display (Requirement 6.7). CTest cannot unset a variable through
 # ENVIRONMENT, so they get these ENVIRONMENT_MODIFICATION operations (also used in properties/).
 set(kyty_no_display "WAYLAND_DISPLAY=unset:" "DISPLAY=unset:")
@@ -524,6 +536,10 @@ target_link_libraries(kyty_test_support PUBLIC kyty_launcher_core)
 target_compile_options(kyty_test_support PRIVATE -frtti)
 # Tests run in ${CMAKE_BINARY_DIR}; this finds tests/fixtures/.
 target_compile_definitions(kyty_test_support PUBLIC "KYTY_TEST_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
+# Where argv_echo and fake_emulator are written (tests/support/helperPaths.h); building the support
+# library builds them first.
+target_compile_definitions(kyty_test_support PUBLIC "KYTY_TEST_BINARY_DIR=\"${CMAKE_BINARY_DIR}\"")
+add_dependencies(kyty_test_support argv_echo fake_emulator)
 
 kyty_add_test_directory(tests/launcher_core LINK kyty_launcher_core kyty_test_support
 	ENVIRONMENT_MODIFICATION ${kyty_no_display})
