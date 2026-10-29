@@ -3,8 +3,9 @@
 // with the values the fixtures and the phase 1 report state and no defaulted key; a re-save keeps
 // every key, including unknown keys and groups; missing, unparsable, and invalid values get their
 // defaults and are reported, optional keys are not; injected faults at each AtomicFileStep leave
-// the existing file byte-identical; the custom settings lifecycle; and
-// ResolveEffectiveConfiguration.
+// the existing file byte-identical; a Kyty.ini that exists but cannot be loaded (EISDIR, EFBIG,
+// ENOTDIR) is not replaced before ConfirmOverwrite (plan D27); the custom settings lifecycle,
+// including stored mapping entries without '=' (plan D26); and ResolveEffectiveConfiguration.
 
 #include "launcher/core/atomicFile.h"
 #include "launcher/core/gameConfiguration.h"
@@ -46,6 +47,7 @@ using kyty::core::LogDirection;
 using kyty::core::PresentMode;
 using kyty::core::ScreenResolution;
 using kyty::core::ShaderOptimizationType;
+using kyty::core::ValidationScope;
 using KytyTests::TempDir;
 
 void Check(bool value, const std::string& message) {
@@ -332,8 +334,9 @@ void TestSpecialValues() {
 	          s.games[3].game_path == "/games/ゲーム/Ünïcødé/PPSA00002" &&
 	          s.games[3].configuration == expected,
 	      "special game 4: mapping entries are loaded as stored, the user name untrimmed");
-	Check(kyty::core::Validate(s.games[3].configuration)->field == "host_input_mapping",
-	      "special game 4's mapping fails Validate() only when saved from an editor");
+	Check(kyty::core::Validate(s.games[3].configuration)->field == "host_input_mapping" &&
+	          !kyty::core::Validate(s.games[3].configuration, ValidationScope::Game),
+	      "special game 4's unused mapping fails Validate() only in the Global scope");
 	Check(s.unknown.Find("ConfigurationEditDialog/geometry") != nullptr && s.geometry.has_value(),
 	      "special geometries");
 }
@@ -910,6 +913,102 @@ void TestSaveAndFaults() {
 	Check(report.settings == defaults, "default settings round-trip");
 }
 
+// The refusal while load_error is set: nothing is written, and the error has the path, the errno,
+// and the reason.
+void CheckRefused(kyty::core::SettingsStoreFile& store, const LauncherSettings& settings,
+                  int error_number, const std::string& what) {
+	const auto refused = kyty::core::SaveSettingsStore(store, settings);
+	Check(!refused.has_value(), what + ": the save is refused");
+	const auto& error = refused.error();
+	Check(error.path == store.path && error.error_number == error_number,
+	      what + ": path and errno");
+	Check(error.message == store.path.string() +
+	                           " was not saved because it exists but could not be loaded (" +
+	                           std::generic_category().message(error_number) +
+	                           "). Fix or move the file, or confirm replacing it.",
+	      what + ": the message names the path and the reason: " + error.message);
+	Check(store.load_error.has_value() && !store.overwrite_confirmed,
+	      what + ": the refusal keeps load_error");
+}
+
+// Plan D27 (Y2): a Kyty.ini that exists but cannot be loaded is not replaced before
+// ConfirmOverwrite.
+void TestSettingsStoreFile() {
+	const TempDir    dir("kyty_settings_store_file");
+	LauncherSettings settings;
+	settings.game_folders    = {"/games"};
+	settings.grid_icon_width = 160;
+
+	// ENOENT: the defaults without an error; the first save creates the file.
+	const auto created = dir.MakeDirectories("new") / "Kyty.ini";
+	auto       store   = kyty::core::OpenSettingsStore(created);
+	Check(store.path == created && !store.load_error && !store.overwrite_confirmed &&
+	          store.loaded.settings == LauncherSettings {} && store.loaded.defaulted_keys.empty(),
+	      "a missing Kyty.ini gives the defaults and no error");
+	Check(kyty::core::SaveSettingsStore(store, settings).has_value(),
+	      "the first save creates the file");
+	Check(kyty::core::LoadSettings(created).value_or(LoadReport {}).settings == settings,
+	      "the created file holds the settings");
+
+	// A readable file loads as LoadSettings reads it.
+	const auto fixture = dir.WriteFile("ok/Kyty.ini", ReadBytes(FixturePath("qt6-user-store.ini")));
+	store              = kyty::core::OpenSettingsStore(fixture);
+	Check(!store.load_error && store.loaded.defaulted_keys.empty() &&
+	          store.loaded.settings == kyty::core::LoadSettings(fixture)->settings,
+	      "an existing file loads");
+
+	// EFBIG: a sparse file one byte over the limit.
+	const auto      big = dir.WriteFile("big/Kyty.ini", "[Launcher]\ngrid_view=true\n");
+	std::error_code ec;
+	fs::resize_file(big, kyty::core::kMaxSettingsFileBytes + 1, ec);
+	Check(!ec, "resize " + big.string());
+	const auto big_bytes = kyty::core::ReadFileLimited(big, kyty::core::kMaxSettingsFileBytes + 1);
+	Check(big_bytes.has_value(), "read the large file");
+	store = kyty::core::OpenSettingsStore(big);
+	Check(store.load_error.has_value() && store.load_error->error_number == EFBIG &&
+	          store.load_error->path == big && store.loaded.settings == LauncherSettings {},
+	      "a file over 16 MiB gives the defaults and load_error EFBIG");
+	CheckRefused(store, settings, EFBIG, "EFBIG");
+	Check(kyty::core::ReadFileLimited(big, kyty::core::kMaxSettingsFileBytes + 1) == *big_bytes &&
+	          Names(big.parent_path()) == std::set<std::string> {"Kyty.ini"},
+	      "the refused save leaves the large file byte-identical");
+	kyty::core::ConfirmOverwrite(store);
+	Check(store.overwrite_confirmed, "ConfirmOverwrite");
+	Check(kyty::core::SaveSettingsStore(store, settings).has_value(),
+	      "after ConfirmOverwrite the large file is replaced");
+	Check(!store.load_error.has_value(), "a successful save clears load_error");
+	Check(kyty::core::LoadSettings(big).value_or(LoadReport {}).settings == settings,
+	      "the replaced file holds the settings");
+
+	// EISDIR: a directory at the path stays a directory, also after ConfirmOverwrite.
+	const auto directory = dir.MakeDirectories("dir/Kyty.ini");
+	dir.WriteFile("dir/Kyty.ini/inside.txt", "kept");
+	store = kyty::core::OpenSettingsStore(directory);
+	Check(store.load_error.has_value() && store.load_error->error_number == EISDIR,
+	      "a directory gives load_error EISDIR");
+	CheckRefused(store, settings, EISDIR, "EISDIR");
+	kyty::core::ConfirmOverwrite(store);
+	const auto onto = kyty::core::SaveSettingsStore(store, settings);
+	Check(!onto.has_value() && onto.error().error_number == EISDIR &&
+	          onto.error().path == directory &&
+	          onto.error().message.find("cannot rename") != std::string::npos &&
+	          onto.error().message.find(directory.string()) != std::string::npos,
+	      "a confirmed save onto a directory fails with the rename error naming the path: " +
+	          onto.error().message);
+	Check(store.load_error.has_value(), "a failed save keeps load_error");
+	Check(fs::is_directory(directory) && ReadBytes(directory / "inside.txt") == "kept" &&
+	          Names(directory.parent_path()) == std::set<std::string> {"Kyty.ini"},
+	      "the directory is unchanged and no temporary file is left");
+
+	// ENOTDIR: the parent is a regular file.
+	const auto parent = dir.WriteFile("parent", "a regular file");
+	store             = kyty::core::OpenSettingsStore(parent / "Kyty.ini");
+	Check(store.load_error.has_value() && store.load_error->error_number == ENOTDIR,
+	      "a parent that is a regular file gives load_error ENOTDIR");
+	CheckRefused(store, settings, ENOTDIR, "ENOTDIR");
+	Check(ReadBytes(parent) == "a regular file", "the regular file is unchanged");
+}
+
 // ---- Custom settings (Requirements 9.2, 9.3, 9.13)
 
 void TestCustomSettingsLifecycle() {
@@ -992,6 +1091,50 @@ void TestCustomSettingsLifecycle() {
 	      "saving removes the other element for the game");
 }
 
+// Plan D26 (Y1): special game 4 of qt6-special-values.ini holds four mapping entries without '='
+// and no input_mapping_custom.
+void TestInvalidStoredMapping() {
+	auto                           settings = LoadFixture("qt6-special-values.ini").settings;
+	const std::vector<std::string> stored = {" leading space", "trailing space ", "@", "@@double"};
+	const auto game   = Entry(settings.games[3].game_path, {}, settings.games[3].name);
+	auto       config = kyty::core::EnableCustomSettings(settings, game);
+	Check(config.host_input_mapping == stored && !config.input_mapping_custom,
+	      "game 4 opens with its four stored entries and the global mapping in use");
+
+	config.vblank_frequency = 90;
+	Check(kyty::core::SaveCustomSettings(settings, game, config).has_value(),
+	      "SaveCustomSettings succeeds while input_mapping_custom is false");
+	const auto resaved = kyty::core::ParseSettings(kyty::core::SerializeSettings(settings));
+	CheckDefaulted(resaved, {}, "the re-saved special store");
+	const auto* again = kyty::core::FindGameSettings(resaved.settings, game);
+	Check(again != nullptr && again->configuration.host_input_mapping == stored &&
+	          again->configuration.vblank_frequency == 90,
+	      "a re-save keeps the four entries");
+
+	config.input_mapping_custom = true;
+	const auto before           = settings;
+	const auto failed           = kyty::core::SaveCustomSettings(settings, game, config);
+	Check(!failed.has_value() && failed.error().field == "host_input_mapping",
+	      "with input_mapping_custom true the save fails on host_input_mapping");
+	for (size_t i = 0; i < stored.size(); i++) {
+		Check(failed.error().message.find("entry " + std::to_string(i + 1) + " \"" + stored[i] +
+		                                  "\"") != std::string::npos,
+		      "the error names entry " + std::to_string(i + 1) + ": " + failed.error().message);
+	}
+	Check(settings == before, "the failed save changes nothing");
+
+	const auto invalid = kyty::core::FindInvalidMappingEntries(config.host_input_mapping);
+	Check(invalid.size() == 4 && invalid[0].index == 0 && invalid[0].entry == stored[0] &&
+	          invalid[3].index == 3 && invalid[3].entry == stored[3],
+	      "FindInvalidMappingEntries lists the four entries");
+	config.host_input_mapping = kyty::core::DropInvalidMappingEntries(config.host_input_mapping);
+	Check(config.host_input_mapping.empty(), "dropping the four entries leaves none");
+	Check(kyty::core::SaveCustomSettings(settings, game, config).has_value(),
+	      "after DropInvalidMappingEntries the save succeeds");
+	Check(kyty::core::FindGameSettings(settings, game)->configuration == config,
+	      "the game is stored without the invalid entries");
+}
+
 void TestMigrateLegacyGamePaths() {
 	auto                         settings = LoadFixture("qt6-game-entries.ini").settings;
 	const std::vector<GameEntry> entries  = {
@@ -1069,7 +1212,9 @@ int main() {
 	TestInvalidValuesDefaulted();
 	TestGameElements();
 	TestSaveAndFaults();
+	TestSettingsStoreFile();
 	TestCustomSettingsLifecycle();
+	TestInvalidStoredMapping();
 	TestMigrateLegacyGamePaths();
 	TestResolveEffectiveConfiguration();
 	std::puts("SettingsStoreTests: all tests passed");

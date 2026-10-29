@@ -5,7 +5,10 @@
 #include <cerrno>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <nlohmann/json.hpp>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -108,8 +111,49 @@ Expected<FieldValue, ImportError> ReadField(const FieldDescriptor& field, const 
 	return std::move(*value);
 }
 
-Expected<GameConfigurationPatch, ImportError> ReadMember(const std::string& title,
-                                                         const Json&        member) {
+// The object keys that the file repeats, which the parsed value no longer shows (the last value of
+// a repeated key wins): member keys, and per member key the first field key written twice.
+struct RepeatedKeys {
+	std::set<std::string>              members;
+	std::map<std::string, std::string> fields;
+};
+
+// Json::parse with a callback that records RepeatedKeys. Depth 1 holds the keys of the root
+// object, depth 2 the keys of an object that is the value of a root member; deeper keys belong to
+// field values, which are rejected for their type anyway.
+Json ParseRecordingRepeatedKeys(std::string_view bytes, RepeatedKeys& repeated) {
+	std::vector<std::set<std::string>> open; // the keys of each object being parsed
+	std::string                        member;
+	const Json::parser_callback_t      callback = [&](int depth, Json::parse_event_t event,
+	                                                  Json& parsed) {
+		if (event == Json::parse_event_t::object_start) {
+			open.emplace_back();
+		} else if (event == Json::parse_event_t::object_end) {
+			if (!open.empty()) {
+				open.pop_back();
+			}
+		} else if (event == Json::parse_event_t::key && !open.empty()) {
+			const auto* key = parsed.get_ptr<const Json::string_t*>();
+			if (key != nullptr) {
+				const bool repeated_key = !open.back().insert(*key).second;
+				if (depth == 1) {
+					member = *key;
+					if (repeated_key) {
+						repeated.members.insert(*key);
+					}
+				} else if (depth == 2 && repeated_key) {
+					repeated.fields.try_emplace(member, *key);
+				}
+			}
+		}
+		return true;
+	};
+	// No exceptions: a parse error gives a discarded value.
+	return Json::parse(bytes.begin(), bytes.end(), callback, false);
+}
+
+Expected<GameConfigurationPatch, ImportError>
+ReadMember(const std::string& title, const Json& member, const std::string* repeated_field) {
 	if (!member.is_object()) {
 		return Fail(ImportErrorKind::MemberNotAnObject, title, {},
 		            "The game settings for " + title + " are not a JSON object.");
@@ -117,6 +161,11 @@ Expected<GameConfigurationPatch, ImportError> ReadMember(const std::string& titl
 	if (member.empty()) {
 		return Fail(ImportErrorKind::EmptyMember, title, {},
 		            "The game settings for " + title + " contain no setting.");
+	}
+	if (repeated_field != nullptr) {
+		return Fail(ImportErrorKind::DuplicateField, title, *repeated_field,
+		            "The game settings for " + title + " contain the game setting " +
+		                Quoted(*repeated_field) + " more than once.");
 	}
 	GameConfigurationPatch patch;
 	for (const auto& [name, json]: member.items()) {
@@ -132,8 +181,8 @@ Expected<GameConfigurationPatch, ImportError> ReadMember(const std::string& titl
 		patch.fields.emplace(name, std::move(*value));
 	}
 	// Rules between fields of the member (an empty output path while its output is on) and the
-	// input mapping entries.
-	if (auto error = Validate(ApplyPatch(GameConfiguration {}, patch))) {
+	// input mapping entries (when the member turns input_mapping_custom on).
+	if (auto error = Validate(ApplyPatch(GameConfiguration {}, patch), ValidationScope::Game)) {
 		return Fail(ImportErrorKind::InvalidValue, title, error->field,
 		            "Invalid value for game setting " + Quoted(error->field) + " for " + title +
 		                ": " + error->message);
@@ -186,8 +235,8 @@ Expected<void, IoError> WriteGameSettingsFile(const std::filesystem::path& path,
 }
 
 Expected<ImportResult, ImportError> ParseGameSettingsFile(std::string_view bytes) {
-	// No exceptions: a parse error gives a discarded value.
-	const auto root = Json::parse(bytes.begin(), bytes.end(), nullptr, false);
+	RepeatedKeys repeated;
+	const auto   root = ParseRecordingRepeatedKeys(bytes, repeated);
 	if (root.is_discarded()) {
 		return Fail(ImportErrorKind::InvalidJson, {}, {}, "The file is not valid JSON.");
 	}
@@ -205,11 +254,13 @@ Expected<ImportResult, ImportError> ParseGameSettingsFile(std::string_view bytes
 			return Fail(ImportErrorKind::InvalidTitle, {}, {},
 			            "The file contains game settings without a title ID.");
 		}
-		if (result.by_title.contains(title)) {
+		if (result.by_title.contains(title) || repeated.members.contains(key)) {
 			return Fail(ImportErrorKind::DuplicateTitle, title, {},
 			            "The file contains game settings for " + title + " more than once.");
 		}
-		auto patch = ReadMember(title, member);
+		const auto field = repeated.fields.find(key);
+		auto       patch =
+		    ReadMember(title, member, field != repeated.fields.end() ? &field->second : nullptr);
 		if (!patch) {
 			return MakeUnexpected(std::move(patch).error());
 		}

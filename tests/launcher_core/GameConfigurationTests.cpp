@@ -2,13 +2,15 @@
 // (src/launcher/core/gameConfiguration.h, configurationFields.h; task 13.2, Requirements 3.4, 9.1,
 // 9.4, 9.12): the design defaults, every enum spelling including the legacy forms, the text forms
 // of booleans and integers, every Requirement 9.4 boundary, the gpu_index, console_language, elf,
-// and input mapping rules, the order Validate() reports in, and ClampControllerSettings at and
-// beyond its limits.
+// and input mapping rules, the mapping rule in each ValidationScope, FindInvalidMappingEntries and
+// DropInvalidMappingEntries on mixed lists and the message that lists every invalid entry (plan
+// D26), the order Validate() reports in, and ClampControllerSettings at and beyond its limits.
 
 #include "launcher/core/configurationFields.h"
 #include "launcher/core/gameConfiguration.h"
 #include "support/noDisplay.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -31,11 +33,13 @@ using kyty::core::FindGameConfigurationField;
 using kyty::core::GameConfiguration;
 using kyty::core::GameConfigurationFields;
 using kyty::core::GlobalOnlyFields;
+using kyty::core::InvalidMappingEntry;
 using kyty::core::LogDirection;
 using kyty::core::PresentMode;
 using kyty::core::ScreenResolution;
 using kyty::core::ShaderOptimizationType;
 using kyty::core::Validate;
+using kyty::core::ValidationScope;
 
 constexpr int64_t kInt64Min = std::numeric_limits<int64_t>::min();
 constexpr int64_t kInt64Max = std::numeric_limits<int64_t>::max();
@@ -74,6 +78,10 @@ void CheckInvalid(const GameConfiguration& configuration, const std::string& fie
                   const std::string& what) {
 	Check(Invalid(configuration) == field,
 	      what + " is invalid in " + field + ", got '" + Invalid(configuration) + "'");
+}
+
+void CheckText(const std::string& actual, const std::string& expected, const std::string& what) {
+	Check(actual == expected, what + ": got '" + actual + "', expected '" + expected + "'");
 }
 
 // ---- Defaults and the table
@@ -560,7 +568,86 @@ void TestInputMapping() {
 		} else {
 			CheckInvalid(c, "host_input_mapping", "mapping " + shown);
 		}
+		Check(kyty::core::FindInvalidMappingEntries(mapping).empty() == valid &&
+		          std::all_of(mapping.begin(), mapping.end(), kyty::core::IsValidMappingEntry) ==
+		              valid,
+		      "IsValidMappingEntry and FindInvalidMappingEntries agree on " + shown);
 	}
+}
+
+// Plan D26: in Game scope a game's own mapping is checked only while input_mapping_custom is true;
+// the Global scope (the default) always checks it.
+void TestMappingScope() {
+	GameConfiguration c;
+	c.host_input_mapping = {"Cross=J", "Cross", "=J"};
+	for (const bool custom: {false, true}) {
+		c.input_mapping_custom = custom;
+		const auto what = std::string(" with input_mapping_custom ") + (custom ? "on" : "off");
+		CheckInvalid(c, "host_input_mapping", "Global scope (the default)" + what);
+		Check(Validate(c, ValidationScope::Global) == Validate(c),
+		      "Global is the default scope" + what);
+		const auto game = Validate(c, ValidationScope::Game);
+		if (custom) {
+			Check(game.has_value() && game->field == "host_input_mapping", "Game scope" + what);
+		} else {
+			Check(!game.has_value(), "Game scope accepts an unused mapping" + what);
+		}
+	}
+	// Every other rule applies in both scopes, and before the mapping in table order.
+	c.input_mapping_custom = false;
+	c.user_id              = 254;
+	Check(Validate(c, ValidationScope::Game)->field == "user_id" &&
+	          Validate(c, ValidationScope::Global)->field == "user_id",
+	      "the user ID rule in both scopes");
+	c.user_id              = 1000;
+	c.printf_direction     = LogDirection::File;
+	c.printf_output_file   = "";
+	c.input_mapping_custom = true;
+	Check(Validate(c, ValidationScope::Game)->field == "printf_output_file",
+	      "the output path rule in Game scope");
+	c.printf_output_file = "p";
+	c.host_input_mapping = {"Cross=J"};
+	Check(!Validate(c, ValidationScope::Game) && !Validate(c, ValidationScope::Global),
+	      "a valid mapping in both scopes");
+}
+
+void TestInvalidMappingEntries() {
+	const std::vector<std::string> mapping = {
+	    " leading space", "Cross=J", "", "L3=Left Shift", "=J", "Square=,", "Cross= \t"};
+	const std::vector<InvalidMappingEntry> expected = {
+	    {0, " leading space"}, {2, ""}, {4, "=J"}, {6, "Cross= \t"}};
+	Check(kyty::core::FindInvalidMappingEntries(mapping) == expected,
+	      "FindInvalidMappingEntries: every invalid entry with its position, in order");
+	Check(kyty::core::DropInvalidMappingEntries(mapping) ==
+	          std::vector<std::string> {"Cross=J", "L3=Left Shift", "Square=,"},
+	      "DropInvalidMappingEntries keeps the valid entries in order");
+	Check(kyty::core::FindInvalidMappingEntries({}).empty() &&
+	          kyty::core::DropInvalidMappingEntries({}).empty(),
+	      "an empty mapping");
+	const std::vector<std::string> bad = {"a", "b"};
+	Check(kyty::core::DropInvalidMappingEntries(bad).empty(), "only invalid entries");
+	const std::vector<std::string> good = {"a=b", " c = d "};
+	Check(kyty::core::DropInvalidMappingEntries(good) == good &&
+	          kyty::core::FindInvalidMappingEntries(good).empty(),
+	      "only valid entries");
+
+	// The message lists every invalid entry, numbered from 1, with its quoted text.
+	GameConfiguration c;
+	c.host_input_mapping = mapping;
+	const auto error     = Validate(c);
+	Check(error.has_value() && error->field == "host_input_mapping", "the mapping is invalid");
+	CheckText(error->message,
+	          "Each input mapping entry must have the form Name=Value with a non-empty name and "
+	          "value. Invalid: entry 1 \" leading space\", entry 3 \"\", entry 5 \"=J\", entry 7 "
+	          "\"Cross= \t\".",
+	          "the mapping message");
+	c.host_input_mapping = {"Cross=J", "bad"};
+	CheckText(Validate(c)->message,
+	          "Each input mapping entry must have the form Name=Value with a non-empty name and "
+	          "value. Invalid: entry 2 \"bad\".",
+	          "the message for one entry");
+	c.host_input_mapping = kyty::core::DropInvalidMappingEntries(c.host_input_mapping);
+	CheckValid(c, "the mapping after DropInvalidMappingEntries");
 }
 
 void TestEnumsOutOfRange() {
@@ -667,6 +754,8 @@ int main() {
 	TestOutputPaths();
 	TestElf();
 	TestInputMapping();
+	TestMappingScope();
+	TestInvalidMappingEntries();
 	TestEnumsOutOfRange();
 	TestValidateOrder();
 	TestClampControllerSettings();

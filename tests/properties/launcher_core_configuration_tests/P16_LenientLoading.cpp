@@ -11,7 +11,11 @@
 // corrupted field its default and every other field its stored value (unknown keys included), and
 // report exactly corrupted ∪ (deleted − optional) in defaulted_keys (plan D20), where the optional
 // keys are LauncherWindow/*, GameConfigurations/N/input_mapping_custom, and the preserved
-// MainDialog/theme and MainDialog/geometry.
+// MainDialog/theme and MainDialog/geometry. In a third of the cases the store is a legacy one
+// (review-u6 finding 4): game_dirs is dropped, the Game_Folders are in game_dir (kept or
+// corrupted), and Launcher/addons_dir, grid_view, and grid_icon_width are each deleted with a
+// probability of at least 1/2; in a legacy store they are optional too, so a missing one gets its
+// default without a report.
 
 #include "launcher/core/configurationFields.h"
 #include "launcher/core/gameConfiguration.h"
@@ -20,6 +24,7 @@
 #include "support/configurationGenerators.h"
 #include "support/property.h"
 
+#include <algorithm>
 #include <rapidcheck.h>
 #include <set>
 #include <string>
@@ -149,14 +154,41 @@ KYTY_PROPERTY(16, "Lenient loading of Qt-written stores") {
 		};
 		const auto bool_text = [&] { return text({"maybe", "TRUE", "1", "", "yes"}); };
 
-		c.Key("Launcher/game_dirs", false, IniValue::FromByteArray("x"), expected.game_folders,
-		      defaults.game_folders);
-		c.Key("Launcher/addons_dir", false,
-		      OneIn(2) ? IniValue::FromStringList({"a", "b"}) : IniValue::FromByteArray("x"),
-		      expected.addons_dir, defaults.addons_dir);
-		c.Key("Launcher/grid_view", false, bool_text(), expected.grid_view, defaults.grid_view);
-		c.Key("Launcher/grid_icon_width", false, text({"100", "330", "225", "0", "abc", "-224"}),
-		      expected.grid_icon_width, defaults.grid_icon_width);
+		// A legacy store (review-u6 finding 4): the Game_Folders are in game_dir, and each Launcher
+		// key that came later is deleted half of the time on top of the rate; those keys are
+		// optional there. game_dir makes the store legacy, so it is kept or corrupted, never
+		// deleted.
+		const bool               legacy = OneIn(3);
+		std::vector<std::string> legacy_deleted;
+		if (legacy) {
+			RC_ASSERT(MakeLegacyStore(file, stored.game_folders));
+			if (c.Pick() != Action::Keep && c.Apply(Action::Corrupt, "Launcher/game_dir", false,
+			                                        IniValue::FromByteArray("x"))) {
+				expected.game_folders = defaults.game_folders;
+			}
+		} else {
+			c.Key("Launcher/game_dirs", false, IniValue::FromByteArray("x"), expected.game_folders,
+			      defaults.game_folders);
+		}
+		const auto launcher_key = [&](const std::string& key, const IniValue& invalid, auto& target,
+		                              const auto& fallback) {
+			auto action = c.Pick();
+			if (legacy && action == Action::Keep && OneIn(2)) {
+				action = Action::Delete;
+			}
+			if (legacy && action == Action::Delete) {
+				legacy_deleted.push_back(key);
+			}
+			if (c.Apply(action, key, legacy, invalid)) {
+				target = fallback;
+			}
+		};
+		launcher_key("Launcher/addons_dir",
+		             OneIn(2) ? IniValue::FromStringList({"a", "b"}) : IniValue::FromByteArray("x"),
+		             expected.addons_dir, defaults.addons_dir);
+		launcher_key("Launcher/grid_view", bool_text(), expected.grid_view, defaults.grid_view);
+		launcher_key("Launcher/grid_icon_width", text({"100", "330", "225", "0", "abc", "-224"}),
+		             expected.grid_icon_width, defaults.grid_icon_width);
 		c.Key("MainDialog/check_updates_on_startup", false, bool_text(),
 		      expected.check_updates_on_startup, defaults.check_updates_on_startup);
 		// Preserved raw values: only deleted (any text is kept as it is).
@@ -207,6 +239,20 @@ KYTY_PROPERTY(16, "Lenient loading of Qt-written stores") {
 		RC_ASSERT(std::set<std::string>(report.defaulted_keys.begin(),
 		                                report.defaulted_keys.end()) == defaulted);
 		RC_ASSERT(report.defaulted_keys.size() == defaulted.size());
+		// The legacy optional-key rule: a missing key gets its default without a report.
+		if (legacy) {
+			for (const auto& key: LegacyOptionalKeys()) {
+				if (file.Find(key) == nullptr) {
+					RC_LOG() << "legacy optional key missing: " << key << "\n";
+					RC_ASSERT(std::count(report.defaulted_keys.begin(), report.defaulted_keys.end(),
+					                     key) == 0);
+				}
+			}
+			RC_ASSERT(report.settings.game_folders == expected.game_folders);
+			RC_ASSERT(report.settings.addons_dir == expected.addons_dir);
+			RC_ASSERT(report.settings.grid_view == expected.grid_view);
+			RC_ASSERT(report.settings.grid_icon_width == expected.grid_icon_width);
+		}
 		RC_ASSERT(report.settings.game_folders == expected.game_folders);
 		RC_ASSERT(report.settings.global == expected.global);
 		RC_ASSERT(report.settings.controller == expected.controller);
@@ -219,5 +265,8 @@ KYTY_PROPERTY(16, "Lenient loading of Qt-written stores") {
 		       : c.deleted == 0             ? "corrupted only"
 		                                    : "deleted and corrupted");
 		RC_TAG(stored.games.empty() ? "no game" : "games");
+		RC_TAG(!legacy                  ? "game_dirs store"
+		       : legacy_deleted.empty() ? "legacy store, optional keys kept"
+		                                : "legacy store, optional keys deleted");
 	});
 }

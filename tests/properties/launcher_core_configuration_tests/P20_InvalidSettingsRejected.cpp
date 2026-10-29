@@ -7,9 +7,10 @@
 // (red_zone_protection_enabled, entry keys, global-only fields, other text), a value of a JSON
 // type its field does not accept, a value outside its range (every Requirement 9.4-invalid value,
 // the gpu_index, console_language, elf, enum, and input mapping rules, unparsable text, an empty
-// output path while the member turns its output on), an empty member, an empty root object, a
-// member that is not an object, or no member for the selected title among two or more; or an
-// empty output path that the game's own configuration makes invalid. Also non-JSON bytes and JSON
+// output path while the member turns its output on, an invalid mapping entry while the member
+// turns input_mapping_custom on), an empty member, an empty root object, a member that is not an
+// object, or no member for the selected title among two or more; or an empty output path that the
+// game's own configuration makes invalid. Also non-JSON bytes and JSON
 // whose root is not an object. The import flow of the GTK launcher (ParseGameSettingsFile,
 // SelectGameImport, ApplyPatch, SaveCustomSettings) must fail with the expected kind and a message
 // that names the rejected field (and the title) or states the reason, and leave the target
@@ -149,8 +150,9 @@ OutOfRange OutOfRangeValue() {
 	    {"hdr_enabled", q("1"), {}},
 	    {"vblank_frequency", q("sixty"), {}},
 	    {"vblank_frequency", q("+60"), {}},
-	    {"host_input_mapping", "[\"Cross\"]", {}},
-	    {"host_input_mapping", "[\"Cross=J\", \" =J\"]", {}},
+	    // Mapping entries are checked while the member turns the per-game mapping on (plan D26).
+	    {"host_input_mapping", "[\"Cross\"]", {{"input_mapping_custom", "true"}}},
+	    {"host_input_mapping", "[\"Cross=J\", \" =J\"]", {{"input_mapping_custom", q("true")}}},
 	    {"shader_log_folder", q(""), {{"shader_log_direction", q("File")}}},
 	    {"printf_output_file", q(""), {{"printf_direction", q("2")}}},
 	    {"command_buffer_dump_folder", q(""), {{"command_buffer_dump_enabled", "true"}}},
@@ -168,6 +170,7 @@ const char* KindName(ImportErrorKind kind) {
 		case ImportErrorKind::DuplicateTitle: return "DuplicateTitle";
 		case ImportErrorKind::MemberNotAnObject: return "MemberNotAnObject";
 		case ImportErrorKind::EmptyMember: return "EmptyMember";
+		case ImportErrorKind::DuplicateField: return "DuplicateField";
 		case ImportErrorKind::UnknownField: return "UnknownField";
 		case ImportErrorKind::WrongType: return "WrongType";
 		case ImportErrorKind::InvalidValue: return "InvalidValue";

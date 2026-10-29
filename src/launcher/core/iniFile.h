@@ -15,8 +15,8 @@
 //
 // Serialize() orders sections by name and keys by name within a section, comparing UTF-16 code
 // units as QString does, separates sections with an empty line, and writes UTF-8 without a byte
-// order mark, with LF line ends. Every key and value survives a rewrite, including the ones no
-// caller knows about.
+// order mark, with LF line ends, except inside Opaque values (see below). Every key and value
+// survives a rewrite, including the ones no caller knows about.
 //
 // Values (IniValue):
 // - String: Qt's escapes \0 \a \b \t \n \v \f \r, \xH for the other control characters, \" and \\;
@@ -35,7 +35,11 @@
 // - Opaque: any other @Name(...) value (@ByteArray, @Variant, @DateTime, @Rect, ...), and a list
 //   with such an element, kept as the exact text after '=' (without unquoted surrounding spaces)
 //   and written back unchanged. Qt itself would re-encode a @ByteArray and lose a @Variant it
-//   cannot decode.
+//   cannot decode. That text is kept byte for byte, so an Opaque value of a hand-edited file keeps
+//   a raw CR (inside quotes, or of a CR LF after a '\' continuation), its '\' continuations, and
+//   ill-formed UTF-8, and Serialize() writes them back as they were: the one exception to "UTF-8,
+//   LF line ends". The value reads back as it read before. The values that the Qt launcher writes
+//   and the ones FromByteArray() makes contain no such bytes.
 //
 // Ill-formed UTF-8 in a value or key reads as U+FFFD per byte that cannot start or continue a
 // sequence, as Qt's decoder does (including its handling of a sequence cut by an escape, a quote,

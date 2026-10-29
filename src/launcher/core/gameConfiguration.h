@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -100,6 +101,14 @@ struct ValidationError {
 	friend bool operator==(const ValidationError&, const ValidationError&) = default;
 };
 
+// Which configuration Validate() checks (plan D26). Global: the Global_Configuration, whose
+// host_input_mapping is always used. Game: a game's custom configuration (SaveCustomSettings and
+// the Game_Settings_File import), whose own host_input_mapping is used only while
+// input_mapping_custom is true, so its entries are checked only then. Stores written by the Qt
+// launcher hold per-game entries without '=' (tests/fixtures/settings/qt6-special-values.ini);
+// they stay as they are while the game uses the global mapping.
+enum class ValidationScope { Global, Game };
+
 // The first field, in GameConfigurationFields() order, whose value the settings editor and an
 // import must reject, or nothing when every value is valid. The rules: the Requirement 9.4 rules
 // (user name 1-16 UTF-8 bytes after TrimWhitespace; user ID 0-2,147,482,879 except 254 and 255;
@@ -107,8 +116,28 @@ struct ValidationError {
 // command_buffer_dump_folder not empty while shader logs or printf output go to a File or command
 // buffer dumps are enabled); gpu_index >= -1; console_language 0-29; enum values that name a key;
 // elf a non-empty relative path without a ".." component; and each host_input_mapping entry
-// "Name=Value" with both sides non-empty after TrimWhitespace.
-std::optional<ValidationError> Validate(const GameConfiguration& configuration);
+// IsValidMappingEntry (in Game scope only while input_mapping_custom is true). The
+// host_input_mapping message lists every invalid entry, numbered from 1, with its quoted text.
+std::optional<ValidationError> Validate(const GameConfiguration& configuration,
+                                        ValidationScope          scope = ValidationScope::Global);
+
+// True for an input mapping entry "Name=Value" with both sides non-empty after TrimWhitespace
+// (split at the first '='). Only valid entries become --keymap options.
+bool IsValidMappingEntry(std::string_view entry);
+
+struct InvalidMappingEntry {
+	std::size_t index = 0; // the 0-based position in the mapping
+	std::string entry;     // the entry as stored
+
+	friend bool operator==(const InvalidMappingEntry&, const InvalidMappingEntry&) = default;
+};
+
+// Every entry of mapping that is not IsValidMappingEntry, in order: what the settings editor lists
+// so that the user can remove it.
+std::vector<InvalidMappingEntry> FindInvalidMappingEntries(std::span<const std::string> mapping);
+
+// The valid entries of mapping, in order: the mapping with every invalid entry removed.
+std::vector<std::string> DropInvalidMappingEntries(std::span<const std::string> mapping);
 
 // True when field is shader_log_folder, command_buffer_dump_folder, or printf_output_file, its
 // value in configuration is empty, and its output is on (shader logs or printf output go to a File,

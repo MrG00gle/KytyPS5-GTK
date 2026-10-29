@@ -3,6 +3,7 @@
 #include "launcher/core/configurationFields.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <initializer_list>
 #include <iterator>
@@ -429,6 +430,39 @@ Expected<void, IoError> SaveSettings(const std::filesystem::path& ini,
 	return WriteFileAtomically(ini, SerializeSettings(settings));
 }
 
+SettingsStoreFile OpenSettingsStore(const std::filesystem::path& ini) {
+	SettingsStoreFile store;
+	store.path  = ini;
+	auto report = LoadSettings(ini);
+	if (report) {
+		store.loaded = std::move(*report);
+	} else if (report.error().error_number != ENOENT) {
+		store.load_error = std::move(report).error();
+	}
+	return store;
+}
+
+Expected<void, IoError> SaveSettingsStore(SettingsStoreFile&      store,
+                                          const LauncherSettings& settings) {
+	if (store.load_error && !store.overwrite_confirmed) {
+		const int error_number = store.load_error->error_number;
+		return MakeUnexpected(IoError {
+		    store.path, error_number,
+		    store.path.string() + " was not saved because it exists but could not be loaded (" +
+		        std::generic_category().message(error_number) +
+		        "). Fix or move the file, or confirm replacing it."});
+	}
+	auto saved = SaveSettings(store.path, settings);
+	if (saved) {
+		store.load_error.reset();
+	}
+	return saved;
+}
+
+void ConfirmOverwrite(SettingsStoreFile& store) {
+	store.overwrite_confirmed = true;
+}
+
 const GameSettingsEntry* FindGameSettings(const LauncherSettings& settings,
                                           const GameEntry&        entry) {
 	for (const auto& game: settings.games) {
@@ -460,7 +494,7 @@ GameConfiguration EnableCustomSettings(const LauncherSettings& settings, const G
 Expected<void, ValidationError> SaveCustomSettings(LauncherSettings&        settings,
                                                    const GameEntry&         entry,
                                                    const GameConfiguration& configuration) {
-	if (auto error = Validate(configuration)) {
+	if (auto error = Validate(configuration, ValidationScope::Game)) {
 		return MakeUnexpected(std::move(*error));
 	}
 	const auto* found    = FindGameSettings(settings, entry);

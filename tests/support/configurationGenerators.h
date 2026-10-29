@@ -1,9 +1,9 @@
 #pragma once
 
 // RapidCheck generators for the configuration properties (Properties 12, 13, and 15-20, tasks
-// 13.6-13.14). Header only, and only for property TUs: RapidCheck needs exceptions, which the test
-// support library is built without. The generator functions draw values with operator* on
-// generators, so call them only inside a property.
+// 13.6-13.14), including the legacy-store form of Property 16. Header only, and only for property
+// TUs: RapidCheck needs exceptions, which the test support library is built without. The generator
+// functions draw values with operator* on generators, so call them only inside a property.
 //
 // Text is valid UTF-8 from Alphabet(): ASCII letters and digits, the characters Kyty.ini and JSON
 // quote or escape (, ; = " \ @ # [ ] % ' / space tab), C0 control characters including U+0000,
@@ -377,6 +377,24 @@ inline kyty::core::LauncherSettings ValidSettings() {
 		s.unknown.Set(PickOf(UnknownKeys()), UnknownValue());
 	}
 	return s;
+}
+
+// ---- Legacy stores (review-u6 finding 4)
+
+// The Launcher keys that a store from a launcher before game_dirs did not have: optional in a
+// legacy store (game_dirs missing, game_dir present; settingsStore.h).
+inline const std::vector<std::string>& LegacyOptionalKeys() {
+	static const std::vector<std::string> keys = {"Launcher/addons_dir", "Launcher/grid_view",
+	                                              "Launcher/grid_icon_width"};
+	return keys;
+}
+
+// Turns a serialized store into a legacy one: game_dirs is removed and the Game_Folders go to the
+// legacy key game_dir (a single folder as a string, as that launcher wrote it). False when the key
+// cannot be set.
+inline bool MakeLegacyStore(kyty::core::IniFile& file, const std::vector<std::string>& folders) {
+	file.Remove("Launcher/game_dirs");
+	return file.SetStringList("Launcher/game_dir", folders);
 }
 
 // A GameEntry for a stored element (its absolute path, or the legacy relative path it matches).

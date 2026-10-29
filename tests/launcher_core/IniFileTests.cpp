@@ -806,6 +806,30 @@ void TestOpaqueAndRaw() {
 	Check(reread == file, "opaque values read back");
 }
 
+// Review u5-1: the Opaque values of a hand-edited file keep a raw CR, a '\' continuation, and
+// ill-formed UTF-8 byte for byte through a load and a save (iniFile.h: the one exception to
+// "UTF-8, LF line ends"), and read back as they read before.
+void TestOpaqueRawBytesKept() {
+	const std::string continued  = "@ByteArray(ab\\\r\ncd)"; // a '\' continuation over CR LF
+	const std::string ill_formed = "@ByteArray(x\xFF\xC3y)"; // two bytes that are not UTF-8
+	const std::string quoted     = "\"@ByteArray(a\rb)\"";   // a quoted raw CR
+	const std::string bytes      = "[MainDialog]\ncontinued=" + continued +
+	                               "\nill_formed=" + ill_formed + "\nquoted=" + quoted + "\n";
+	const auto        file       = IniFile::Parse(bytes);
+	Check(!file.HasFormatError(), "hand-edited opaque values: format error");
+	for (const char* key: {"MainDialog/continued", "MainDialog/ill_formed", "MainDialog/quoted"}) {
+		CheckKind(file, key, IniValueKind::Opaque);
+	}
+	CheckRaw(file, "MainDialog/continued", continued);
+	CheckRaw(file, "MainDialog/ill_formed", ill_formed);
+	CheckRaw(file, "MainDialog/quoted", quoted);
+	const std::string saved = file.Serialize();
+	CheckText(saved, bytes, "the opaque bytes are written back unchanged");
+	Check(saved.find('\r') != std::string::npos && saved.find('\xFF') != std::string::npos,
+	      "the save keeps the CR and the ill-formed bytes");
+	Check(IniFile::Parse(saved) == file, "the saved values read back as before");
+}
+
 void TestSetters() {
 	IniFile file;
 	Check(!file.SetString("", "x"), "empty key");
@@ -929,6 +953,7 @@ int main() {
 	TestValuesAndDeviations();
 	TestLists();
 	TestOpaqueAndRaw();
+	TestOpaqueRawBytesKept();
 	TestSetters();
 	TestArraysAndRemove();
 	TestUnknownKeysKept();

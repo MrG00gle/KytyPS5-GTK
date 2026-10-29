@@ -25,9 +25,13 @@
 // - MainDialog/theme and MainDialog/geometry are kept as they are, or stay absent;
 // - controller integers are clamped (Requirement 9.12), not defaulted; only an unparsable one is
 //   reported;
-// - host_input_mapping entries are loaded as stored: Validate()'s Name=Value rule applies when the
-//   settings editor or an import saves them, because Qt-written stores hold entries without '='
-//   (tests/fixtures/settings/qt6-special-values.ini);
+// - host_input_mapping entries are loaded as stored, and a save keeps them, because Qt-written
+//   stores hold entries without '=' (tests/fixtures/settings/qt6-special-values.ini). Validate()'s
+//   Name=Value rule applies when the settings editor or an import saves a list that is in use: the
+//   global list, or a game's own list while its input_mapping_custom is true (ValidationScope).
+//   An invalid stored entry is never passed to the Emulator: the launch arguments (task 15.1)
+//   keep only the IsValidMappingEntry entries, and the settings editor can list and drop them
+//   (FindInvalidMappingEntries, DropInvalidMappingEntries);
 // - a stored custom_settings=false reads as custom, as in the Qt launcher (every stored element is
 //   a game with custom settings); only a missing or unparsable value is reported;
 // - an element whose game_path is missing or empty cannot belong to a game: it is dropped and only
@@ -144,6 +148,33 @@ Expected<LoadReport, IoError> LoadSettings(const std::filesystem::path& ini);
 Expected<void, IoError> SaveSettings(const std::filesystem::path& ini,
                                      const LauncherSettings&      settings);
 
+// ---- The launcher's Kyty.ini (plan D27)
+//
+// A Settings_Store that exists but cannot be loaded (a directory, a file over
+// kMaxSettingsFileBytes, a parent that is not a directory, a read error) is never replaced without
+// an explicit user action: the launcher starts with the default settings, shows load_error, and
+// SaveSettingsStore refuses to write over the file until ConfirmOverwrite.
+
+struct SettingsStoreFile {
+	std::filesystem::path  path;
+	LoadReport             loaded;     // the stored settings, or the defaults
+	std::optional<IoError> load_error; // why an existing file could not be loaded
+	bool                   overwrite_confirmed = false;
+};
+
+// LoadSettings(ini): the loaded settings; for a missing file (ENOENT) the defaults and no error;
+// for any other failure the defaults and load_error.
+SettingsStoreFile OpenSettingsStore(const std::filesystem::path& ini);
+
+// SaveSettings(store.path, settings). While load_error is set and the overwrite is not confirmed,
+// nothing is written and the IoError has the path, load_error's errno, and a message naming the
+// path and the reason. A successful save clears load_error.
+Expected<void, IoError> SaveSettingsStore(SettingsStoreFile&      store,
+                                          const LauncherSettings& settings);
+
+// The user's explicit choice to replace the file that could not be loaded.
+void ConfirmOverwrite(SettingsStoreFile& store);
+
 // ---- Custom settings (Requirements 9.2, 9.3, 9.13)
 
 // The element for the game: the one whose game_path equals entry.path, else one whose relative
@@ -156,10 +187,11 @@ bool HasCustomSettings(const LauncherSettings& settings, const GameEntry& entry)
 // changed (closing the editor without saving changes nothing, Requirement 9.14).
 GameConfiguration EnableCustomSettings(const LauncherSettings& settings, const GameEntry& entry);
 
-// Validates configuration and stores it as the game's custom configuration: the element found by
-// FindGameSettings (or a new one at the end) gets the configuration, name = entry.title_name, and
-// basedir = game_path = entry.path (so a legacy relative path becomes absolute); other elements for
-// the same game are removed. On a ValidationError settings is unchanged.
+// Validates configuration (ValidationScope::Game: its host_input_mapping only while
+// input_mapping_custom is true) and stores it as the game's custom configuration: the element found
+// by FindGameSettings (or a new one at the end) gets the configuration, name = entry.title_name,
+// and basedir = game_path = entry.path (so a legacy relative path becomes absolute); other elements
+// for the same game are removed. On a ValidationError settings is unchanged.
 Expected<void, ValidationError> SaveCustomSettings(LauncherSettings&        settings,
                                                    const GameEntry&         entry,
                                                    const GameConfiguration& configuration);
@@ -177,7 +209,8 @@ bool MigrateLegacyGamePaths(LauncherSettings& settings, std::span<const GameEntr
 
 struct EffectiveConfiguration {
 	// The custom configuration, or the Global_Configuration; host_input_mapping is the per-game
-	// list when the custom configuration has input_mapping_custom, else the global list.
+	// list when the custom configuration has input_mapping_custom, else the global list, as stored
+	// (the launch arguments drop its invalid entries).
 	GameConfiguration                    configuration;
 	ControllerSettings                   controller; // always the global one
 	std::string                          addons_dir; // the global one

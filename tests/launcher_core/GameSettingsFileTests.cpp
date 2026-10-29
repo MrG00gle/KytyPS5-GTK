@@ -2,9 +2,10 @@
 // task 13.4; Requirements 9.8-9.11, 9.15): tests/fixtures/settings/qt6-game-configs.json imports
 // all three members unchanged; export then parse; every Requirement 9.10 rejection (unreadable,
 // invalid JSON, non-object root, no usable member, empty member, unknown field, wrong JSON type per
-// kind, out of range, each Requirement 9.4 value), each naming the field or the reason; the
-// one-member confirmation flag; partial import marks the game custom; an export whose write fails
-// leaves the old file (injected faults at each AtomicFileStep).
+// kind, out of range, each Requirement 9.4 value, a member or field key written twice), each naming
+// the field or the reason; the one-member confirmation flag; partial import marks the game custom;
+// imports into a Qt-loaded game whose stored mapping entries have no '=' (plan D26); an export
+// whose write fails leaves the old file (injected faults at each AtomicFileStep).
 
 #include "launcher/core/atomicFile.h"
 #include "launcher/core/configurationFields.h"
@@ -71,6 +72,7 @@ const char* KindName(ImportErrorKind kind) {
 		case ImportErrorKind::DuplicateTitle: return "DuplicateTitle";
 		case ImportErrorKind::MemberNotAnObject: return "MemberNotAnObject";
 		case ImportErrorKind::EmptyMember: return "EmptyMember";
+		case ImportErrorKind::DuplicateField: return "DuplicateField";
 		case ImportErrorKind::UnknownField: return "UnknownField";
 		case ImportErrorKind::WrongType: return "WrongType";
 		case ImportErrorKind::InvalidValue: return "InvalidValue";
@@ -351,6 +353,37 @@ void TestRejectedFiles() {
 	              ImportErrorKind::InvalidTitle, "", "", "a blank title");
 	CheckRejected("{\"ppsa01234\": {\"user_id\": \"1\"}, \"PPSA01234\": {\"user_id\": \"2\"}}",
 	              ImportErrorKind::DuplicateTitle, "", "PPSA01234", "the same title twice");
+	// Plan D30: a key written twice, which the JSON parser merges (the last value wins).
+	CheckRejected("{\"PPSA01234\": {\"user_id\": \"1\"}, \"PPSA01234\": {\"user_id\": \"2\"}}",
+	              ImportErrorKind::DuplicateTitle, "", "PPSA01234", "the same member key twice");
+	CheckRejected("{\"PPSA01234\": {\"user_id\": \"1\"}, \"PPSA00001\": {\"user_id\": \"3\"}, "
+	              "\"PPSA01234\": {\"vblank_frequency\": \"90\"}}",
+	              ImportErrorKind::DuplicateTitle, "", "PPSA01234",
+	              "the same member key twice, apart");
+	CheckRejected("{\" ppsa01234\": {\"user_id\": \"1\"}, \" ppsa01234\": {\"user_id\": \"2\"}}",
+	              ImportErrorKind::DuplicateTitle, "", "PPSA01234",
+	              "the same untrimmed member key twice");
+	CheckRejected(Member("\"user_id\": \"1\", \"user_id\": \"2\""), ImportErrorKind::DuplicateField,
+	              "user_id", "PPSA01234", "the same field twice");
+	CheckRejected(Member("\"user_id\": \"1\", \"hdr_enabled\": true, \"user_id\": \"1\""),
+	              ImportErrorKind::DuplicateField, "user_id", "PPSA01234",
+	              "the same field and value twice, apart");
+	CheckRejected("{\"PPSA00001\": {\"user_id\": \"1\"}, \"PPSA01234\": {\"elf\": \"a\", \"x\": "
+	              "{\"k\": 1, \"k\": 2}, \"elf\": \"b\"}}",
+	              ImportErrorKind::DuplicateField, "elf", "PPSA01234",
+	              "the same field twice in a second member");
+	// The same field in two members, and repeated keys deeper than a member's fields, are not
+	// repeated member fields.
+	Check(Parsed("{\"PPSA00001\": {\"user_id\": \"1\"}, \"PPSA00002\": {\"user_id\": \"1\"}}",
+	             "one field in two members")
+	              .by_title.size() == 2,
+	      "the same field in two members is accepted");
+	CheckRejected(Member("\"host_input_mapping\": [{\"k\": 1, \"k\": 2}]"),
+	              ImportErrorKind::WrongType, "host_input_mapping", "PPSA01234",
+	              "a repeated key inside a field value is that value's wrong type");
+	CheckRejected("{\"PPSA01234\": {\"user_id\": \"1\"}, \"PPSA01234\": 5}",
+	              ImportErrorKind::DuplicateTitle, "", "PPSA01234",
+	              "the same member key twice, the second not an object");
 	for (const auto* value: {"5", "[]", "\"x\"", "null", "true"}) {
 		CheckRejected(std::string("{\"PPSA01234\": ") + value + "}",
 		              ImportErrorKind::MemberNotAnObject, "", "PPSA01234",
@@ -449,8 +482,11 @@ void TestInvalidValues() {
 	    {"\"present_mode\": \"Vsync\"", "present_mode"},
 	    {"\"present_mode\": \"3\"", "present_mode"},
 	    {"\"screen_resolution\": \"R1280x720\"", "screen_resolution"},
-	    {"\"host_input_mapping\": [\"Cross\"]", "host_input_mapping"},
-	    {"\"host_input_mapping\": [\"Cross=J\", \"=J\"]", "host_input_mapping"},
+	    // The mapping entries are checked when the member turns the per-game mapping on.
+	    {"\"input_mapping_custom\": true, \"host_input_mapping\": [\"Cross\"]",
+	     "host_input_mapping"},
+	    {"\"host_input_mapping\": [\"Cross=J\", \"=J\"], \"input_mapping_custom\": \"true\"",
+	     "host_input_mapping"},
 	    {"\"shader_log_direction\": \"File\", \"shader_log_folder\": \"\"", "shader_log_folder"},
 	    {"\"printf_direction\": \"File\", \"printf_output_file\": \"\"", "printf_output_file"},
 	    {"\"command_buffer_dump_enabled\": true, \"command_buffer_dump_folder\": \"\"",
@@ -471,6 +507,26 @@ void TestInvalidValues() {
 	// The first bad member fails the whole file.
 	CheckRejected("{\"PPSA00001\": {\"user_id\": \"1\"}, \"PPSA00002\": {\"user_id\": 255}}",
 	              ImportErrorKind::InvalidValue, "user_id", "PPSA00002", "a bad second member");
+	const auto mapping = ParseGameSettingsFile(
+	    Member("\"input_mapping_custom\": true, \"host_input_mapping\": [\"Cross=J\", \"bad\", "
+	           "\"=K\"]"));
+	Check(!mapping.has_value() &&
+	          mapping.error().message.find("entry 2 \"bad\", entry 3 \"=K\"") != std::string::npos,
+	      "the message lists every invalid entry: " +
+	          (mapping ? std::string() : mapping.error().message));
+
+	// Plan D26: entries of a mapping that the member leaves unused are not checked here; the
+	// configuration the member is applied to decides (SaveCustomSettings, TestQtMappingImport).
+	const std::vector<std::pair<std::string, std::vector<std::string>>> unused = {
+	    {"\"host_input_mapping\": [\"Cross\", \"=J\"]", {"Cross", "=J"}},
+	    {"\"host_input_mapping\": [\"Cross\"], \"input_mapping_custom\": false", {"Cross"}},
+	};
+	for (const auto& [fields, entries]: unused) {
+		const auto parsed = Parsed(Member(fields), "an unused mapping {" + fields + "}");
+		Check(parsed.by_title.at("PPSA01234").fields.at("host_input_mapping") ==
+		          FieldValue(entries),
+		      "the unused entries are imported as they are: " + fields);
+	}
 }
 
 void TestAcceptedForms() {
@@ -582,6 +638,9 @@ void TestPartialImport() {
 	    "{\"PPSA00001\": {\"user_id\": \"1\"}, \"PPSA00002\": {\"user_id\": \"2\"}}",
 	    // Valid on its own, but the game logs shaders to a file.
 	    Member("\"shader_log_folder\": \"\""),
+	    // Repeated keys (plan D30).
+	    "{\"PPSA01234\": {\"user_id\": \"7\"}, \"PPSA01234\": {\"user_id\": \"8\"}}",
+	    Member("\"user_id\": \"7\", \"user_id\": \"8\""),
 	};
 	for (const auto& bytes: rejected) {
 		auto       copy  = settings;
@@ -593,6 +652,62 @@ void TestPartialImport() {
 	Check(folder.has_value() && folder->starts_with("shader_log_folder: "),
 	      "an empty folder for a game that logs shaders to a file names the field: " +
 	          folder.value_or(""));
+}
+
+// Plan D26 (Y1): imports into special game 4 of qt6-special-values.ini, whose four stored mapping
+// entries have no '=' and whose per-game mapping is off.
+void TestQtMappingImport() {
+	const auto report = kyty::core::LoadSettings(fs::path(KYTY_TEST_SOURCE_DIR) /
+	                                             "tests/fixtures/settings/qt6-special-values.ini");
+	Check(report.has_value() && report->settings.games.size() == 4, "load qt6-special-values.ini");
+	auto                           settings = report->settings;
+	const auto                     game     = Entry(settings.games[3].game_path, "PPSA00002");
+	const std::vector<std::string> stored = {" leading space", "trailing space ", "@", "@@double"};
+	Check(settings.games[3].configuration.host_input_mapping == stored &&
+	          !settings.games[3].configuration.input_mapping_custom,
+	      "game 4 holds the four entries");
+
+	Check(!Import(settings, game, Member("\"vblank_frequency\": 90", "PPSA00002")),
+	      "an import that does not touch the mapping succeeds");
+	const auto* imported = kyty::core::FindGameSettings(settings, game);
+	Check(imported != nullptr && imported->configuration.vblank_frequency == 90 &&
+	          imported->configuration.host_input_mapping == stored &&
+	          !imported->configuration.input_mapping_custom,
+	      "the import keeps the four entries");
+
+	// Turning the per-game mapping on with the stored entries fails, naming the field and each
+	// entry, and changes nothing.
+	const auto before = settings;
+	const auto error =
+	    Import(settings, game, Member("\"input_mapping_custom\": true", "PPSA00002"));
+	Check(error.has_value() && error->starts_with("host_input_mapping: "),
+	      "an import that turns input_mapping_custom on fails naming the field: " +
+	          error.value_or(""));
+	for (size_t i = 0; i < stored.size(); i++) {
+		Check(error->find("entry " + std::to_string(i + 1) + " \"" + stored[i] + "\"") !=
+		          std::string::npos,
+		      "the error names entry " + std::to_string(i + 1) + ": " + *error);
+	}
+	Check(settings == before, "the rejected import changes nothing");
+	CheckRejected(
+	    Member("\"input_mapping_custom\": true, \"host_input_mapping\": [\"@\"]", "PPSA00002"),
+	    ImportErrorKind::InvalidValue, "host_input_mapping", "PPSA00002",
+	    "a member that turns the mapping on with an invalid entry");
+
+	// Valid entries with the mapping on replace the stored ones. After that, invalid entries in a
+	// member without input_mapping_custom are checked against the game's mapping, which is now on.
+	Check(!Import(settings, game,
+	              Member("\"input_mapping_custom\": true, \"host_input_mapping\": [\"Cross=J\"]",
+	                     "PPSA00002")),
+	      "an import that turns the mapping on with valid entries succeeds");
+	Check(kyty::core::FindGameSettings(settings, game)->configuration.host_input_mapping ==
+	          std::vector<std::string> {"Cross=J"},
+	      "the valid entries replace the stored ones");
+	const auto after = settings;
+	const auto on =
+	    Import(settings, game, Member("\"host_input_mapping\": [\"Cross\"]", "PPSA00002"));
+	Check(on.has_value() && on->starts_with("host_input_mapping: ") && settings == after,
+	      "invalid entries for a game whose mapping is on are rejected: " + on.value_or(""));
 }
 
 } // namespace
@@ -608,6 +723,7 @@ int main() {
 	TestAcceptedForms();
 	TestSelectGameImport();
 	TestPartialImport();
+	TestQtMappingImport();
 	std::puts("GameSettingsFileTests: all tests passed");
 	return 0;
 }

@@ -51,9 +51,10 @@ enum class ImportErrorKind {
 	NotAnObject,       // the root is not a JSON object
 	NoSettings,        // the root object has no member
 	InvalidTitle,      // a member key is empty after trimming
-	DuplicateTitle,    // two member keys are the same title ID
+	DuplicateTitle,    // two member keys are the same title ID (also the same key written twice)
 	MemberNotAnObject, // a member value is not a JSON object
 	EmptyMember,       // a member has no field
+	DuplicateField,    // a member has the same field key twice
 	UnknownField,      // a field key that is not a Game_Configuration field
 	WrongType,         // a field value of a JSON type that the field does not accept
 	InvalidValue,      // a field value that does not parse or breaks a Validate() rule
@@ -88,12 +89,15 @@ Expected<void, IoError> WriteGameSettingsFile(const std::filesystem::path& path,
                                               std::string_view             title_id,
                                               const GameConfiguration&     configuration);
 
-// Parses a Game_Settings_File; every Requirement 9.10 rejection is an ImportError. A member is
-// accepted when each of its fields exists, has a JSON type the field accepts, parses, meets the
-// field's rule, and the member applied to GameConfiguration{} passes Validate() (so a member that
-// sets shader_log_direction File with an empty shader_log_folder is rejected; whether an output
-// path may be empty can also depend on the configuration the member is applied to, which
-// SaveCustomSettings validates).
+// Parses a Game_Settings_File; every Requirement 9.10 rejection is an ImportError. A JSON object
+// key written twice, which a JSON parser would silently merge, is rejected: a member key as
+// DuplicateTitle, a field key inside a member as DuplicateField. A member is accepted when each of
+// its fields exists, has a JSON type the field accepts, parses, meets the field's rule, and the
+// member applied to GameConfiguration{} passes Validate() in ValidationScope::Game (so a member
+// that sets shader_log_direction File with an empty shader_log_folder is rejected, and its
+// host_input_mapping entries are checked when it sets input_mapping_custom true; whether an output
+// path may be empty or the entries are used can also depend on the configuration the member is
+// applied to, which SaveCustomSettings validates).
 Expected<ImportResult, ImportError> ParseGameSettingsFile(std::string_view bytes);
 
 // Reads the file (at most kMaxGameSettingsFileBytes; else Unreadable) and parses it.
