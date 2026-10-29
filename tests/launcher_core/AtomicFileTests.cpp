@@ -1,7 +1,8 @@
 // Example tests of WriteFileAtomically and ReadFileLimited (src/launcher/core/atomicFile.h,
 // Requirements 9.15 and 12.8). Failures are injected through SetAtomicFileFaultForTesting or come
 // from paths that fail for every user (a missing directory, a directory as the target); no test
-// changes permissions to provoke a failure.
+// changes permissions to provoke a failure. The modes of new files are checked under umask 077,
+// 022, and 002 (plan D28); every test that depends on the umask sets it and restores it.
 
 #include "launcher/core/atomicFile.h"
 #include "support/noDisplay.h"
@@ -59,6 +60,37 @@ unsigned Mode(const fs::path& path) {
 	return info.st_mode & 0777;
 }
 
+// Sets the process umask and restores the previous one when it goes out of scope.
+class UmaskScope {
+public:
+	explicit UmaskScope(mode_t mask): m_previous(::umask(mask)) {}
+	~UmaskScope() { ::umask(m_previous); }
+	UmaskScope(const UmaskScope&)            = delete;
+	UmaskScope& operator=(const UmaskScope&) = delete;
+
+private:
+	mode_t m_previous;
+};
+
+mode_t CurrentUmask() {
+	const mode_t mask = ::umask(0);
+	::umask(mask);
+	return mask;
+}
+
+std::string Octal(unsigned mode) {
+	char text[8];
+	std::snprintf(text, sizeof(text), "%04o", mode);
+	return text;
+}
+
+// True for ".<name>.tmp-" followed by 16 lower-case hexadecimal digits.
+bool IsTempName(const std::string& file, const std::string& name) {
+	const std::string prefix = "." + name + ".tmp-";
+	return file.size() == prefix.size() + 16 && file.starts_with(prefix) &&
+	       file.find_first_not_of("0123456789abcdef", prefix.size()) == std::string::npos;
+}
+
 const char* StepName(AtomicFileStep step) {
 	switch (step) {
 		case AtomicFileStep::CreateTemp: return "CreateTemp";
@@ -71,12 +103,13 @@ const char* StepName(AtomicFileStep step) {
 }
 
 void TestNewFile() {
-	const TempDir dir;
-	const auto    target = dir.Path() / "new.txt";
-	const auto    result = WriteFileAtomically(target, "hello");
+	const TempDir    dir;
+	const UmaskScope umask_022(022);
+	const auto       target = dir.Path() / "new.txt";
+	const auto       result = WriteFileAtomically(target, "hello");
 	Check(result.has_value(), "writing a new file succeeds");
 	Check(ReadAll(target) == "hello", "the new file has the bytes");
-	Check(Mode(target) == 0644, "a new file gets mode 0644");
+	Check(Mode(target) == 0644, "a new file gets mode 0644 under umask 022");
 	Check(Names(dir.Path()) == std::set<std::string> {"new.txt"}, "no temporary file is left");
 
 	const auto empty = dir.Path() / "empty.txt";
@@ -111,6 +144,72 @@ void TestModeKept() {
 	fs::permissions(target, fs::perms(0600), ec);
 	Check(WriteFileAtomically(target, "newer").has_value(), "replacing a 0600 file succeeds");
 	Check(Mode(target) == 0600 && ReadAll(target) == "newer", "the replaced file keeps mode 0600");
+}
+
+// Plan D28 (Y3): a new file gets 0666 minus the umask, a replaced file keeps its mode, and the
+// temporary file is .<name>.tmp-<16 hexadecimal digits> with the final mode before the rename.
+void TestUmaskModes() {
+	const mode_t original = CurrentUmask();
+	const struct {
+		mode_t   mask;
+		unsigned mode;
+	} cases[] = {{077, 0600}, {022, 0644}, {002, 0664}};
+	for (const auto& c: cases) {
+		const std::string what = "umask " + Octal(c.mask);
+		const TempDir     dir;
+		const UmaskScope  scope(c.mask);
+		const auto        target = dir.Path() / "new.ini";
+
+		// The temporary file, seen from the hook just before the rename.
+		std::vector<std::string> temp_names;
+		unsigned                 temp_mode = 0;
+		SetAtomicFileFaultForTesting([&](AtomicFileStep current) {
+			if (current == AtomicFileStep::Rename) {
+				for (const auto& name: Names(dir.Path())) {
+					temp_names.push_back(name);
+					temp_mode = Mode(dir.Path() / name);
+				}
+			}
+			return 0;
+		});
+		const auto result = WriteFileAtomically(target, "new");
+		SetAtomicFileFaultForTesting(nullptr);
+		Check(result.has_value(), what + ": writing a new file succeeds");
+		Check(Mode(target) == c.mode,
+		      what + ": a new file gets " + Octal(c.mode) + ", got " + Octal(Mode(target)));
+		Check(temp_names.size() == 1 && IsTempName(temp_names[0], "new.ini"),
+		      what + ": one temporary file .new.ini.tmp-<16 hex digits>, got " +
+		          (temp_names.empty() ? std::string("none") : temp_names[0]));
+		Check(temp_mode == c.mode, what + ": the temporary file has the final mode");
+		Check(Names(dir.Path()) == std::set<std::string> {"new.ini"},
+		      what + ": no temporary file is left");
+
+		// An existing 0640 file keeps 0640.
+		std::error_code ec;
+		fs::permissions(target, fs::perms(0640), ec);
+		Check(!ec, what + ": set mode 0640");
+		Check(WriteFileAtomically(target, "replaced").has_value(), what + ": replace");
+		Check(Mode(target) == 0640 && ReadAll(target) == "replaced",
+		      what + ": the replaced file keeps 0640, got " + Octal(Mode(target)));
+
+		// A fault at any step leaves the target and its mode, and no temporary file.
+		for (const auto step:
+		     {AtomicFileStep::CreateTemp, AtomicFileStep::Write, AtomicFileStep::Sync,
+		      AtomicFileStep::Close, AtomicFileStep::Rename}) {
+			SetAtomicFileFaultForTesting(
+			    [step](AtomicFileStep current) { return current == step ? EIO : 0; });
+			const auto failed  = WriteFileAtomically(target, "lost");
+			const auto created = WriteFileAtomically(dir.Path() / "other.ini", "lost");
+			SetAtomicFileFaultForTesting(nullptr);
+			const std::string at = what + ", a fault at " + StepName(step);
+			Check(!failed.has_value() && !created.has_value(), at + ": the writes fail");
+			Check(ReadAll(target) == "replaced" && Mode(target) == 0640,
+			      at + ": the target and its mode are unchanged");
+			Check(Names(dir.Path()) == std::set<std::string> {"new.ini"},
+			      at + ": no temporary file and no new file are left");
+		}
+	}
+	Check(CurrentUmask() == original, "the umask is restored");
 }
 
 void TestSymlinkWrittenThrough() {
@@ -293,6 +392,7 @@ int main() {
 	TestNewFile();
 	TestReplace();
 	TestModeKept();
+	TestUmaskModes();
 	TestSymlinkWrittenThrough();
 	TestRelativeTarget();
 	TestNoFileName();

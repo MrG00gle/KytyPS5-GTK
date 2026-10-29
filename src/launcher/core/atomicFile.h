@@ -20,10 +20,12 @@ struct IoError {
 	std::string           message;          // names the failed step, the path, and the error text
 };
 
-// Replaces target with bytes: a temporary file .<name>.tmp-XXXXXX in the target's directory is
-// written in full, fsync()ed, closed, and rename()d over the target; then the directory is
-// fsync()ed (a failure of that last step is ignored, because the new file is already in place).
-// The new file gets the existing target's permission bits, or 0644 when the target does not exist.
+// Replaces target with bytes: a temporary file .<name>.tmp-<16 random hexadecimal digits> in the
+// target's directory is written in full, fsync()ed, closed, and rename()d over the target; then the
+// directory is fsync()ed (a failure of that last step is ignored, because the new file is already
+// in place). The temporary file is created with mode 0666, so a new target gets 0666 minus the
+// process umask (and the directory's default ACL), as any file the process creates and as Qt's
+// QSaveFile does; when the target exists, the new file gets the target's permission bits instead.
 // A target that is a symbolic link is written through: the file the link resolves to is replaced
 // and the link stays. On failure the temporary file is removed and the target is unchanged.
 Expected<void, IoError> WriteFileAtomically(const std::filesystem::path& target,

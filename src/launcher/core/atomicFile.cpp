@@ -5,7 +5,9 @@
 #include <cerrno>
 #include <cstddef>
 #include <fcntl.h>
+#include <optional>
 #include <string>
+#include <sys/random.h>
 #include <sys/stat.h>
 #include <system_error>
 #include <unistd.h>
@@ -19,6 +21,31 @@ namespace fs = std::filesystem;
 
 // The kernel limit for symbolic links in one path resolution (MAXSYMLINKS on Linux).
 constexpr int kMaxSymlinkDepth = 40;
+
+// Temporary names tried before giving up with EEXIST.
+constexpr int kMaxCreateAttempts = 100;
+
+// Appends 16 hexadecimal digits from getrandom(); 0 or the errno.
+int AppendRandomHex(std::string& text) {
+	std::array<unsigned char, 8> bytes {};
+	size_t                       filled = 0;
+	while (filled < bytes.size()) {
+		const ssize_t count = ::getrandom(bytes.data() + filled, bytes.size() - filled, 0);
+		if (count < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			return errno;
+		}
+		filled += static_cast<size_t>(count);
+	}
+	static constexpr char kHex[] = "0123456789abcdef";
+	for (const unsigned char byte: bytes) {
+		text += kHex[byte >> 4u];
+		text += kHex[byte & 0xFu];
+	}
+	return 0;
+}
 
 std::function<int(AtomicFileStep)>& FaultHook() {
 	static std::function<int(AtomicFileStep)> hook;
@@ -72,15 +99,28 @@ public:
 	TempFile(const TempFile&)            = delete;
 	TempFile& operator=(const TempFile&) = delete;
 
-	// mkostemp() on the template, then the permission bits.
-	int Create(std::string path_template, mode_t mode) {
-		const int fd = ::mkostemp(path_template.data(), O_CLOEXEC);
-		if (fd < 0) {
-			return errno;
+	// Creates prefix + 16 random hexadecimal digits with O_EXCL and mode 0666, so that the kernel
+	// applies the umask and the default ACL; a name that exists is tried again with another suffix.
+	// Then, when mode is set (the existing target's permission bits), the file gets that mode.
+	int Create(const std::string& prefix, std::optional<mode_t> mode) {
+		int fd = -1;
+		for (int attempt = 0; fd < 0; attempt++) {
+			if (attempt == kMaxCreateAttempts) {
+				return EEXIST;
+			}
+			std::string path = prefix;
+			if (const int error_number = AppendRandomHex(path); error_number != 0) {
+				return error_number;
+			}
+			fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+			if (fd >= 0) {
+				m_path = std::move(path);
+			} else if (errno != EEXIST) {
+				return errno;
+			}
 		}
-		m_fd   = fd;
-		m_path = std::move(path_template);
-		if (::fchmod(m_fd, mode) != 0) {
+		m_fd = fd;
+		if (mode && ::fchmod(m_fd, *mode) != 0) {
 			return errno;
 		}
 		return 0;
@@ -159,8 +199,9 @@ Expected<void, IoError> WriteFileAtomically(const fs::path& target, std::string_
 		directory = ".";
 	}
 
-	mode_t      mode = 0644;
-	struct stat existing {};
+	// A new target keeps the mode that the kernel derives from 0666 and the umask.
+	std::optional<mode_t> mode;
+	struct stat           existing {};
 	if (::stat(real.c_str(), &existing) == 0) {
 		mode = existing.st_mode & 0777;
 	}
@@ -168,8 +209,8 @@ Expected<void, IoError> WriteFileAtomically(const fs::path& target, std::string_
 	TempFile temp;
 	int      error_number = InjectedFault(AtomicFileStep::CreateTemp);
 	if (error_number == 0) {
-		error_number = temp.Create(
-		    (directory / ("." + real.filename().string() + ".tmp-XXXXXX")).string(), mode);
+		error_number =
+		    temp.Create((directory / ("." + real.filename().string() + ".tmp-")).string(), mode);
 	}
 	if (error_number != 0) {
 		return Failure(target, error_number,
