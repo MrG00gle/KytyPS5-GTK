@@ -1,5 +1,7 @@
 #include "launcher/core/gameScanner.h"
 
+#include "common/archive.h"
+
 #include <algorithm>
 #include <deque>
 #include <map>
@@ -12,12 +14,12 @@ namespace kyty::core {
 
 namespace {
 
-constexpr std::string_view kEbootName     = "eboot.bin";
-constexpr std::string_view kArchiveSuffix = ".zar";
-constexpr std::string_view kNoCanonical   = "cannot resolve the canonical path";
+constexpr std::string_view kEbootName   = "eboot.bin";
+constexpr std::string_view kNoCanonical = "cannot resolve the canonical path";
 
-bool IsArchiveName(std::string_view name) {
-	return name.ends_with(kArchiveSuffix);
+// The Qt launcher's archive predicate: an ASCII case-insensitive ".zar" suffix.
+bool IsArchiveName(const std::string& name) {
+	return Common::IsSupportedArchive(std::filesystem::path(name));
 }
 
 // The lexically normal path without a trailing separator ("/a/./b/" gives "/a/b").
@@ -51,17 +53,26 @@ public:
 			const auto directory = std::move(pending.front());
 			pending.pop_front();
 
+			// A directory listed before in this scan (an overlapping folder, an alias, or a bind
+			// mount, possibly a cycle) is skipped; one without an identity is listed every time.
+			const auto identity = m_fs.Identity(directory);
+			if (identity && m_listed.contains(*identity)) {
+				continue;
+			}
 			auto listing = m_fs.List(directory);
 			if (!listing) {
 				Warn(directory, listing.error());
 				continue;
+			}
+			if (identity) {
+				m_listed.insert(*identity);
 			}
 
 			bool                               has_eboot = false;
 			std::vector<std::filesystem::path> archives;
 			std::vector<std::filesystem::path> subdirectories;
 			for (const auto& entry: *listing) {
-				// Symbolic links are never followed and never count as eboot.bin or a .zar.
+				// Symbolic links are never followed into directories and never count as a .zar.
 				if (entry.type == FsEntry::File) {
 					if (entry.name == kEbootName) {
 						has_eboot = true;
@@ -70,6 +81,10 @@ public:
 					}
 				} else if (entry.type == FsEntry::Directory) {
 					subdirectories.push_back(directory / entry.name);
+				} else if (entry.type == FsEntry::Symlink && entry.name == kEbootName &&
+				           !has_eboot) {
+					// An eboot.bin link counts when it leads to a regular file.
+					has_eboot = m_fs.ResolvesToRegularFile(directory / entry.name);
 				}
 			}
 
@@ -85,6 +100,12 @@ public:
 				}
 				continue;
 			}
+			// Name order, not listing order: when a bind mount shows one directory under two
+			// spellings, the one kept does not depend on the enumeration order (Requirement 7.5).
+			std::sort(subdirectories.begin(), subdirectories.end(),
+			          [](const std::filesystem::path& a, const std::filesystem::path& b) {
+				          return a.native() < b.native();
+			          });
 			for (auto& subdirectory: subdirectories) {
 				pending.push_back(std::move(subdirectory));
 			}
@@ -162,6 +183,7 @@ private:
 	std::map<std::string, GameEntry>   m_entries;
 	std::set<std::string>              m_rejected; // archives without a root eboot.bin
 	std::map<std::string, ScanWarning> m_warnings;
+	std::set<FileIdentity>             m_listed; // directories listed in this scan
 };
 
 } // namespace

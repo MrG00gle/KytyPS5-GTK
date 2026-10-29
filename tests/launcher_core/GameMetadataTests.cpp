@@ -174,8 +174,8 @@ void TestVersions() {
 	          .firmware_version.empty(),
 	      "a short firmware value is empty");
 	Check(ParseParamJson(R"({"requiredSystemSoftwareVersion":"0X0150000000000000"})", "d")
-	          .firmware_version.empty(),
-	      "an upper-case 0X prefix is empty (D12)");
+	              .firmware_version == "1.50",
+	      "an upper-case 0X prefix is accepted, as in Qt (phase 5 D29)");
 	Check(ParseParamJson(R"({"requiredSystemSoftwareVersion":22020096})", "d")
 	          .firmware_version.empty(),
 	      "a numeric firmware value is empty");

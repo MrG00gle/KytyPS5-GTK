@@ -68,6 +68,10 @@ void FaultInjectingScanFileSystem::FailArchiveHasRootEboot(const std::filesystem
 	m_archive_failures.insert(NormalScanPath(zar));
 }
 
+void FaultInjectingScanFileSystem::FailIdentity(const std::filesystem::path& path) {
+	m_identity_failures.insert(NormalScanPath(path));
+}
+
 void FaultInjectingScanFileSystem::SetBeforeList(
     std::function<void(const std::filesystem::path&)> hook) {
 	m_before_list = std::move(hook);
@@ -102,10 +106,30 @@ FaultInjectingScanFileSystem::Canonical(const std::filesystem::path& path) {
 	return m_inner.Canonical(path);
 }
 
+bool FaultInjectingScanFileSystem::ResolvesToRegularFile(const std::filesystem::path& path) {
+	return m_inner.ResolvesToRegularFile(path);
+}
+
+std::optional<kyty::core::FileIdentity>
+FaultInjectingScanFileSystem::Identity(const std::filesystem::path& path) {
+	if (m_identity_failures.contains(NormalScanPath(path))) {
+		return std::nullopt;
+	}
+	return m_inner.Identity(path);
+}
+
 // ---- InMemoryScanFileSystem
 
 InMemoryScanFileSystem::InMemoryScanFileSystem() {
-	m_nodes["/"] = Node {};
+	NodeAt("/");
+}
+
+InMemoryScanFileSystem::Node& InMemoryScanFileSystem::NodeAt(const std::filesystem::path& normal) {
+	const auto [it, inserted] = m_nodes.try_emplace(normal);
+	if (inserted) {
+		it->second.number = ++m_node_count;
+	}
+	return it->second;
 }
 
 InMemoryScanFileSystem::Node& InMemoryScanFileSystem::Put(const std::filesystem::path& path,
@@ -117,25 +141,26 @@ InMemoryScanFileSystem::Node& InMemoryScanFileSystem::Put(const std::filesystem:
 	// Create the parents as directories.
 	std::filesystem::path current = normal.root_path();
 	for (const auto& component: normal.relative_path().parent_path()) {
-		auto& parent = m_nodes[current];
-		if (parent.kind != Node::Kind::Directory) {
-			Fail("a parent is not a directory: " + path.string());
+		auto& parent = NodeAt(current);
+		if (parent.kind != Node::Kind::Directory || parent.mount) {
+			Fail("a parent is not a directory without a bind mount: " + path.string());
 		}
 		parent.children.insert(component.native());
 		current /= component;
-		m_nodes.try_emplace(current);
+		NodeAt(current);
 	}
-	auto& parent = m_nodes[current];
-	if (parent.kind != Node::Kind::Directory) {
-		Fail("the parent is not a directory: " + path.string());
+	auto& parent = NodeAt(current);
+	if (parent.kind != Node::Kind::Directory || parent.mount) {
+		Fail("the parent is not a directory without a bind mount: " + path.string());
 	}
 	parent.children.insert(normal.filename().native());
 
-	auto& node = m_nodes[normal];
+	auto& node = NodeAt(normal);
 	if (kind != Node::Kind::Directory && !node.children.empty()) {
 		Fail("a directory with children cannot change its kind: " + path.string());
 	}
 	node.kind = kind;
+	node.mount.reset();
 	return node;
 }
 
@@ -158,6 +183,21 @@ void InMemoryScanFileSystem::AddSymlink(const std::filesystem::path& path,
 
 void InMemoryScanFileSystem::AddOther(const std::filesystem::path& path) {
 	Put(path, Node::Kind::Other);
+}
+
+void InMemoryScanFileSystem::AddBindMount(const std::filesystem::path& path,
+                                          const std::filesystem::path& existing_directory) {
+	int        links    = 0;
+	const auto resolved = Resolve(existing_directory, links);
+	if (!resolved || m_nodes.at(Physical(*resolved)).kind != Node::Kind::Directory) {
+		Fail("a bind mount source must be an existing directory: " + existing_directory.string());
+	}
+	auto  source = Physical(*resolved);
+	auto& node   = Put(path, Node::Kind::Directory);
+	if (!node.children.empty()) {
+		Fail("a bind mount point must be empty: " + path.string());
+	}
+	node.mount = std::move(source);
 }
 
 void InMemoryScanFileSystem::SetUnreadable(const std::filesystem::path& dir, std::string error) {
@@ -189,9 +229,10 @@ InMemoryScanFileSystem::Resolve(const std::filesystem::path& path, int& links) c
 			current = current.parent_path();
 			continue;
 		}
-		// current is always an existing directory here.
+		// current is always an existing directory here; the entry is looked up in the node that
+		// holds its contents (the source of a bind mount), but keeps the spelling through current.
 		const auto candidate = current / component;
-		const auto it        = m_nodes.find(candidate);
+		const auto it        = m_nodes.find(Physical(current) / component);
 		if (it == m_nodes.end()) {
 			return MakeUnexpected(ENOENT);
 		}
@@ -211,11 +252,25 @@ InMemoryScanFileSystem::Resolve(const std::filesystem::path& path, int& links) c
 		}
 		// Every component but the last must be a directory.
 		const bool last = index + 1 == components.size();
-		if ((!last || trailing_directory) && m_nodes.at(current).kind != Node::Kind::Directory) {
+		if ((!last || trailing_directory) &&
+		    m_nodes.at(Physical(current)).kind != Node::Kind::Directory) {
 			return MakeUnexpected(ENOTDIR);
 		}
 	}
 	return current;
+}
+
+std::filesystem::path
+InMemoryScanFileSystem::Physical(const std::filesystem::path& resolved) const {
+	std::filesystem::path physical = resolved.root_path();
+	for (const auto& component: resolved.relative_path()) {
+		physical /= component;
+		const auto it = m_nodes.find(physical);
+		if (it != m_nodes.end() && it->second.mount) {
+			physical = *it->second.mount;
+		}
+	}
+	return physical;
 }
 
 Expected<std::vector<FsEntry>, std::string>
@@ -226,7 +281,8 @@ InMemoryScanFileSystem::List(const std::filesystem::path& dir) {
 	if (!resolved) {
 		return MakeUnexpected(ErrorText(resolved.error()));
 	}
-	const Node& node = m_nodes.at(*resolved);
+	const auto  physical = Physical(*resolved);
+	const Node& node     = m_nodes.at(physical);
 	if (node.kind != Node::Kind::Directory) {
 		return MakeUnexpected(ErrorText(ENOTDIR));
 	}
@@ -239,7 +295,7 @@ InMemoryScanFileSystem::List(const std::filesystem::path& dir) {
 	for (const auto& name: node.children) {
 		FsEntry entry;
 		entry.name = name;
-		switch (m_nodes.at(*resolved / name).kind) {
+		switch (m_nodes.at(physical / name).kind) {
 			case Node::Kind::Directory: entry.type = FsEntry::Directory; break;
 			case Node::Kind::File:
 			case Node::Kind::Archive: entry.type = FsEntry::File; break;
@@ -265,7 +321,7 @@ bool InMemoryScanFileSystem::ArchiveHasRootEboot(const std::filesystem::path& za
 	if (!resolved) {
 		return false;
 	}
-	const Node& node = m_nodes.at(*resolved);
+	const Node& node = m_nodes.at(Physical(*resolved));
 	return node.kind == Node::Kind::Archive && node.archive_has_root_eboot;
 }
 
@@ -277,6 +333,26 @@ InMemoryScanFileSystem::Canonical(const std::filesystem::path& path) {
 		return std::nullopt;
 	}
 	return *resolved;
+}
+
+bool InMemoryScanFileSystem::ResolvesToRegularFile(const std::filesystem::path& path) {
+	int        links    = 0;
+	const auto resolved = Resolve(path, links);
+	if (!resolved) {
+		return false;
+	}
+	const auto kind = m_nodes.at(Physical(*resolved)).kind;
+	return kind == Node::Kind::File || kind == Node::Kind::Archive;
+}
+
+std::optional<kyty::core::FileIdentity>
+InMemoryScanFileSystem::Identity(const std::filesystem::path& path) {
+	int        links    = 0;
+	const auto resolved = Resolve(path, links);
+	if (!resolved) {
+		return std::nullopt;
+	}
+	return kyty::core::FileIdentity {1, m_nodes.at(Physical(*resolved)).number};
 }
 
 // ---- InMemoryMetadataReader

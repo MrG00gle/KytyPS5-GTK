@@ -2,11 +2,12 @@
 
 // Scan file systems for tests (plan D17):
 // - FaultInjectingScanFileSystem wraps another ScanFileSystem (usually the host one) and fails
-//   List, Canonical, or ArchiveHasRootEboot for chosen paths, so unreadable directories are
-//   simulated without changing permissions (the Fedora CI container runs as root).
+//   List, Canonical, Identity, or ArchiveHasRootEboot for chosen paths, so unreadable directories
+//   are simulated without changing permissions (the Fedora CI container runs as root).
 // - InMemoryScanFileSystem is a tree model with directories, files, valid and invalid archives,
-//   symbolic links, other entries, unreadable directories, and a listing order chosen by a seed;
-//   canonical paths are computed in the model. The properties use it to stay fast.
+//   symbolic links, bind mounts, other entries, unreadable directories, and a listing order chosen
+//   by a seed; canonical paths are computed in the model, and every node has a stable identity
+//   (device 1, inode = the node's number). The properties use it to stay fast.
 // - InMemoryMetadataReader returns ParseParamJson() of param.json text set per entry path.
 // None of them throws; paths are compared in lexically normal form without a trailing separator.
 
@@ -39,6 +40,8 @@ public:
 	void FailCanonical(const std::filesystem::path& path);
 	// ArchiveHasRootEboot(zar) gives false.
 	void FailArchiveHasRootEboot(const std::filesystem::path& zar);
+	// Identity(path) gives nullopt.
+	void FailIdentity(const std::filesystem::path& path);
 	// Called with the directory before every List (for example to cancel a scan part way).
 	void SetBeforeList(std::function<void(const std::filesystem::path&)> hook);
 
@@ -54,12 +57,15 @@ public:
 	     List(const std::filesystem::path& dir) override;
 	bool ArchiveHasRootEboot(const std::filesystem::path& zar) override;
 	std::optional<std::filesystem::path> Canonical(const std::filesystem::path& path) override;
+	bool ResolvesToRegularFile(const std::filesystem::path& path) override;
+	std::optional<kyty::core::FileIdentity> Identity(const std::filesystem::path& path) override;
 
 private:
 	kyty::core::ScanFileSystem&                       m_inner;
 	std::map<std::filesystem::path, std::string>      m_list_failures;
 	std::set<std::filesystem::path>                   m_canonical_failures;
 	std::set<std::filesystem::path>                   m_archive_failures;
+	std::set<std::filesystem::path>                   m_identity_failures;
 	std::function<void(const std::filesystem::path&)> m_before_list;
 	std::vector<std::filesystem::path>                m_list_calls;
 	std::vector<std::filesystem::path>                m_archive_calls;
@@ -81,6 +87,12 @@ public:
 	void AddSymlink(const std::filesystem::path& path, const std::filesystem::path& target);
 	// An entry of type Other (a FIFO, socket, or device).
 	void AddOther(const std::filesystem::path& path);
+	// path becomes a directory that shows existing_directory (which must resolve to a directory),
+	// as `mount --bind existing_directory path` does: the same entries and the same identity.
+	// Canonical paths below it keep path's spelling, as on the host, so a mount below its own
+	// source is a cycle that only identities reveal. Nothing can be added below path.
+	void AddBindMount(const std::filesystem::path& path,
+	                  const std::filesystem::path& existing_directory);
 	// List(dir) of this directory fails with error; resolving paths through it still works.
 	void SetUnreadable(const std::filesystem::path& dir, std::string error = "Permission denied");
 
@@ -94,24 +106,35 @@ public:
 	     List(const std::filesystem::path& dir) override;
 	bool ArchiveHasRootEboot(const std::filesystem::path& zar) override;
 	std::optional<std::filesystem::path> Canonical(const std::filesystem::path& path) override;
+	// A regular file is a node added with AddFile or AddArchive.
+	bool ResolvesToRegularFile(const std::filesystem::path& path) override;
+	std::optional<kyty::core::FileIdentity> Identity(const std::filesystem::path& path) override;
 
 private:
 	struct Node {
 		enum class Kind { Directory, File, Archive, Symlink, Other } kind = Kind::Directory;
-		bool                       archive_has_root_eboot                 = false;
-		std::filesystem::path      target;
-		std::optional<std::string> unreadable;
-		std::set<std::string>      children;
+		bool                                 archive_has_root_eboot       = false;
+		std::filesystem::path                target;
+		std::optional<std::string>           unreadable;
+		std::set<std::string>                children;
+		uint64_t                             number = 0; // the identity's inode, from 1
+		std::optional<std::filesystem::path> mount;      // a bind mount's source node path
 	};
 
+	// The node at a normal path, created (and numbered) as an empty directory when missing.
+	Node& NodeAt(const std::filesystem::path& normal);
 	Node& Put(const std::filesystem::path& path, Node::Kind kind);
 	// The resolved path (every link followed, at most 40), or the errno of the failure.
 	kyty::core::Expected<std::filesystem::path, int> Resolve(const std::filesystem::path& path,
 	                                                         int& links) const;
+	// The path of the node that holds what a resolved path names: every bind mount point on the
+	// way is replaced by its source.
+	[[nodiscard]] std::filesystem::path Physical(const std::filesystem::path& resolved) const;
 
 	std::map<std::filesystem::path, Node> m_nodes;
 	uint64_t                              m_seed       = 0;
 	size_t                                m_list_count = 0;
+	uint64_t                              m_node_count = 0;
 };
 
 class InMemoryMetadataReader final: public kyty::core::MetadataReader {

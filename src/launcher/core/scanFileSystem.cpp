@@ -2,6 +2,7 @@
 
 #include "common/archive.h"
 
+#include <sys/stat.h>
 #include <system_error>
 #include <utility>
 
@@ -60,6 +61,20 @@ public:
 			return std::nullopt;
 		}
 		return canonical;
+	}
+
+	bool ResolvesToRegularFile(const std::filesystem::path& path) override {
+		std::error_code ec;
+		return std::filesystem::is_regular_file(path, ec);
+	}
+
+	std::optional<FileIdentity> Identity(const std::filesystem::path& path) override {
+		struct stat info {};
+		if (::stat(path.c_str(), &info) != 0) {
+			return std::nullopt;
+		}
+		return FileIdentity {static_cast<std::uint64_t>(info.st_dev),
+		                     static_cast<std::uint64_t>(info.st_ino)};
 	}
 };
 

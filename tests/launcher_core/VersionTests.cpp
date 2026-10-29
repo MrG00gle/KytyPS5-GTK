@@ -133,14 +133,22 @@ void TestFormatSystemSoftwareVersion() {
 	CheckFormat("0x015000ABCDEFabcd", "1.50");
 	CheckFormat("0x0700000000000001", "7.00");
 	CheckFormat("0x0702000123456789", "7.02");
+	// An upper-case prefix is accepted, as in the Qt launcher.
+	CheckFormat("0X0150000000000000", "1.50");
+	CheckFormat("0X0123450000000000", "1.23.45");
+	CheckFormat("0X015000ABCDEFabcd", "1.50");
 }
 
 void TestFormatRejectsMalformed() {
 	const std::vector<std::string> malformed = {
 	    "",
 	    "0x",
-	    "0X0150000000000000",   // prefix must be 0x
+	    "0X",
+	    "0X015000000000000",    // 17 characters
 	    "1x0150000000000000",   // wrong prefix
+	    "1X0150000000000000",   // wrong prefix
+	    "0y0150000000000000",   // wrong prefix
+	    "OX0150000000000000",   // letter O, not zero
 	    "000150000000000000",   // no prefix
 	    "x00150000000000000",   // wrong prefix
 	    "0x015000000000000",    // 17 characters

@@ -18,10 +18,10 @@ namespace kyty::core {
 //   form a cycle.
 int CompareVersions(std::string_view a, std::string_view b);
 
-// Formats a param.json requiredSystemSoftwareVersion. The input must be exactly "0x", six decimal
-// digits MMmmpp, and ten hexadecimal digits; the result is int(MM).mm, plus .pp when pp is not 00
-// ("0x0150000000000000" gives "1.50", "0x0123450000000000" gives "1.23.45"). Any other input gives
-// "".
+// Formats a param.json requiredSystemSoftwareVersion. The input must be exactly "0x" or "0X", six
+// decimal digits MMmmpp, and ten hexadecimal digits; the result is int(MM).mm, plus .pp when pp is
+// not 00 ("0x0150000000000000" and "0X0150000000000000" give "1.50", "0x0123450000000000" gives
+// "1.23.45"). Any other input gives "".
 std::string FormatSystemSoftwareVersion(std::string_view raw);
 
 } // namespace kyty::core

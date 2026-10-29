@@ -1,12 +1,15 @@
 // Feature: linux-gtk-modernization, Property 3: Scanner matches the reference model
 //
 // Validates Requirements 7.2, 7.10, and 7.15. Each case generates a tree model (scanGenerators.h:
-// nested directories, eboot.bin as file, directory, link, or other entry, games below games, valid
-// and invalid archives with .zar, .ZAR, and other names, symbolic links to anything including
-// loops and dangling targets, unreadable directories) and up to four possibly overlapping,
-// duplicated, aliased, or missing folders. The scan on InMemoryScanFileSystem must equal a
-// reference model that walks the tree description directly (it resolves only the folders through
-// links, with its own resolver, and recurses over the model's real nodes):
+// nested directories, eboot.bin as file, directory, other entry, or link to a regular file, a
+// directory, or nothing, an upper-case EBOOT.BIN, games below games, valid and invalid archives
+// with .zar, .ZAR, .Zar, and other names, symbolic links to anything including loops and dangling
+// targets, unreadable directories) and up to four possibly overlapping, duplicated, aliased, or
+// missing folders. The scan on InMemoryScanFileSystem must equal a reference model that walks the
+// tree description directly (it resolves the folders and eboot.bin links with its own resolver,
+// and recurses over the model's real nodes) with the Qt launcher's rules: archive names with an
+// ASCII case-insensitive ".zar" suffix, and an eboot.bin that is a regular file or a link that
+// resolves to one:
 // - the same entries (canonical path, kind, legacy path, metadata), each canonical path once;
 // - exactly one warning per missing folder or unreadable directory;
 // - after removing one folder, exactly the entries no remaining folder contains are gone.
@@ -42,6 +45,7 @@ struct ExpectedEntry {
 struct ReferenceResult {
 	std::map<std::string, ExpectedEntry> entries;  // by canonical path
 	std::set<std::string>                warnings; // canonical (or lexical) path of each warning
+	bool qt_rule_entry = false; // an eboot.bin link or a non-lower-case .zar made an entry (RC_TAG)
 };
 
 class ReferenceModel {
@@ -85,6 +89,21 @@ private:
 		}
 		const auto* node = Find(path);
 		return node != nullptr && node->kind == ModelNode::Kind::Directory;
+	}
+
+	[[nodiscard]] static bool IsRegularFileKind(ModelNode::Kind kind) {
+		return kind == ModelNode::Kind::File || kind == ModelNode::Kind::ValidArchive ||
+		       kind == ModelNode::Kind::InvalidArchive;
+	}
+
+	// The node is a regular file, or a link that resolves to one.
+	[[nodiscard]] bool ResolvesToRegularFile(const ModelNode& node) const {
+		if (node.kind != ModelNode::Kind::Symlink) {
+			return IsRegularFileKind(node.kind);
+		}
+		const auto  resolved = Resolve(node.path);
+		const auto* target   = resolved ? Find(*resolved) : nullptr;
+		return target != nullptr && IsRegularFileKind(target->kind);
 	}
 
 	// realpath() over the model: a stack of pending names, links expanded in place.
@@ -167,11 +186,14 @@ private:
 		bool is_game = false;
 		for (const auto* child: Children(directory)) {
 			const auto name = child->path.filename().string();
-			if (child->kind == ModelNode::Kind::ValidArchive && name.ends_with(".zar")) {
+			if (child->kind == ModelNode::Kind::ValidArchive && ScanGen::IsZarName(name)) {
 				add(child->path, GameEntry::Kind::Archive);
+				expected.qt_rule_entry = expected.qt_rule_entry || !name.ends_with(".zar");
 			}
-			if (child->kind == ModelNode::Kind::File && name == "eboot.bin") {
+			if (name == "eboot.bin" && ResolvesToRegularFile(*child)) {
 				is_game = true;
+				expected.qt_rule_entry =
+				    expected.qt_rule_entry || child->kind == ModelNode::Kind::Symlink;
 			}
 		}
 		if (is_game) {
@@ -273,5 +295,6 @@ KYTY_PROPERTY(3, "Scanner matches the reference model") {
 		}
 		RC_TAG(expected.entries.empty() ? "no entries" : "entries");
 		RC_TAG(expected.warnings.empty() ? "no warnings" : "warnings");
+		RC_TAG(expected.qt_rule_entry ? "Qt-rule entry" : "no Qt-rule entry");
 	});
 }

@@ -78,7 +78,7 @@ int CompareVersions(std::string_view a, std::string_view b) {
 
 std::string FormatSystemSoftwareVersion(std::string_view raw) {
 	constexpr size_t kLength = 2 + 6 + 10;
-	if (raw.size() != kLength || raw[0] != '0' || raw[1] != 'x') {
+	if (raw.size() != kLength || raw[0] != '0' || (raw[1] != 'x' && raw[1] != 'X')) {
 		return {};
 	}
 	const auto digits = raw.substr(2, 6);

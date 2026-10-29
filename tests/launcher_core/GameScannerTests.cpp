@@ -1,7 +1,9 @@
 // Example tests of the game scanner (src/launcher/core/gameScanner.h, scanFileSystem.h;
-// Requirements 7.1, 7.2, 7.10, 7.15). Real temporary trees and .zar files packed with
-// Common::PackArchive; unreadable directories and resolution failures are injected through
-// KytyTests::FaultInjectingScanFileSystem, never through permissions.
+// Requirements 7.1, 7.2, 7.5, 7.10, 7.15, and the Qt launcher's archive name and eboot.bin link
+// rules).
+// Real temporary trees and .zar files packed with Common::PackArchive; unreadable directories and
+// resolution failures are injected through KytyTests::FaultInjectingScanFileSystem, never through
+// permissions, and bind mounts are modeled in KytyTests::InMemoryScanFileSystem.
 
 #include "common/archive.h"
 #include "launcher/core/cancelToken.h"
@@ -230,8 +232,8 @@ void TestSymlinks() {
 	const auto elsewhere_zar = tree.Archive("outside/elsewhere.zar", true);
 	tree.Link(elsewhere_zar, "f/linked.zar");
 	tree.File("outside/real-eboot.bin", "ELF");
-	tree.Link(tree.Base() / "outside/real-eboot.bin", "f/NotGame/eboot.bin");
-	tree.Game("f/NotGame/Real");
+	tree.Link(tree.Base() / "outside/real-eboot.bin", "f/LinkedEboot/eboot.bin");
+	tree.Game("f/LinkedEboot/Inner");
 	tree.Dir("f/DirEboot/eboot.bin");
 	tree.Game("f/DirEboot/Real");
 	tree.Link("missing-target", "f/dangling");
@@ -240,11 +242,12 @@ void TestSymlinks() {
 	FaultInjectingScanFileSystem faults(*host);
 	const auto                   reader = MakeHostMetadataReader();
 	const auto                   result = Scan({tree.Base() / "f"}, faults, *reader);
-	CheckPaths(result, tree.Base(), {"f/DirEboot/Real", "f/NotGame/Real"},
-	           "links are never followed and never count as eboot.bin or .zar");
+	CheckPaths(result, tree.Base(), {"f/DirEboot/Real", "f/LinkedEboot"},
+	           "directory links are never followed and never count as .zar; an eboot.bin link to "
+	           "a regular file counts");
 	Check(result.warnings.empty(), "links give no warnings");
-	Check(faults.ListCalls().size() == 6,
-	      "f, NotGame, DirEboot, the directory DirEboot/eboot.bin, and the two Real games are "
+	Check(faults.ListCalls().size() == 5,
+	      "f, LinkedEboot, DirEboot, the directory DirEboot/eboot.bin, and DirEboot/Real are "
 	      "listed: " +
 	          std::to_string(faults.ListCalls().size()));
 	Check(faults.ArchiveCalls().empty(), "a linked .zar is never opened");
@@ -252,7 +255,7 @@ void TestSymlinks() {
 	// A Game_Folder that is itself a link is resolved: entries get canonical paths.
 	tree.Link(tree.Base() / "f", "folder-link");
 	const auto through = HostScan({tree.Base() / "folder-link"});
-	CheckPaths(through, tree.Base(), {"f/DirEboot/Real", "f/NotGame/Real"},
+	CheckPaths(through, tree.Base(), {"f/DirEboot/Real", "f/LinkedEboot"},
 	           "a linked folder is scanned");
 	Check(through.entries[0].legacy_relative_path == "DirEboot/Real",
 	      "the legacy path is relative to the folder as given");
@@ -276,7 +279,8 @@ void TestArchives() {
 	tree.Archive("f/deeper/nested.zar", true);
 
 	const auto result = HostScan({tree.Base() / "f"});
-	CheckPaths(result, tree.Base(), {"f/deeper/nested.zar", "f/dir.zar", "f/good.zar"},
+	CheckPaths(result, tree.Base(),
+	           {"f/UPPER.ZAR", "f/deeper/nested.zar", "f/dir.zar", "f/good.zar"},
 	           "only .zar files with a root eboot.bin");
 	const auto& good = EntryAt(result, tree.Base() / "f/good.zar");
 	Check(good.kind == kArchive && good.title_name == "Good" && good.title_id == "PPSA00777" &&
@@ -295,7 +299,122 @@ void TestArchives() {
 	Check(!host->ArchiveHasRootEboot(tree.Base() / "f/archive.bin"),
 	      "the archive API only opens .zar names");
 	Check(host->ArchiveHasRootEboot(tree.Base() / "f/UPPER.ZAR"),
-	      "UPPER.ZAR opens, but the scanner's suffix check is case-sensitive");
+	      "UPPER.ZAR opens and the scanner lists it, as Qt does");
+}
+
+// Archive names follow Common::IsSupportedArchive, the Qt launcher's predicate: an ASCII
+// case-insensitive ".zar" suffix. Symbolic links to archives stay ignored (Qt lists archives with
+// QDir::NoSymLinks).
+void TestArchiveNames() {
+	const Tree tree;
+	tree.Archive("f/lower.zar", true);
+	tree.Archive("f/UPPER.ZAR", true);
+	tree.Archive("f/Mixed.Zar", true);
+	tree.Archive("f/.zar", true);
+	tree.Archive("f/zar", true);
+	tree.Archive("f/x.zarx", true);
+	tree.Archive("f/x.zar.bak", true);
+	tree.Link(tree.Archive("outside/real.ZAR", true), "f/linked.ZAR");
+	tree.Link(tree.Archive("outside/real.zar", true), "f/linked.zar");
+
+	const auto                   host = MakeHostScanFileSystem();
+	FaultInjectingScanFileSystem faults(*host);
+	const auto                   reader = MakeHostMetadataReader();
+	const auto                   result = Scan({tree.Base() / "f"}, faults, *reader);
+	// A file named exactly ".zar" is an archive name when Common::IsSupportedArchive says so.
+	std::vector<std::string> expected = {"f/Mixed.Zar", "f/UPPER.ZAR", "f/lower.zar"};
+	if (Common::IsSupportedArchive(".zar")) {
+		expected.insert(expected.begin(), "f/.zar");
+	}
+	CheckPaths(result, tree.Base(), expected, "archive names in any case, no links");
+	Check(result.warnings.empty(), "archive names give no warnings");
+	Check(faults.ArchiveCalls().size() == expected.size(),
+	      "only the archive names are opened, never a link: " +
+	          std::to_string(faults.ArchiveCalls().size()));
+	for (const auto* name: {"lower.zar", "UPPER.ZAR", "Mixed.Zar", "zar", "x.zarx", "x.zar.bak"}) {
+		const bool listed =
+		    std::find(expected.begin(), expected.end(), std::string("f/") + name) != expected.end();
+		Check(listed == Common::IsSupportedArchive(name),
+		      std::string("the scanner agrees with Common::IsSupportedArchive on ") + name);
+	}
+	Check(EntryAt(result, tree.Base() / "f/Mixed.Zar").title_name == "Mixed" &&
+	          EntryAt(result, tree.Base() / "f/Mixed.Zar").kind == kArchive,
+	      "a mixed-case archive is an archive entry named after its stem");
+}
+
+// An entry named exactly eboot.bin counts when it is a regular file or a link that resolves to one
+// (Qt's QDir::exists follows links); other links are still never followed.
+void TestEbootLinks() {
+	const Tree tree;
+	tree.File("outside/eboot.bin", "ELF");
+	tree.Dir("outside/dir");
+	tree.Link(tree.Base() / "outside/eboot.bin", "f/ToFile/eboot.bin");
+	tree.Game("f/ToFile/sub/Inner"); // below a game: never visited
+	tree.Link("../../outside/eboot.bin", "f/Chain/first");
+	tree.Link("first", "f/Chain/eboot.bin"); // a relative link to a link to a regular file
+	tree.Link(tree.Base() / "outside/dir", "f/ToDir/eboot.bin");
+	tree.Game("f/ToDir/Inner");
+	tree.Link("missing", "f/Dangling/eboot.bin");
+	tree.Game("f/Dangling/Inner");
+	tree.Link("eboot.bin", "f/Loop/eboot.bin");
+	tree.Game("f/Loop/Inner");
+	tree.File("f/Upper/EBOOT.BIN", "ELF");
+	tree.Game("f/Upper/Inner");
+	tree.Link(tree.Base() / "outside/eboot.bin", "f/UpperLink/EBOOT.BIN");
+	tree.Game("f/UpperLink/Inner");
+
+	const auto                   host = MakeHostScanFileSystem();
+	FaultInjectingScanFileSystem faults(*host);
+	const auto                   reader = MakeHostMetadataReader();
+	const auto                   result = Scan({tree.Base() / "f"}, faults, *reader);
+	CheckPaths(result, tree.Base(),
+	           {"f/Chain", "f/Dangling/Inner", "f/Loop/Inner", "f/ToDir/Inner", "f/ToFile",
+	            "f/Upper/Inner", "f/UpperLink/Inner"},
+	           "eboot.bin links to a regular file make games; to a directory, to nothing, in a "
+	           "loop, or named EBOOT.BIN they do not");
+	Check(result.warnings.empty(), "eboot.bin links give no warnings");
+	const auto& to_file = EntryAt(result, tree.Base() / "f/ToFile");
+	Check(to_file.kind == kDirectory && to_file.legacy_relative_path == "ToFile" &&
+	          to_file.title_name == "ToFile",
+	      "a directory game through an eboot.bin link");
+	for (const auto& listed: faults.ListCalls()) {
+		Check(listed != tree.Base() / "f/ToFile/sub" && listed != tree.Base() / "outside/dir",
+		      "a game's subdirectory and a linked directory are not listed: " + listed.string());
+	}
+
+	Check(host->ResolvesToRegularFile(tree.Base() / "f/ToFile/eboot.bin") &&
+	          host->ResolvesToRegularFile(tree.Base() / "f/Chain/eboot.bin") &&
+	          host->ResolvesToRegularFile(tree.Base() / "outside/eboot.bin"),
+	      "regular files, also through links");
+	Check(!host->ResolvesToRegularFile(tree.Base() / "f/ToDir/eboot.bin") &&
+	          !host->ResolvesToRegularFile(tree.Base() / "f/Dangling/eboot.bin") &&
+	          !host->ResolvesToRegularFile(tree.Base() / "f/Loop/eboot.bin") &&
+	          !host->ResolvesToRegularFile(tree.Base() / "outside/dir") &&
+	          !host->ResolvesToRegularFile(tree.Base() / "nope"),
+	      "a directory, a dangling link, a loop, and a missing path are not regular files");
+
+	// The same rules in memory.
+	InMemoryScanFileSystem memory;
+	memory.AddFile("/m/real.bin");
+	memory.AddSymlink("/m/f/ToFile/eboot.bin", "../../real.bin");
+	memory.AddFile("/m/f/ToFile/sub/Inner/eboot.bin");
+	memory.AddArchive("/m/data.zar", false);
+	memory.AddSymlink("/m/f/ToArchive/eboot.bin", "/m/data.zar");
+	memory.AddDirectory("/m/dir");
+	memory.AddSymlink("/m/f/ToDir/eboot.bin", "/m/dir");
+	memory.AddSymlink("/m/f/Dangling/eboot.bin", "missing");
+	memory.AddOther("/m/fifo");
+	memory.AddSymlink("/m/f/ToOther/eboot.bin", "/m/fifo");
+	memory.AddFile("/m/f/Upper/EBOOT.BIN");
+	const InMemoryMetadataReader memory_reader;
+	FaultInjectingScanFileSystem memory_faults(memory);
+	const auto                   in_memory = Scan({"/m/f"}, memory_faults, memory_reader);
+	CheckPaths(in_memory, "/m", {"f/ToArchive", "f/ToFile"},
+	           "in memory: links to a regular file (an archive is one) make games");
+	Check(in_memory.warnings.empty(), "in memory: no warnings");
+	for (const auto& listed: memory_faults.ListCalls()) {
+		Check(listed != fs::path("/m/f/ToFile/sub"), "in memory: a game's subdirectory");
+	}
 }
 
 void TestMissingFolders() {
@@ -358,6 +477,133 @@ void TestOverlappingFolders() {
 	const auto only_a = HostScan({a});
 	CheckPaths(only_a, tree.Base(), {"f/a/Game1", "f/a/b/Game2", "f/a/one.zar"},
 	           "removing f keeps a's entries");
+
+	// Every directory is listed once per scan, however many folders reach it.
+	const auto                   host = MakeHostScanFileSystem();
+	FaultInjectingScanFileSystem counting(*host);
+	const auto                   reader = MakeHostMetadataReader();
+	const auto counted = Scan({f, a, link, f / "Outer/sub", a / "b"}, counting, *reader);
+	CheckPaths(counted, tree.Base(),
+	           {"f/Outer", "f/Outer/sub/Below", "f/a/Game1", "f/a/b/Game2", "f/a/one.zar"},
+	           "the entries of overlapping folders");
+	std::vector<fs::path> listed;
+	for (const auto& path: counting.ListCalls()) {
+		std::error_code ec;
+		listed.push_back(fs::canonical(path, ec));
+		Check(!ec, "canonical " + path.string());
+	}
+	std::sort(listed.begin(), listed.end());
+	Check(std::adjacent_find(listed.begin(), listed.end()) == listed.end(),
+	      "no directory is listed twice");
+	Check(listed.size() == 8, "f, a, Outer, Game1, b, Game2, Outer/sub, and Below are listed: " +
+	                              std::to_string(listed.size()));
+
+	// A directory without an identity is listed every time it is reached, with the same result.
+	FaultInjectingScanFileSystem no_identity(*host);
+	no_identity.FailIdentity(f);
+	const auto again = Scan({f, a, f}, no_identity, *reader);
+	CheckPaths(again, tree.Base(), {"f/Outer", "f/a/Game1", "f/a/b/Game2", "f/a/one.zar"},
+	           "the same entries without f's identity");
+	Check(again.warnings.empty(), "no warnings without an identity");
+	Check(std::count(no_identity.ListCalls().begin(), no_identity.ListCalls().end(), f) == 2 &&
+	          std::count(no_identity.ListCalls().begin(), no_identity.ListCalls().end(), a) == 1,
+	      "f is listed for both of its folders; a, which has an identity, once");
+}
+
+// A bind mount shows a directory again under another canonical path, with the same identity; a
+// mount below its own source is a cycle. Each directory is listed once, so the scan ends and each
+// game is reported once, without a warning.
+void TestBindMounts() {
+	InMemoryScanFileSystem memory;
+	memory.AddFile("/g/a/Game1/eboot.bin");
+	memory.AddArchive("/g/a/one.zar", true);
+	memory.AddFile("/g/b/Game2/eboot.bin");
+	memory.AddBindMount("/g/a/loop", "/g"); // mount --bind /g /g/a/loop
+	memory.AddBindMount("/h", "/g/b");
+
+	Check(memory.Identity("/g/a/loop") == memory.Identity("/g") &&
+	          memory.Identity("/g/a/loop/a/loop/b") == memory.Identity("/g/b") &&
+	          memory.Identity("/h") == memory.Identity("/g/b") &&
+	          memory.Identity("/g/a") != memory.Identity("/g/b"),
+	      "bind mounts share their source's identity");
+	Check(memory.Canonical("/g/a/loop/a/Game1") == fs::path("/g/a/loop/a/Game1") &&
+	          memory.Canonical("/h/Game2/..") == fs::path("/h"),
+	      "canonical paths keep the mount point's spelling, as on the host");
+	Check(memory.List("/g/a/loop/a/loop").has_value() &&
+	          memory.List("/g/a/loop/a/loop")->size() == 2,
+	      "the cycle can be listed at any depth");
+	Check(memory.ResolvesToRegularFile("/h/Game2/eboot.bin") &&
+	          memory.ArchiveHasRootEboot("/g/a/loop/a/one.zar"),
+	      "files through a bind mount");
+
+	const InMemoryMetadataReader reader;
+	FaultInjectingScanFileSystem counting(memory);
+	const auto                   cycle = Scan({"/g"}, counting, reader);
+	CheckPaths(cycle, "/", {"g/a/Game1", "g/a/one.zar", "g/b/Game2"},
+	           "a bind-mount cycle ends with each game once");
+	Check(cycle.warnings.empty(), "the skipped mount gives no warning");
+	Check(counting.ListCalls() ==
+	          std::vector<fs::path> {"/g", "/g/a", "/g/b", "/g/a/Game1", "/g/b/Game2"},
+	      "each directory is listed once; the mount point is not listed");
+
+	// A folder that is a bind mount of an already listed directory adds nothing; listed first, it
+	// keeps its own spelling and the source is skipped.
+	const auto aliased = Scan({"/g", "/h"}, memory, reader);
+	CheckPaths(aliased, "/", {"g/a/Game1", "g/a/one.zar", "g/b/Game2"},
+	           "a mounted folder after its source");
+	const auto mount_first = Scan({"/h", "/g"}, memory, reader);
+	CheckPaths(mount_first, "/", {"g/a/Game1", "g/a/one.zar", "h/Game2"},
+	           "a mounted folder before its source");
+	Check(EntryAt(mount_first, "/h/Game2").legacy_relative_path == "Game2" &&
+	          aliased.warnings.empty() && mount_first.warnings.empty(),
+	      "the first folder's spelling, no warnings");
+}
+
+// Two spellings of one directory at the same breadth-first depth of one folder (a mount next to
+// its source, and a mount under an earlier parent than its source): subdirectories are visited in
+// name order, so every listing order keeps the same spelling (Requirement 7.5, Property 1).
+void TestBindMountListingOrder() {
+	const auto make = [](uint64_t seed) {
+		auto memory = std::make_unique<InMemoryScanFileSystem>();
+		memory->AddFile("/g/b/Game2/eboot.bin");
+		memory->AddBindMount("/g/m", "/g/b");
+		memory->AddFile("/g/y/b2/Game3/eboot.bin");
+		memory->AddBindMount("/g/x/m2", "/g/y/b2");
+		memory->SetListingOrder(seed);
+		return memory;
+	};
+	const InMemoryMetadataReader reader;
+	const auto                   name_order = make(0);
+	const auto                   reference  = Scan({"/g"}, *name_order, reader);
+	CheckPaths(reference, "/", {"g/b/Game2", "g/x/m2/Game3"},
+	           "the spelling first in name order is kept");
+	Check(reference.warnings.empty(), "a skipped spelling gives no warning");
+
+	// Seeds that list the later spelling first: m before b, and y (the source's parent) before x.
+	bool mount_listed_first  = false;
+	bool source_parent_first = false;
+	for (uint64_t seed = 1; seed <= 16; seed++) {
+		const auto memory  = make(seed);
+		const auto listing = memory->List("/g");
+		Check(listing.has_value() && listing->size() == 4, "list /g");
+		const auto position = [&](const std::string& name) {
+			return std::find_if(listing->begin(), listing->end(),
+			                    [&](const FsEntry& entry) { return entry.name == name; }) -
+			       listing->begin();
+		};
+		mount_listed_first  = mount_listed_first || position("m") < position("b");
+		source_parent_first = source_parent_first || position("y") < position("x");
+
+		FaultInjectingScanFileSystem counting(*memory);
+		const auto                   result = Scan({"/g"}, counting, reader);
+		Check(result == reference, "listing order " + std::to_string(seed) +
+		                               " keeps the same spellings: " + Join(Relative(result, "/")));
+		Check(counting.ListCalls() == std::vector<fs::path> {"/g", "/g/b", "/g/x", "/g/y",
+		                                                     "/g/b/Game2", "/g/x/m2",
+		                                                     "/g/x/m2/Game3"},
+		      "listing order " + std::to_string(seed) + ": name order, each directory once");
+	}
+	Check(mount_listed_first && source_parent_first, "the seeds list the later spellings first");
 }
 
 void TestUnreadable() {
@@ -599,6 +845,31 @@ void TestHostList() {
 	      "Canonical resolves links before '..'");
 	Check(!host->Canonical(tree.Base() / "d/dangling").has_value(), "a dangling link");
 	Check(!host->Canonical(tree.Base() / "nope").has_value(), "a missing path");
+
+	// Identity is stat(2): links are followed.
+	struct stat info {};
+	Check(::stat((tree.Base() / "d/sub").c_str(), &info) == 0, "stat d/sub");
+	const auto sub = host->Identity(tree.Base() / "d/sub");
+	Check(sub.has_value() && sub->device == static_cast<uint64_t>(info.st_dev) &&
+	          sub->inode == static_cast<uint64_t>(info.st_ino),
+	      "the device and inode of stat");
+	Check(host->Identity(tree.Base() / "d/link") == sub, "a link has its target's identity");
+	Check(host->Identity(tree.Base() / "d/sub/") == sub, "a trailing separator");
+	Check(host->Identity(tree.Base() / "d/file").has_value() &&
+	          host->Identity(tree.Base() / "d/file") != sub,
+	      "another file has another identity");
+	Check(!host->Identity(tree.Base() / "d/dangling").has_value() &&
+	          !host->Identity(tree.Base() / "nope").has_value(),
+	      "no identity for a dangling link or a missing path");
+	tree.Link(tree.Base() / "d/file", "file-link");
+	Check(host->ResolvesToRegularFile(tree.Base() / "d/file") &&
+	          host->ResolvesToRegularFile(tree.Base() / "file-link"),
+	      "a regular file, also through a link");
+	Check(!host->ResolvesToRegularFile(tree.Base() / "d/sub") &&
+	          !host->ResolvesToRegularFile(tree.Base() / "d/link") &&
+	          !host->ResolvesToRegularFile(tree.Base() / "d/fifo") &&
+	          !host->ResolvesToRegularFile(tree.Base() / "d/dangling"),
+	      "a directory, a link to one, a FIFO, and a dangling link are not regular files");
 }
 
 void TestInMemoryFileSystem() {
@@ -632,6 +903,29 @@ void TestInMemoryFileSystem() {
 	      "the root listing in name order");
 	Check(memory.ListCount() == 5, "List calls are counted");
 
+	// Stable identities on device 1, links followed; regular files are files and archives.
+	const auto a_identity = memory.Identity("/r/a");
+	Check(a_identity.has_value() && a_identity->device == 1 && a_identity->inode != 0 &&
+	          memory.Identity("/r/link") == a_identity && memory.Identity("/r/a/") == a_identity,
+	      "a directory's identity, also through a link");
+	Check(memory.Identity("/r/a/file") != a_identity &&
+	          memory.Identity("/r/a/file") != memory.Identity("/r/a/good.zar") &&
+	          memory.Identity("/r/up") == memory.Identity("/"),
+	      "one identity per node");
+	memory.AddFile("/r/later");
+	Check(memory.Identity("/r/link") == a_identity,
+	      "identities do not change when nodes are added");
+	Check(!memory.Identity("/r/missing").has_value() && !memory.Identity("/r/loop").has_value(),
+	      "no identity for a missing path or a loop");
+	Check(memory.ResolvesToRegularFile("/r/a/file") &&
+	          memory.ResolvesToRegularFile("/r/link/good.zar") &&
+	          memory.ResolvesToRegularFile("/r/a/bad.zar"),
+	      "files and archives are regular files");
+	Check(!memory.ResolvesToRegularFile("/r/a") && !memory.ResolvesToRegularFile("/r/fifo") &&
+	          !memory.ResolvesToRegularFile("/r/loop") &&
+	          !memory.ResolvesToRegularFile("/r/missing"),
+	      "directories, other entries, loops, and missing paths are not");
+
 	InMemoryMetadataReader reader;
 	reader.SetParamJson("/r/a/./", R"({"titleId":"PPSA00009"})");
 	Check(reader.Read("/r/a", kDirectory).title_id == "PPSA00009", "param.json by normal path");
@@ -648,8 +942,12 @@ int main() {
 	TestFolderIsGame();
 	TestSymlinks();
 	TestArchives();
+	TestArchiveNames();
+	TestEbootLinks();
 	TestMissingFolders();
 	TestOverlappingFolders();
+	TestBindMounts();
+	TestBindMountListingOrder();
 	TestUnreadable();
 	TestResolutionFailures();
 	TestSortOrder();

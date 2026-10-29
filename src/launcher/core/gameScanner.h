@@ -31,12 +31,20 @@ struct ScanResult {
 	friend bool operator==(const ScanResult&, const ScanResult&) = default;
 };
 
-// Scans the folders breadth-first, one after the other in list order:
-// - Every visited directory (the folder itself included) is listed once. Entries of type Symlink
-//   are ignored entirely: never followed, never an eboot.bin, never a .zar.
-// - In every visited directory, each regular file whose name ends with ".zar" (case-sensitive) is a
-//   Game_Entry of kind Archive when ArchiveHasRootEboot accepts it.
-// - A directory that lists a regular file named "eboot.bin" is a Game_Entry of kind Directory and
+// Scans the folders breadth-first, one after the other in list order (the Qt launcher's rules):
+// - Every visited directory (the folder itself included) is listed at most once per scan: a
+//   directory whose Identity() was already listed (reached again through an overlapping folder, an
+//   alias, or a bind mount, so a bind-mount cycle ends) is skipped without a warning. A directory
+//   without an identity is listed every time it is reached.
+// - The subdirectories of a directory are visited in the byte order of their names, not in listing
+//   order, so the spelling kept for a bind-mounted directory does not depend on the enumeration
+//   order.
+// - Entries of type Symlink are never followed into directories and never count as a .zar.
+// - In every visited directory, each regular file whose name Common::IsSupportedArchive accepts
+//   (an ASCII case-insensitive ".zar" suffix) is a Game_Entry of kind Archive when
+//   ArchiveHasRootEboot accepts it.
+// - A directory that lists an entry named exactly "eboot.bin" that is a regular file, or a
+//   symbolic link for which ResolvesToRegularFile() is true, is a Game_Entry of kind Directory and
 //   its subdirectories are not visited.
 // - Entries are deduplicated by Canonical(); GameEntry::path is the canonical path, and
 //   legacy_relative_path is relative to the first folder that found the entry. Metadata is read

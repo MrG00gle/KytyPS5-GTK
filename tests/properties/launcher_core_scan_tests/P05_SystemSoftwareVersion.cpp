@@ -1,11 +1,11 @@
 // Feature: linux-gtk-modernization, Property 5: System software version formatting
 //
-// Validates Requirement 7.8. Half of the cases encode a valid requiredSystemSoftwareVersion ("0x",
-// six decimal digits MMmmpp with pp = 00 half of the time, ten hex digits of either case), the
-// other half break one in some way or use arbitrary text (scanGenerators.h). Both
-// FormatSystemSoftwareVersion and ParseParamJson (where the value is trimmed first) must give
-// int(MM).mm, plus .pp when pp is not 00, for the valid form and "" for anything else; a
-// character-by-character reference decides which strings have the valid form.
+// Validates Requirement 7.8. Half of the cases encode a valid requiredSystemSoftwareVersion ("0x"
+// or "0X" as in the Qt launcher, six decimal digits MMmmpp with pp = 00 half of the time, ten hex
+// digits of either case), the other half break one in some way or use arbitrary text
+// (scanGenerators.h). Both FormatSystemSoftwareVersion and ParseParamJson (where the value is
+// trimmed first) must give int(MM).mm, plus .pp when pp is not 00, for the valid form and "" for
+// anything else; a character-by-character reference decides which strings have the valid form.
 
 #include "launcher/core/gameMetadata.h"
 #include "launcher/core/version.h"
@@ -27,7 +27,7 @@ bool IsHex(char c) {
 }
 
 std::string Reference(const std::string& raw) {
-	if (raw.size() != 18 || raw[0] != '0' || raw[1] != 'x') {
+	if (raw.size() != 18 || raw[0] != '0' || (raw[1] != 'x' && raw[1] != 'X')) {
 		return "";
 	}
 	for (size_t i = 2; i < 8; i++) {

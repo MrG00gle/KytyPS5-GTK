@@ -4,10 +4,13 @@
 // for property TUs: RapidCheck needs exceptions, which the test support library is built without.
 // The functions draw values with operator* on generators, so call them only inside a property.
 //
-// - GenerateTreeModel(): a directory tree model (directories, regular files, eboot.bin variants,
-//   valid and invalid archives, symbolic links to anything including loops and dangling targets,
-//   other entries, unreadable directories, param.json texts) and a list of possibly overlapping,
-//   duplicated, aliased, or missing Game_Folders, for InMemoryScanFileSystem (BuildFileSystem).
+// - GenerateTreeModel(): a directory tree model (directories, regular files, eboot.bin variants
+//   including links to a regular file, a directory, or nothing, and an upper-case EBOOT.BIN, valid
+//   and invalid archives with .zar names in any case, symbolic links to anything including loops
+//   and dangling targets, other entries, unreadable directories, param.json texts) and a list of
+//   possibly overlapping, duplicated, aliased, or missing Game_Folders, for InMemoryScanFileSystem
+//   (BuildFileSystem).
+// - IsZarName(): the archive name rule (Common::IsSupportedArchive) for the reference model.
 // - SpellDirectory(): aliases of one directory (Property 4).
 // - ValidSystemSoftwareVersion() / OtherSystemSoftwareVersion(): Property 5 inputs.
 // - UnusableParamJson() / EntryName(): Property 6 inputs.
@@ -43,6 +46,21 @@ const T& PickOf(const std::vector<T>& values) {
 }
 
 // ---- Tree model (Properties 1-3)
+
+// True for a name with an ASCII case-insensitive ".zar" suffix (".zar" itself included), the rule
+// of Common::IsSupportedArchive that the scanner uses.
+inline bool IsZarName(const std::string& name) {
+	if (name.size() < 4) {
+		return false;
+	}
+	std::string suffix = name.substr(name.size() - 4);
+	for (auto& c: suffix) {
+		if (c >= 'A' && c <= 'Z') {
+			c = static_cast<char>(c - 'A' + 'a');
+		}
+	}
+	return suffix == ".zar";
+}
 
 struct ModelNode {
 	enum class Kind { Directory, File, ValidArchive, InvalidArchive, Symlink, Other };
@@ -113,8 +131,8 @@ inline std::string ParamJsonText(int index) {
 inline void GenerateDirectory(TreeModel& model, const std::filesystem::path& directory, int depth,
                               int& budget) {
 	static const std::vector<std::string> kNames = {
-	    "a",     "b",     "c",         "Game",    "game", "x.zar",   "y.zar",
-	    "Z.ZAR", "x.zip", "eboot.bin", "dir.zar", "sub",  "\xC3\xA9" /* e acute */};
+	    "a",     "b",     "c",         "Game",      "game",    "x.zar", "y.zar",   "Z.ZAR",
+	    "x.Zar", "x.zip", "eboot.bin", "EBOOT.BIN", "dir.zar", "sub",   "\xC3\xA9" /* e acute */};
 	const int             count = depth >= 4 ? 0 : depth == 0 ? Choose(3, 9) : Choose(0, 6);
 	std::set<std::string> used;
 	// Make a third of the directories below the root games, so most cases find entries (the
@@ -135,14 +153,18 @@ inline void GenerateDirectory(TreeModel& model, const std::filesystem::path& dir
 		budget--;
 		ModelNode node;
 		node.path           = directory / name;
-		const bool zar_name = name.ends_with(".zar") || name.ends_with(".ZAR");
+		const bool zar_name = IsZarName(name);
 		if (name == "eboot.bin") {
 			switch (Choose(0, 8)) {
 				case 0: node.kind = ModelNode::Kind::Directory; break;
-				case 1: node.kind = ModelNode::Kind::Symlink; break;
-				case 2: node.kind = ModelNode::Kind::Other; break;
+				case 1:
+				case 2: node.kind = ModelNode::Kind::Symlink; break; // targets: GenerateTreeModel
+				case 3: node.kind = ModelNode::Kind::Other; break;
 				default: node.kind = ModelNode::Kind::File; break;
 			}
+		} else if (name == "EBOOT.BIN") {
+			// Not eboot.bin: the name is case-sensitive.
+			node.kind = OneIn(4) ? ModelNode::Kind::Symlink : ModelNode::Kind::File;
 		} else if (zar_name) {
 			switch (Choose(0, 7)) {
 				case 0: node.kind = ModelNode::Kind::Directory; break;
@@ -189,6 +211,7 @@ inline TreeModel GenerateTreeModel() {
 	std::vector<std::filesystem::path> directories {model.root};
 	std::vector<std::filesystem::path> links;
 	std::vector<std::filesystem::path> others;
+	std::vector<std::filesystem::path> regular_files; // File, ValidArchive, InvalidArchive
 	for (const auto& node: model.nodes) {
 		all_paths.push_back(node.path);
 		if (node.kind == ModelNode::Kind::Directory) {
@@ -197,13 +220,32 @@ inline TreeModel GenerateTreeModel() {
 			links.push_back(node.path);
 		} else {
 			others.push_back(node.path);
+			if (node.kind != ModelNode::Kind::Other) {
+				regular_files.push_back(node.path);
+			}
 		}
 	}
 
 	// Link targets: any node (directories, games, archives, other links), the parent, a dangling
-	// name, the link itself (a loop), or an ancestor (a cycle through the tree).
+	// name, the link itself (a loop), or an ancestor (a cycle through the tree). Half of the
+	// eboot.bin links point at a regular file (absolute or relative), a directory, or nothing.
 	for (auto& node: model.nodes) {
 		if (node.kind != ModelNode::Kind::Symlink) {
+			continue;
+		}
+		if (node.path.filename() == "eboot.bin" && OneIn(2)) {
+			switch (Choose(0, 3)) {
+				case 0:
+					if (!regular_files.empty()) {
+						const auto& file = PickOf(regular_files);
+						node.target =
+						    OneIn(2) ? file : file.lexically_relative(node.path.parent_path());
+						break;
+					}
+					[[fallthrough]];
+				case 1: node.target = PickOf(directories); break;
+				default: node.target = "missing-eboot.bin"; break;
+			}
 			continue;
 		}
 		switch (Choose(0, 7)) {
@@ -342,13 +384,14 @@ struct EncodedVersion {
 	std::string expected;
 };
 
-// "0x" + MMmmpp + ten hex digits, and its formatted form.
+// "0x" or "0X" + MMmmpp + ten hex digits, and its formatted form.
 inline EncodedVersion ValidSystemSoftwareVersion() {
-	const auto     major = Digits(2, DecimalAlphabet());
-	const auto     minor = Digits(2, DecimalAlphabet());
-	const auto     patch = OneIn(2) ? std::string("00") : Digits(2, DecimalAlphabet());
+	const auto     prefix = OneIn(2) ? std::string("0x") : std::string("0X");
+	const auto     major  = Digits(2, DecimalAlphabet());
+	const auto     minor  = Digits(2, DecimalAlphabet());
+	const auto     patch  = OneIn(2) ? std::string("00") : Digits(2, DecimalAlphabet());
 	EncodedVersion version;
-	version.raw      = "0x" + major + minor + patch + Digits(10, HexAlphabet());
+	version.raw      = prefix + major + minor + patch + Digits(10, HexAlphabet());
 	version.expected = std::to_string((major[0] - '0') * 10 + (major[1] - '0')) + "." + minor +
 	                   (patch == "00" ? std::string() : "." + patch);
 	return version;
@@ -360,7 +403,9 @@ inline std::string OtherSystemSoftwareVersion() {
 	std::string raw = ValidSystemSoftwareVersion().raw;
 	switch (Choose(0, 9)) {
 		case 0:
-			raw.replace(0, 2, PickOf(std::vector<std::string> {"0X", "1x", "x", "", "00x", " 0x"}));
+			raw.replace(0, 2,
+			            PickOf(std::vector<std::string> {"0y", "1x", "1X", "x", "X", "", "00x",
+			                                             " 0x", "O0"}));
 			break;
 		case 1: raw.erase(Choose<size_t>(0, raw.size()), 1); break;
 		case 2:
