@@ -33,6 +33,38 @@ void CountSignalPoll() {
   g_signal_poll_count.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Resend intervals for WakeUntilReturned. A wake-all may be sent again after
+// 10 ms (the X1 interval). A count-limited wake waits 500 ms before it is sent
+// again, the time these checks gave a woken waiter before the retry existed: a
+// resend while a woken waiter has not counted itself yet would release one
+// waiter too many and fail the exact-count checks.
+constexpr std::chrono::milliseconds WAKE_ALL_RESEND{10};
+constexpr std::chrono::milliseconds COUNTED_WAKE_RESEND{500};
+
+// Sends Wake(address, count), then again for the waiters still missing each
+// time resend passes without target waiters having returned (5 s backstop). A
+// wake while no waiter is blocked in Wait32's futex wait (before it blocks, or
+// between its 10 ms wait slices) is lost: WakeLinux is a raw FUTEX_WAKE_PRIVATE
+// and the value does not change.
+void WakeUntilReturned(uint32_t *address, int count,
+                       const std::atomic<int> &returned, int target,
+                       std::chrono::milliseconds resend, const char *text) {
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  for (;;) {
+    Check(Wake(address, count) == OK, text);
+    const auto resend_at = std::chrono::steady_clock::now() + resend;
+    while (returned.load(std::memory_order_acquire) < target &&
+           std::chrono::steady_clock::now() < resend_at) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    count = target - returned.load(std::memory_order_acquire);
+    if (count <= 0 || std::chrono::steady_clock::now() >= deadline) {
+      return;
+    }
+  }
+}
+
 void TestInvalidAddress() {
   uint32_t timeout = 1;
   Check(Wait32(nullptr, 0, &timeout) == Libs::LibKernel::KERNEL_ERROR_EINVAL,
@@ -162,27 +194,18 @@ void TestWakeOneThenAll() {
     std::this_thread::yield();
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  Check(Wake(&word, 1) == OK, "wake-one succeeds with multiple waiters");
-  const auto one_deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-  while (returned.load(std::memory_order_acquire) == 0 &&
-         std::chrono::steady_clock::now() < one_deadline) {
-    std::this_thread::yield();
-  }
+  WakeUntilReturned(&word, 1, returned, 1, COUNTED_WAKE_RESEND,
+                    "wake-one succeeds with multiple waiters");
   Check(returned.load(std::memory_order_acquire) == 1,
         "wake-one releases exactly one waiter");
 
-  Check(Wake(&word, 2) == OK, "wake-two succeeds");
-  const auto two_deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-  while (returned.load(std::memory_order_acquire) < 3 &&
-         std::chrono::steady_clock::now() < two_deadline) {
-    std::this_thread::yield();
-  }
+  WakeUntilReturned(&word, 2, returned, 3, COUNTED_WAKE_RESEND,
+                    "wake-two succeeds");
   Check(returned.load(std::memory_order_acquire) == 3,
         "wake-two releases exactly two more waiters");
 
-  Check(Wake(&word, INT_MAX) == OK, "wake-all succeeds");
+  WakeUntilReturned(&word, INT_MAX, returned, WAITER_COUNT, WAKE_ALL_RESEND,
+                    "wake-all succeeds");
   for (auto &waiter : waiters) {
     waiter.join();
   }
@@ -290,7 +313,8 @@ void TestWakeZeroIsNoOp() {
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   Check(returned.load(std::memory_order_acquire) == 0,
         "zero-count wake releases no waiters");
-  Check(Wake(&word, INT_MAX) == OK, "wake-all succeeds after zero-count wake");
+  WakeUntilReturned(&word, INT_MAX, returned, WAITER_COUNT, WAKE_ALL_RESEND,
+                    "wake-all succeeds after zero-count wake");
   for (auto &waiter : waiters) {
     waiter.join();
   }
