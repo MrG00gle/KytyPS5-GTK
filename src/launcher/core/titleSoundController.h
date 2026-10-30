@@ -8,18 +8,15 @@
 // from the Qt launcher's TitleSound::SetTitle (src/launcher/src/titleSound.cpp) and its callers
 // in mainDialog.cpp.
 
+#include "launcher/core/entryId.h"
 #include "launcher/core/expected.h"
 #include "launcher/core/titleSound.h"
 
 #include <cstdint>
-#include <filesystem>
 #include <optional>
 #include <string>
 
 namespace kyty::core {
-
-// A Game_Entry's identity: its canonical path (GameEntry::path).
-using EntryId = std::filesystem::path;
 
 enum class TitleSoundAction {
 	None,          // nothing to do

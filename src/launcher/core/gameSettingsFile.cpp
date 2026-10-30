@@ -1,7 +1,5 @@
 #include "launcher/core/gameSettingsFile.h"
 
-#include "launcher/core/text.h"
-
 #include <cerrno>
 #include <cstdint>
 #include <limits>
@@ -191,16 +189,6 @@ ReadMember(const std::string& title, const Json& member, const std::string* repe
 }
 
 } // namespace
-
-std::string NormalizeTitleId(std::string_view title_id) {
-	std::string title(TrimWhitespace(title_id));
-	for (auto& c: title) {
-		if (c >= 'a' && c <= 'z') {
-			c = static_cast<char>(c - 'a' + 'A');
-		}
-	}
-	return title;
-}
 
 std::optional<std::string> ExportGameSettings(std::string_view         title_id,
                                               const GameConfiguration& configuration) {

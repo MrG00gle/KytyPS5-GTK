@@ -17,6 +17,7 @@
 #include "launcher/core/configurationFields.h"
 #include "launcher/core/expected.h"
 #include "launcher/core/gameConfiguration.h"
+#include "launcher/core/titleId.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -71,9 +72,6 @@ struct ImportError {
 
 	friend bool operator==(const ImportError&, const ImportError&) = default;
 };
-
-// The title ID as Game_Settings_File keys use it: TrimWhitespace, then ASCII letters upper-cased.
-std::string NormalizeTitleId(std::string_view title_id);
 
 // The file for one game (Requirement 9.8): one member keyed by NormalizeTitleId(title_id) with
 // every field of configuration, indented by 4 spaces like Qt's QJsonDocument::Indented, ending

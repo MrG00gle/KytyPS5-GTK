@@ -7,8 +7,8 @@
 //
 // Content format (the remote file, the cache, and the --local file):
 //   { "<TITLE_ID>": { "status": "InGame", "comment": "..." }, ... }
-// Member keys are title IDs, matched after NormalizeTitleId() (gameSettingsFile.h: TrimWhitespace,
-// then ASCII letters upper-cased). The status aliases are those of the Qt launcher, compared after
+// Member keys are title IDs, matched after NormalizeTitleId() (titleId.h: TrimWhitespace, then
+// ASCII letters upper-cased). The status aliases are those of the Qt launcher, compared after
 // TrimWhitespace and with letter case: "InGame" and "In game", "MainMenu" and "Main menu", "Logo",
 // "DoesntBoot" and "Doesn't boot"; every other value, a non-string status, a missing status, and a
 // member that is not an object give Unknown.
@@ -17,6 +17,7 @@
 #include "launcher/core/expected.h"
 #include "launcher/core/httpClient.h"
 #include "launcher/core/scheduler.h"
+#include "launcher/core/titleId.h"
 
 #include <chrono>
 #include <cstdint>

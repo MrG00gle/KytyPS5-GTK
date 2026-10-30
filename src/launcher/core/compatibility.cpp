@@ -1,8 +1,8 @@
 #include "launcher/core/compatibility.h"
 
-#include "launcher/core/gameSettingsFile.h"
 #include "launcher/core/retrySchedule.h"
 #include "launcher/core/text.h"
+#include "launcher/core/titleId.h"
 
 #include <cerrno>
 #include <cstddef>
