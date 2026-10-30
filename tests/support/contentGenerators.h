@@ -18,11 +18,21 @@
 // - FailingRemover: a kyty::core::PathRemover that fails on chosen paths and records its calls.
 // - Packer scripts: ScriptedPacker() follows a PackerScript (progress calls, then success,
 //   cancellation at a call, or failure after a number of calls).
+// - Cheat documents (Properties 29-33): CheatDocumentSpec builds cheat file JSON as text, member by
+//   member, so a test knows the exact document (the tests link no JSON library); AllDisabledSpec is
+//   what an import must write; RemoteCheatSpec is a document ValidateRemoteImport accepts.
+// - Remote responses: CheatIndexLine and CheatFileName build index lines and collection names;
+//   ResponseOfSize pads a body to an exact size for the 2 MiB and 8 MiB limits.
+// - Mapping edits (Property 37): MappingEntryPool and KeyNamePool are host_input_mapping entries
+//   and key names of every kind; MappingEdit and ApplyMappingEdit run one editor operation.
 
 #include "common/trophies.h"
 #include "launcher/core/archiveJob.h"
+#include "launcher/core/cheats.h"
+#include "launcher/core/inputMapping.h"
 #include "launcher/core/saveData.h"
 #include "launcher/core/trophyModel.h"
+#include "support/fakeHttpClient.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -409,6 +419,234 @@ inline kyty::core::ArchivePacker ScriptedPacker(PackerScript               scrip
 		}
 		return true;
 	};
+}
+
+// ---- Cheat documents
+
+// One member of a JSON object: its key and its value as JSON text.
+struct JsonMember {
+	std::string key;
+	std::string value;
+};
+using JsonObjectSpec = std::vector<JsonMember>;
+
+// The object's JSON text, members in order (keys must be unique for a predictable document).
+inline std::string JsonObjectText(const JsonObjectSpec& members) {
+	std::string text = "{";
+	for (std::size_t i = 0; i < members.size(); i++) {
+		text += (i == 0 ? "" : ",") + JsonString(members[i].key) + ":" + members[i].value;
+	}
+	return text + "}";
+}
+
+inline std::string JsonArrayText(const std::vector<std::string>& values) {
+	std::string text = "[";
+	for (std::size_t i = 0; i < values.size(); i++) {
+		text += (i == 0 ? "" : ",") + values[i];
+	}
+	return text + "]";
+}
+
+// A cheat file: the top-level members before "mods", the mods, and the members after it.
+struct CheatDocumentSpec {
+	JsonObjectSpec              before;
+	std::vector<JsonObjectSpec> mods;
+	JsonObjectSpec              after;
+};
+
+inline std::string CheatDocumentText(const CheatDocumentSpec& spec) {
+	std::vector<std::string> mods;
+	for (const auto& mod: spec.mods) {
+		mods.push_back(JsonObjectText(mod));
+	}
+	JsonObjectSpec members = spec.before;
+	members.push_back({"mods", JsonArrayText(mods)});
+	members.insert(members.end(), spec.after.begin(), spec.after.end());
+	return JsonObjectText(members);
+}
+
+// The document an import writes for spec: every mod's "enabled" is false, in its place when the
+// mod had one, else appended (as nlohmann::ordered_json adds a member).
+inline CheatDocumentSpec AllDisabledSpec(CheatDocumentSpec spec) {
+	for (auto& mod: spec.mods) {
+		const auto found = std::find_if(mod.begin(), mod.end(),
+		                                [](const JsonMember& m) { return m.key == "enabled"; });
+		if (found != mod.end()) {
+			found->value = "false";
+		} else {
+			mod.push_back({"enabled", "false"});
+		}
+	}
+	return spec;
+}
+
+// A memory write that ValidateRemoteImport accepts.
+inline std::string MemoryWriteJson(std::string_view offset, std::string_view on,
+                                   std::string_view off) {
+	return JsonObjectText(
+	    {{"offset", JsonString(offset)}, {"on", JsonString(on)}, {"off", JsonString(off)}});
+}
+
+// A document that ValidateRemoteImport accepts for title_id, version, and process: one mod per
+// name, each with one memory write.
+inline CheatDocumentSpec RemoteCheatSpec(std::string_view title_id, std::string_view version,
+                                         std::string_view                process,
+                                         const std::vector<std::string>& names) {
+	CheatDocumentSpec spec;
+	spec.before = {{"id", JsonString(title_id)},
+	               {"name", JsonString("Test game")},
+	               {"version", JsonString(version)},
+	               {"process", JsonString(process)},
+	               {"credits", JsonArrayText({JsonString("Tester")})}};
+	for (const auto& name: names) {
+		spec.mods.push_back(
+		    {{"name", JsonString(name)},
+		     {"memory", JsonArrayText({MemoryWriteJson("0x1234", "9090", "0F85")})}});
+	}
+	return spec;
+}
+
+// ---- Remote responses
+
+// A collection file name, "<title_id>_<version>_<rest>.<format>".
+inline std::string CheatFileName(std::string_view title_id, std::string_view version,
+                                 std::string_view rest, std::string_view format) {
+	return std::string(title_id) + "_" + std::string(version) + "_" + std::string(rest) + "." +
+	       std::string(format);
+}
+
+// An index line, "<name>=<title>".
+inline std::string CheatIndexLine(std::string_view name, std::string_view title) {
+	return std::string(name) + "=" + std::string(title);
+}
+
+// prefix, then filler bytes, then suffix: exactly size bytes (at least prefix + suffix).
+inline std::string BodyOfSize(std::string_view prefix, std::string_view suffix, std::size_t size,
+                              char filler = ' ') {
+	std::string body(prefix);
+	if (size > prefix.size() + suffix.size()) {
+		body.append(size - prefix.size() - suffix.size(), filler);
+	}
+	body += suffix;
+	return body;
+}
+
+// A successful response with body, delivered in the given chunks.
+inline FakeResponse ResponseOf(std::string body, std::vector<std::size_t> chunk_sizes = {}) {
+	FakeResponse response;
+	response.body        = std::move(body);
+	response.chunk_sizes = std::move(chunk_sizes);
+	return response;
+}
+
+// ---- Input mapping
+
+// Key names the Emulator accepts, of every kind the editor produces, plus mouse buttons.
+inline const std::vector<std::string>& KeyNamePool() {
+	static const std::vector<std::string> names = {"J",
+	                                               "K",
+	                                               "L",
+	                                               "A",
+	                                               "1",
+	                                               "0",
+	                                               "F6",
+	                                               "F12",
+	                                               "Space",
+	                                               "Return",
+	                                               "Backspace",
+	                                               "Tab",
+	                                               "Left Shift",
+	                                               "Left Ctrl",
+	                                               "Left Alt",
+	                                               "Left GUI",
+	                                               "Up",
+	                                               "PageDown",
+	                                               "Keypad 5",
+	                                               "Keypad ,",
+	                                               "Keypad Enter",
+	                                               ",",
+	                                               "=",
+	                                               "\"",
+	                                               "\xC3\x89",
+	                                               "Mouse:Left",
+	                                               "Mouse:Right",
+	                                               "Mouse:X1",
+	                                               "Mouse:Middle",
+	                                               "Mouse:X2"};
+	return names;
+}
+
+// host_input_mapping entries of every kind: bindings, the section and touch pad settings with
+// valid and odd values, and entries the model keeps as unknown (some without "=", which
+// Validate refuses).
+inline const std::vector<std::string>& MappingEntryPool() {
+	static const std::vector<std::string> entries = {
+	    "Cross=J",
+	    "Circle=L",
+	    "Cross=K",
+	    "R2=Mouse:Right",
+	    "L3=Left Shift",
+	    "TouchPadMode=F6",
+	    "LeftStickUp=W",
+	    "SpeakerVolume=1",
+	    "Options=j",
+	    "Triangle=\xC3\x89",
+	    "Square=Keypad ,",
+	    "Keyboard=Disabled",
+	    "Pad=Disabled",
+	    "Pad:Cross=South",
+	    "Pad:Circle=South",
+	    "Pad:L2=LeftTrigger",
+	    "Pad:TouchPadRight=Misc1",
+	    "Pad:SpeakerVolume=LeftPaddle1",
+	    "Pad:LeftStickUp=North",
+	    "Pad:Cross=Nothing",
+	    "Pad:Unknown=South",
+	    "MouseSensitivity=2.5",
+	    "MouseSensitivity=0.04",
+	    "MouseSensitivity=9",
+	    "MouseSensitivity= 1.26x",
+	    "MouseSensitivity=nan",
+	    "MouseSensitivity=",
+	    "TouchParticleSkin=Crimson",
+	    "TouchParticleSkin=BlueNeon",
+	    "TouchParticleSkin=Sparkles",
+	    "TouchCursorImage=Off",
+	    "TouchCursorImage=On",
+	    "Foo=Bar",
+	    "Keyboard=disabled",
+	    "Cross=",
+	    "=J",
+	    "NoEquals",
+	    "",
+	};
+	return entries;
+}
+
+struct MappingEdit {
+	enum class Kind { Assign, Unmap, Restore, Sensitivity, Skin, Cursor };
+	Kind                          kind   = Kind::Assign;
+	kyty::core::InputDevice       device = kyty::core::InputDevice::KeyboardMouse;
+	std::string                   control;
+	std::string                   input;
+	kyty::core::InputTab          tab           = kyty::core::InputTab::Gamepad;
+	int                           tenths        = kyty::core::kDefaultMouseSensitivityTenths;
+	kyty::core::TouchParticleSkin particle_skin = kyty::core::TouchParticleSkin::Classic;
+	bool                          touch_cursor  = true;
+};
+
+// Runs one editor operation; the result of Assign or Unmap (true for the others).
+inline bool ApplyMappingEdit(kyty::core::InputMappingModel& model, const MappingEdit& edit) {
+	using Kind = MappingEdit::Kind;
+	switch (edit.kind) {
+		case Kind::Assign: return kyty::core::Assign(model, edit.device, edit.control, edit.input);
+		case Kind::Unmap: return kyty::core::Unmap(model, edit.device, edit.control);
+		case Kind::Restore: kyty::core::RestoreDefaults(model, edit.tab); return true;
+		case Kind::Sensitivity: kyty::core::SetMouseSensitivity(model, edit.tenths); return true;
+		case Kind::Skin: model.particle_skin = edit.particle_skin; return true;
+		case Kind::Cursor: model.touch_cursor = edit.touch_cursor; return true;
+	}
+	return false;
 }
 
 } // namespace KytyTests::ContentGen
