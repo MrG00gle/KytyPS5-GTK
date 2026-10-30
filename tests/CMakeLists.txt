@@ -563,7 +563,13 @@ target_link_libraries(launcher_core_json_error_capture_tests nlohmann_json::nloh
 
 # Updater core tests (task 17.5). They link no application library (UPDATER-LINK) and need no
 # display-free environment: kyty_updater_core has no display code.
-kyty_add_test_directory(tests/updater LINK kyty_updater_core kyty_net_test_support)
+kyty_add_test_directory(tests/updater LINK kyty_updater_installer kyty_updater_core
+	kyty_net_test_support)
+# The installer reports failures as exceptions (installFileOps.h): the rollback tests' failing
+# InstallFileOps throws them, and the command tests catch what RunUpdaterCommand throws, as main()
+# does.
+target_compile_options(updater_installer_rollback_tests PRIVATE -fexceptions)
+target_compile_options(updater_command_tests PRIVATE -fexceptions)
 
 # Build classification (task 17.6, Requirement 13.2): kyty_classify_build() in script mode over every
 # combination of its inputs.

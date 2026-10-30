@@ -12,7 +12,10 @@
 // - Byte streams: PatternBytes() makes deterministic content; SplitBytes() cuts it into chunks.
 // - Messages: Utf8Character() encodes a code point; RepeatToSize() fills a message to a size.
 // - Trees: SnapshotTree() records every entry below a directory, so a test can check that an
-//   installation directory is byte-identical before and after an operation.
+//   installation directory is byte-identical before and after an operation. WriteExecutable()
+//   creates a file with mode 0755 at once (no chmod), WriteTree() writes installation and release
+//   trees from TreeEntry lists, and OverlaySnapshot() is the snapshot of an installation after a
+//   release was installed over it (the installer tests and Property 43).
 
 #include "updater/core/sha256.h"
 #include "updater/core/updatePolicy.h"
@@ -20,6 +23,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -29,6 +33,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -329,6 +334,72 @@ inline std::optional<std::string> ReadFile(const std::filesystem::path& path) {
 		return std::nullopt;
 	}
 	return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// Writes bytes to path, creating its parent directories; a new file gets mode 0755 (minus the
+// umask) when it is created, so a "#!/bin/sh" script can run at once. False on any error.
+inline bool WriteExecutable(const std::filesystem::path& path, std::string_view bytes) {
+	std::error_code ec;
+	std::filesystem::create_directories(path.parent_path(), ec);
+	const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0755);
+	if (fd < 0) {
+		return false;
+	}
+	bool ok = true;
+	while (ok && !bytes.empty()) {
+		const ssize_t written = ::write(fd, bytes.data(), bytes.size());
+		ok                    = written > 0;
+		if (ok) {
+			bytes.remove_prefix(static_cast<size_t>(written));
+		}
+	}
+	return ::close(fd) == 0 && ok;
+}
+
+// One entry of an installation or release tree, by its "/"-separated path relative to the root.
+struct TreeEntry {
+	std::string path;
+	bool        directory = false;
+	std::string bytes;              // files only
+	bool        executable = false; // files only: created with WriteExecutable()
+};
+
+// Creates root and every entry below it (parent directories as needed); false on any error.
+inline bool WriteTree(const std::filesystem::path& root, const std::vector<TreeEntry>& entries) {
+	std::error_code ec;
+	std::filesystem::create_directories(root, ec);
+	bool ok = !ec;
+	for (const auto& entry: entries) {
+		const auto path = root / entry.path;
+		if (entry.directory) {
+			std::filesystem::create_directories(path, ec);
+			ok = ok && !ec;
+		} else if (entry.executable) {
+			ok = WriteExecutable(path, entry.bytes) && ok;
+		} else {
+			std::filesystem::create_directories(path.parent_path(), ec);
+			std::ofstream out(path, std::ios::binary | std::ios::trunc);
+			out << entry.bytes;
+			out.close();
+			ok = ok && !ec && out.good();
+		}
+	}
+	return ok;
+}
+
+// The SnapshotTree() of an installation whose snapshot was before, after a successful install
+// of release: every release directory is there ("D"), every release file has the release's bytes
+// (replacing a file or symbolic link of the same path), and nothing else changed.
+inline std::map<std::string, std::string> OverlaySnapshot(std::map<std::string, std::string> before,
+                                                          const std::vector<TreeEntry>& release) {
+	for (const auto& entry: release) {
+		const auto path = std::filesystem::path(entry.path).lexically_normal();
+		for (auto parent = path.parent_path(); !parent.empty(); parent = parent.parent_path()) {
+			before[parent.string()] = "D";
+		}
+		before[path.string()] = entry.directory ? std::string("D") : "F:" + entry.bytes;
+	}
+	return before;
 }
 
 } // namespace KytyTests::UpdaterGen

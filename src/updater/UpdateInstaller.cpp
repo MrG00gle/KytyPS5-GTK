@@ -84,9 +84,8 @@ Plan MakePlan(const fs::path& source, const fs::path& target, const fs::path& la
 		throw std::runtime_error("Update source must not contain the installation directory.");
 	}
 	const auto binary_directory = launcher.parent_path();
-	const fs::path suffix;
-	for (const auto& required: {launcher, binary_directory / ("kyty_emulator" + suffix.string()),
-	                            binary_directory / ("kyty_updater" + suffix.string())}) {
+	for (const auto& required:
+	     {launcher, binary_directory / "kyty_emulator", binary_directory / "kyty_updater"}) {
 		if (Type(plan.source / required) != fs::file_type::regular) {
 			throw std::runtime_error("Release is missing an executable: " + required.string());
 		}
@@ -120,10 +119,12 @@ Plan MakePlan(const fs::path& source, const fs::path& target, const fs::path& la
 }
 
 struct InstallLock {
-	fs::path path;
-	void     Acquire(const fs::path& target) {
+	explicit InstallLock(InstallFileOps& file_ops): ops(file_ops) {}
+	InstallFileOps& ops;
+	fs::path        path;
+	void            Acquire(const fs::path& target) {
 		auto candidate = target / ".kyty-update-lock";
-		if (!fs::create_directory(candidate)) {
+		if (!ops.CreateDirectory(candidate)) {
 			throw std::runtime_error(
 			    "Another update is running, or a previous update was interrupted. "
 			    "Close all updater processes, inspect retained backups, then remove " +
@@ -133,9 +134,11 @@ struct InstallLock {
 	}
 	~InstallLock() {
 		if (!path.empty()) {
-			std::error_code ignored;
-			// An incomplete rollback leaves backups here and keeps the lock for recovery.
-			fs::remove(path, ignored);
+			try {
+				// An incomplete rollback leaves backups here and keeps the lock for recovery.
+				ops.Remove(path);
+			} catch (const std::exception&) {
+			}
 		}
 	}
 };
@@ -145,13 +148,21 @@ struct Change {
 	bool     old_moved = false;
 	bool     installed = false;
 };
+
+// True while every replaced file still has its backup, so a rollback restores all of them.
+bool BackupsIntact(const fs::path& backup, const std::vector<Change>& changes) {
+	return std::all_of(changes.begin(), changes.end(), [&backup](const Change& change) {
+		return !change.old_moved || Type(backup / change.relative) != fs::file_type::not_found;
+	});
+}
 } // namespace
 
-Result Validate(const fs::path& source, const fs::path& target, const fs::path& launcher_relative) {
+Result Validate(const fs::path& source, const fs::path& target, const fs::path& launcher_relative,
+                InstallFileOps& ops) {
 	try {
 		MakePlan(source, target, launcher_relative);
 		// Check actual write access, including ACLs, and interrupted/concurrent updates.
-		InstallLock lock;
+		InstallLock lock(ops);
 		lock.Acquire(target);
 		return {true, {}};
 	} catch (const std::exception& error) {
@@ -159,8 +170,9 @@ Result Validate(const fs::path& source, const fs::path& target, const fs::path& 
 	}
 }
 
-Result Install(const fs::path& source, const fs::path& target, const fs::path& launcher_relative) {
-	InstallLock           lock;
+Result Install(const fs::path& source, const fs::path& target, const fs::path& launcher_relative,
+               InstallFileOps& ops) {
+	InstallLock           lock(ops);
 	fs::path              backup;
 	std::vector<Change>   changes;
 	std::vector<fs::path> created_directories;
@@ -176,7 +188,7 @@ Result Install(const fs::path& source, const fs::path& target, const fs::path& l
 			CheckDestination(plan.target, entry);
 			const auto destination = plan.target / entry.relative;
 			if (entry.type == fs::file_type::directory) {
-				if (fs::create_directory(destination)) {
+				if (ops.CreateDirectory(destination)) {
 					created_directories.push_back(destination);
 				}
 				continue;
@@ -184,17 +196,26 @@ Result Install(const fs::path& source, const fs::path& target, const fs::path& l
 			changes.push_back({entry.relative});
 			auto& change = changes.back();
 			if (Type(destination) != fs::file_type::not_found) {
-				fs::create_directories((backup / entry.relative).parent_path());
-				fs::rename(destination, backup / entry.relative);
+				ops.CreateDirectories((backup / entry.relative).parent_path());
+				ops.Rename(destination, backup / entry.relative);
 				change.old_moved = true;
 			}
-			fs::rename(plan.source / entry.relative, destination);
+			ops.Rename(plan.source / entry.relative, destination);
 			change.installed = true;
 		}
-		std::error_code cleanup_error;
-		fs::remove_all(backup, cleanup_error);
-		return {true, cleanup_error ? "Update installed; backup cleanup failed: " + backup.string()
-		                            : std::string {}};
+		// One call removes the backups and the lock. When it fails while every backup is still
+		// there, the update is rolled back like any other failure; once a backup is gone, the
+		// installed release stays.
+		try {
+			ops.RemoveAll(lock.path);
+		} catch (const std::exception&) {
+			if (BackupsIntact(backup, changes)) {
+				throw;
+			}
+			return {true, "Update installed; backup cleanup failed: " + backup.string()};
+		}
+		lock.path.clear();
+		return {true, {}};
 	} catch (const std::exception& error) {
 		std::string message  = error.what();
 		bool        restored = true;
@@ -202,10 +223,10 @@ Result Install(const fs::path& source, const fs::path& target, const fs::path& l
 			try {
 				const auto destination = target / change->relative;
 				if (change->installed) {
-					fs::rename(destination, source / change->relative);
+					ops.Rename(destination, source / change->relative);
 				}
 				if (change->old_moved) {
-					fs::rename(backup / change->relative, destination);
+					ops.Rename(backup / change->relative, destination);
 				}
 			} catch (const std::exception& rollback_error) {
 				restored = false;
@@ -214,13 +235,17 @@ Result Install(const fs::path& source, const fs::path& target, const fs::path& l
 		}
 		for (auto directory = created_directories.rbegin(); directory != created_directories.rend();
 		     ++directory) {
-			std::error_code ignored;
-			fs::remove(*directory, ignored);
+			try {
+				ops.Remove(*directory);
+			} catch (const std::exception&) {
+			}
 		}
 		if (!backup.empty()) {
 			if (restored) {
-				std::error_code ignored;
-				fs::remove_all(backup, ignored);
+				try {
+					ops.RemoveAll(backup);
+				} catch (const std::exception&) {
+				}
 			} else {
 				message += "\nBackup retained at: " + backup.string();
 			}

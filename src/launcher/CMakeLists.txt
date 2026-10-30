@@ -57,13 +57,6 @@ set_target_properties(launcher PROPERTIES OUTPUT_NAME ${launcher_name})
 install(TARGETS launcher
 	RUNTIME DESTINATION .)
 
-# Older releases require the previous executable name when validating updates.
-install(CODE "
-		file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}\"
-			TYPE PROGRAM RENAME \"launcher${CMAKE_EXECUTABLE_SUFFIX}\"
-			FILES \"\${CMAKE_INSTALL_PREFIX}/${launcher_name}${CMAKE_EXECUTABLE_SUFFIX}\")
-	")
-
 if(LINUX)
 	# Bundle the Qt runtime and plugins.
 	set_target_properties(launcher PROPERTIES

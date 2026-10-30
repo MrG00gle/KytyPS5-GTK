@@ -25,7 +25,8 @@ kyty_add_property_group(launcher_core_paths_tests LINK kyty_launcher_core kyty_t
 	ENVIRONMENT_MODIFICATION ${kyty_no_display})
 kyty_add_property_group(archive_roundtrip_tests LINK common kyty_test_support)
 kyty_add_property_group(updater_core_tests LINK kyty_updater_core kyty_net_test_support)
-kyty_add_property_group(updater_installer_tests LINK kyty_updater_core kyty_test_support)
+kyty_add_property_group(updater_installer_tests
+	LINK kyty_updater_installer kyty_updater_core kyty_net_test_support)
 kyty_add_property_group(source_check_tests LINK kyty_source_check)
 
 # The deliberately failing property that the property_harness_selftest CTest (tests/CMakeLists.txt)
