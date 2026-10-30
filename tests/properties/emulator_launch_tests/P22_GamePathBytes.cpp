@@ -6,10 +6,15 @@
 // double quotes, backslashes, backticks, the shell metacharacters $ ; & | < > * ? ( ) [ ] { } ! #
 // ~, and 2-, 3-, and 4-byte UTF-8 characters. A length below 22 bytes cannot be built below the
 // root and is raised to 22; the classification line reports how often (about 0.5% of the draws).
-// The path, which exists, is passed as --game <path> to SpawnEmulator, with the argv_echo helper
-// standing in for the Emulator; argv_echo must receive exactly the two arguments, byte for byte.
+// The path, which exists, is a directory Game_Entry with the default configuration (elf
+// eboot.bin), so BuildEmulatorArguments ends its arguments with --game <path>. SpawnEmulator
+// passes them to the argv_echo helper, standing in for the Emulator, which must receive exactly
+// those arguments, byte for byte.
 
+#include "launcher/core/emulatorArguments.h"
 #include "launcher/core/emulatorProcess.h"
+#include "launcher/core/gameMetadata.h"
+#include "launcher/core/settingsStore.h"
 #include "support/helperPaths.h"
 #include "support/property.h"
 
@@ -179,8 +184,15 @@ KYTY_PROPERTY(22, "Game path bytes are preserved") {
 		RC_ASSERT(!ec);
 		RC_ASSERT(fs::is_directory(path, ec));
 
-		const std::vector<std::string> args    = {"--game", path};
-		auto                           spawned = kyty::core::SpawnEmulator(
+		kyty::core::GameEntry entry;
+		entry.path = path;
+		entry.kind = kyty::core::GameEntry::Kind::Directory;
+		const auto args =
+		    kyty::core::BuildEmulatorArguments(entry, kyty::core::EffectiveConfiguration {});
+		RC_ASSERT(args.size() >= 2);
+		RC_ASSERT(args[args.size() - 2] == "--game");
+		RC_ASSERT(args.back() == path);
+		auto spawned = kyty::core::SpawnEmulator(
 		    kyty::core::SpawnRequest {KytyTests::HelperPath("argv_echo"), args, root.Path()});
 		RC_ASSERT(spawned.has_value());
 		ChildGuard  child(*spawned);
@@ -189,10 +201,11 @@ KYTY_PROPERTY(22, "Game path bytes are preserved") {
 		const int status = child.Wait();
 		RC_ASSERT(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 
-		std::string expected = "--game";
-		expected.push_back('\0');
-		expected += path;
-		expected.push_back('\0');
+		std::string expected;
+		for (const auto& arg: args) {
+			expected += arg;
+			expected.push_back('\0');
+		}
 		RC_ASSERT(out == expected);
 
 		RC_CLASSIFY(raised, "length raised to the root minimum");
