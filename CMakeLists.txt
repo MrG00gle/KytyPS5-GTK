@@ -57,31 +57,27 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 include("${KYTY_SOURCE_DIR}/utils.cmake")
 include(CTest)
 include(KytyTesting)
+include(KytyBuildInfo)
 
 option(KYTY_ENABLE_CLANG_TIDY "Run clang-tidy checks during builds" OFF)
 
-set(KYTY_BUILD_ORIGIN "Source" CACHE STRING "Build provenance shown in diagnostics")
-set_property(CACHE KYTY_BUILD_ORIGIN PROPERTY STRINGS Source Official Fork)
-if(NOT KYTY_BUILD_ORIGIN STREQUAL "Source" AND NOT KYTY_BUILD_ORIGIN STREQUAL "Official" AND
-   NOT KYTY_BUILD_ORIGIN STREQUAL "Fork")
-	message(FATAL_ERROR "KYTY_BUILD_ORIGIN must be Source, Official, or Fork")
-endif()
+# The build origin is no longer a user choice (Requirement 13.2): official builds are classified from
+# the CI environment below. Stale cache entries and command-line values of the removed variables are
+# reported and dropped, so the change is never silent.
+foreach(kyty_removed_variable IN ITEMS KYTY_BUILD_ORIGIN KYTY_BUILD_REPOSITORY)
+	if(DEFINED CACHE{${kyty_removed_variable}} OR DEFINED ${kyty_removed_variable})
+		message(WARNING "${kyty_removed_variable} is no longer used and is ignored (value "
+			"'${${kyty_removed_variable}}'): official builds are classified from the CI environment by "
+			"cmake/KytyBuildInfo.cmake.")
+		unset(${kyty_removed_variable} CACHE)
+		unset(${kyty_removed_variable})
+	endif()
+endforeach()
 
 set(KYTY_RELEASE_TAG "" CACHE STRING "Release tag embedded in official builds")
-set(KYTY_BUILD_REPOSITORY "" CACHE STRING "GitHub repository embedded in fork builds")
-set(KYTY_OFFICIAL_BUILD OFF)
-set(KYTY_FORK_BUILD OFF)
-if(KYTY_BUILD_ORIGIN STREQUAL "Official")
-	if(KYTY_RELEASE_TAG STREQUAL "")
-		message(FATAL_ERROR "Official builds require KYTY_RELEASE_TAG")
-	endif()
-	set(KYTY_OFFICIAL_BUILD ON)
-elseif(KYTY_BUILD_ORIGIN STREQUAL "Fork")
-	if(KYTY_BUILD_REPOSITORY STREQUAL "")
-		message(FATAL_ERROR "Fork builds require KYTY_BUILD_REPOSITORY")
-	endif()
-	set(KYTY_FORK_BUILD ON)
-endif()
+option(KYTY_FLATPAK_BUILD "Build for the Flatpak package" OFF)
+# Sets KYTY_OFFICIAL_BUILD, which cmake_config.h defines for official builds.
+kyty_apply_build_classification()
 
 include(TestBigEndian)
 
@@ -172,6 +168,10 @@ option(KYTY_BUILD_LAUNCHER "Build Qt launcher" ON)
 config_compiler_and_linker()
 
 add_subdirectory("${KYTY_THIRD_PARTY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/3rdparty")
+# First-party targets only: the directories below see KYTY_FLATPAK, the dependencies above do not.
+if(KYTY_FLATPAK_BUILD)
+	add_compile_definitions(KYTY_FLATPAK)
+endif()
 add_subdirectory("${KYTY_SOURCE_DIR}/common" "${CMAKE_CURRENT_BINARY_DIR}/common")
 
 # The Emulator option parser, shared by kyty_emulator and the tests.
@@ -182,6 +182,8 @@ add_library(kyty_emulator_options STATIC
 target_include_directories(kyty_emulator_options PUBLIC ${KYTY_SOURCE_DIR})
 target_link_libraries(kyty_emulator_options PUBLIC common)
 add_subdirectory("${KYTY_SOURCE_DIR}/launcher/core" "${CMAKE_CURRENT_BINARY_DIR}/launcher/core")
+# The Updater: kyty_updater_core whatever KYTY_BUILD_LAUNCHER is, and the kyty_updater helper.
+add_subdirectory("${KYTY_SOURCE_DIR}/updater" "${CMAKE_CURRENT_BINARY_DIR}/updater")
 
 file(GLOB kyty_emulator_src CONFIGURE_DEPENDS
 	"${KYTY_SOURCE_DIR}/libs/*.cpp"

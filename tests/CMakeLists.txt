@@ -525,27 +525,52 @@ endforeach()
 # ENVIRONMENT, so they get these ENVIRONMENT_MODIFICATION operations (also used in properties/).
 set(kyty_no_display "WAYLAND_DISPLAY=unset:" "DISPLAY=unset:")
 
-# Shared test support (fakes, temporary directories): every tests/support/*.cpp except the property
-# harness main(), which kyty_add_property_executable() compiles into each property executable. It
-# compiles with -frtti because property executables derive from its classes.
-file(GLOB kyty_test_support_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/support/*.cpp")
-list(FILTER kyty_test_support_sources EXCLUDE REGEX "/propertyMain\\.cpp$")
-add_library(kyty_test_support STATIC EXCLUDE_FROM_ALL ${kyty_test_support_sources})
-target_include_directories(kyty_test_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(kyty_test_support PUBLIC kyty_launcher_core)
-target_compile_options(kyty_test_support PRIVATE -frtti)
+# Test support without application libraries (the HTTP and scheduler fakes, temporary directories),
+# shared by the Launcher_Core and Updater tests. It links only kyty_net_interfaces, so the Updater
+# tests stay free of application libraries. It compiles with -frtti because property executables
+# derive from its classes.
+set(kyty_net_test_support_sources
+	"${CMAKE_CURRENT_SOURCE_DIR}/support/fakeHttpClient.cpp"
+	"${CMAKE_CURRENT_SOURCE_DIR}/support/fakeScheduler.cpp"
+	"${CMAKE_CURRENT_SOURCE_DIR}/support/tempDir.cpp")
+add_library(kyty_net_test_support STATIC EXCLUDE_FROM_ALL ${kyty_net_test_support_sources})
+target_include_directories(kyty_net_test_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(kyty_net_test_support PUBLIC kyty_net_interfaces)
+target_compile_options(kyty_net_test_support PRIVATE -frtti)
 # Tests run in ${CMAKE_BINARY_DIR}; this finds tests/fixtures/.
-target_compile_definitions(kyty_test_support PUBLIC "KYTY_TEST_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
+target_compile_definitions(kyty_net_test_support PUBLIC "KYTY_TEST_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
 # Where argv_echo and fake_emulator are written (tests/support/helperPaths.h); building the support
 # library builds them first.
-target_compile_definitions(kyty_test_support PUBLIC "KYTY_TEST_BINARY_DIR=\"${CMAKE_BINARY_DIR}\"")
-add_dependencies(kyty_test_support argv_echo fake_emulator)
+target_compile_definitions(kyty_net_test_support PUBLIC "KYTY_TEST_BINARY_DIR=\"${CMAKE_BINARY_DIR}\"")
+add_dependencies(kyty_net_test_support argv_echo fake_emulator)
+
+# Shared Launcher_Core test support (fakes of the scan file system and environment): every other
+# tests/support/*.cpp except the property harness main(), which kyty_add_property_executable()
+# compiles into each property executable. It also compiles with -frtti.
+file(GLOB kyty_test_support_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/support/*.cpp")
+list(FILTER kyty_test_support_sources EXCLUDE REGEX "/propertyMain\\.cpp$")
+list(REMOVE_ITEM kyty_test_support_sources ${kyty_net_test_support_sources})
+add_library(kyty_test_support STATIC EXCLUDE_FROM_ALL ${kyty_test_support_sources})
+target_include_directories(kyty_test_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(kyty_test_support PUBLIC kyty_net_test_support kyty_launcher_core)
+target_compile_options(kyty_test_support PRIVATE -frtti)
 
 kyty_add_test_directory(tests/launcher_core LINK kyty_launcher_core kyty_test_support
 	ENVIRONMENT_MODIFICATION ${kyty_no_display})
 # jsonErrorCapture.h is internal to Launcher_Core: it includes nlohmann/json.hpp, which
 # kyty_launcher_core links PRIVATE. Its test includes it too, so it needs the header-only library.
 target_link_libraries(launcher_core_json_error_capture_tests nlohmann_json::nlohmann_json)
+
+# Updater core tests (task 17.5). They link no application library (UPDATER-LINK) and need no
+# display-free environment: kyty_updater_core has no display code.
+kyty_add_test_directory(tests/updater LINK kyty_updater_core kyty_net_test_support)
+
+# Build classification (task 17.6, Requirement 13.2): kyty_classify_build() in script mode over every
+# combination of its inputs.
+kyty_add_test(NAME build_classification
+	COMMAND "${CMAKE_COMMAND}" "-DBUILD_INFO_SCRIPT=${CMAKE_SOURCE_DIR}/cmake/KytyBuildInfo.cmake"
+	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildClassificationTest.cmake"
+	TIMEOUT 60)
 
 # Last, so that the property groups see every library.
 add_subdirectory(properties)

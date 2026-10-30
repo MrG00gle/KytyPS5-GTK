@@ -1,6 +1,5 @@
 
 find_package(Qt6 6.8 COMPONENTS Concurrent Network Widgets REQUIRED)
-add_subdirectory("${KYTY_SOURCE_DIR}/updater" "${CMAKE_CURRENT_BINARY_DIR}/updater")
 
 set(CMAKE_AUTOUIC_SEARCH_PATHS forms)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -39,13 +38,17 @@ if(LINUX)
 	kyty_link_with_lld(launcher)
 endif()
 
-add_custom_target(stage_updater
-	COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:launcher>
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:kyty_updater>
-		$<TARGET_FILE_DIR:launcher>/$<TARGET_FILE_NAME:kyty_updater>
-	DEPENDS kyty_updater
-	VERBATIM)
-add_dependencies(launcher kyty_emulator stage_updater)
+add_dependencies(launcher kyty_emulator)
+# src/updater/CMakeLists.txt skips kyty_updater in Flatpak builds.
+if(TARGET kyty_updater)
+	add_custom_target(stage_updater
+		COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:launcher>
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:kyty_updater>
+			$<TARGET_FILE_DIR:launcher>/$<TARGET_FILE_NAME:kyty_updater>
+		DEPENDS kyty_updater
+		VERBATIM)
+	add_dependencies(launcher stage_updater)
+endif()
 
 set(launcher_name "kyty_launcher")
 
@@ -60,8 +63,6 @@ install(CODE "
 			TYPE PROGRAM RENAME \"launcher${CMAKE_EXECUTABLE_SUFFIX}\"
 			FILES \"\${CMAKE_INSTALL_PREFIX}/${launcher_name}${CMAKE_EXECUTABLE_SUFFIX}\")
 	")
-
-install(TARGETS kyty_updater RUNTIME DESTINATION .)
 
 if(LINUX)
 	# Bundle the Qt runtime and plugins.
