@@ -95,6 +95,8 @@ void TestImportable() {
 	          request.total_timeout == milliseconds {30000} &&
 	          request.stall_timeout == milliseconds {0},
 	      "8 MiB, 30 s, no stall limit");
+	Check(request.redirects == kyty::core::RedirectPolicy::SameOrigin,
+	      "same-origin redirects only (the Qt launcher's SameOriginRedirectPolicy)");
 }
 
 void TestMismatches() {

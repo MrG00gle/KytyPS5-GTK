@@ -2,11 +2,12 @@
 //
 // Validates Requirements 7.17 and 9.7. Valid LauncherSettings from configurationGenerators.h
 // (Game_Folders, add-ons folder, view, grid icon width, update check, raw theme and geometry or
-// none, window size, a valid Global_Configuration and controller, 0-4 games with custom
-// configurations and input-mapping overrides, unknown keys at the top and in the elements; text
-// from a Unicode alphabet with the characters Kyty.ini quotes and escapes). SaveSettings followed
-// by LoadSettings (through a file, and through SerializeSettings and ParseSettings) gives settings
-// equal field by field with no defaulted key, and a second save writes the same bytes.
+// none, main and settings window sizes, a valid Global_Configuration and controller, 0-4 games
+// with custom configurations and input-mapping overrides, unknown keys at the top and in the
+// elements; text from a Unicode alphabet with the characters Kyty.ini quotes and escapes).
+// SaveSettings followed by LoadSettings (through a file, and through SerializeSettings and
+// ParseSettings) gives settings equal field by field with no defaulted key, and a second save
+// writes the same bytes.
 //
 // Left out of the generator, as in Property 14, because QSettings cannot round-trip it either:
 // U+FEFF (Qt's decoder drops it as the first character of a value).
@@ -34,6 +35,7 @@ void AssertEqual(const LauncherSettings& loaded, const LauncherSettings& stored)
 	RC_ASSERT(loaded.theme == stored.theme);
 	RC_ASSERT(loaded.geometry == stored.geometry);
 	RC_ASSERT(loaded.window == stored.window);
+	RC_ASSERT(loaded.settings_window == stored.settings_window);
 	RC_ASSERT(loaded.global == stored.global);
 	RC_ASSERT(loaded.controller == stored.controller);
 	RC_ASSERT(loaded.games.size() == stored.games.size());

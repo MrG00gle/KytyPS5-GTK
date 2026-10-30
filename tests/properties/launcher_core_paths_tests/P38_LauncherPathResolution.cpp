@@ -14,10 +14,12 @@
 // - an unset, empty, or relative XDG value falls back to $HOME/.config or $HOME/.local/share (as
 //   Qt does), an unset or empty HOME is "/", and a relative HOME resolves against the working
 //   directory;
-// - every launcher data file (compatibility cache, cheat files, trophy data, save data) resolves
-//   directly below the Data_Directory, and the spawn working directory equals it;
+// - every launcher data file (compatibility cache, cheat files, save data) resolves directly below
+//   the Data_Directory, the Emulator's trophy unlock data (Common::Trophies::UnlocksPath) in its
+//   _Trophies directory, and the spawn working directory equals it;
 // - every path is absolute and lexically normal, without a trailing separator.
 
+#include "common/trophies.h"
 #include "launcher/core/dataPaths.h"
 #include "support/fakeEnvironment.h"
 #include "support/property.h"
@@ -196,11 +198,16 @@ KYTY_PROPERTY(38, "Launcher path resolution") {
 		RC_ASSERT(kyty::core::SpawnWorkingDirectory(paths) == paths.data_dir);
 		for (const auto& file: {kyty::core::CompatibilityCachePath(paths.data_dir),
 		                        kyty::core::CheatDirectory(paths.data_dir),
-		                        kyty::core::TrophyDataDirectory(paths.data_dir),
 		                        kyty::core::SaveDataDirectory(paths.data_dir)}) {
 			RC_ASSERT(file.parent_path() == paths.data_dir);
 			RC_ASSERT(IsCleanAbsolute(file));
 		}
+		// The Emulator's trophy unlock data: <data_dir>/_Trophies/<title>/<file>.
+		const auto unlocks = Common::Trophies::UnlocksPath(paths.data_dir, "PPSA00001", 1000, 0);
+		RC_ASSERT(unlocks.filename() == "trophies_1000_0.json");
+		RC_ASSERT(unlocks.parent_path().filename() == "PPSA00001");
+		RC_ASSERT(unlocks.parent_path().parent_path() == paths.data_dir / "_Trophies");
+		RC_ASSERT(IsCleanAbsolute(unlocks));
 
 		RC_TAG(flatpak ? "flatpak" : portable ? "host, portable" : "host, user config");
 		RC_CLASSIFY(config_home.kind == Kind::Relative || data_home.kind == Kind::Relative,

@@ -480,10 +480,11 @@ kyty_add_test(NAME source_check_platform_macros
 	LABELS source-check)
 kyty_add_test_directory(tests/source_check LINK kyty_source_check LABELS source-check)
 
-# Repository content checks (Requirements 2.3, 3.7, 3.9, 4.1, 4.2, 4.8, 4.9) and license and
-# copyright preservation checks (Requirements 21.1, 21.6) over this source tree.
+# Repository content checks (Requirements 2.3, 3.7, 3.9, 4.1, 4.2, 4.8, 4.9; gtk_settings_save: the
+# GTK launcher saves Kyty.ini only through SaveSettingsStore) and license and copyright preservation
+# checks (Requirements 21.1, 21.6) over this source tree.
 foreach(kyty_check IN ITEMS nix_terms windows_terms macos_terms cmake_apple bundle_strings deleted_paths
-		vscode_patterns)
+		vscode_patterns gtk_settings_save)
 	kyty_add_test(NAME content_check_${kyty_check}
 		COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/content_checks.py"
 		        --repo "${CMAKE_SOURCE_DIR}" --check ${kyty_check}

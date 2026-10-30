@@ -5,8 +5,11 @@
 // grades) with arbitrary unlocks (some of the package's IDs and IDs it does not define).
 // BuildTrophyOverview must give exactly one row per entry with at least one trophy, in entry order,
 // and none for the others; each row shows the name (or the title ID when the name is empty), the
-// title ID, the earned and total counts over the entry's packages, the counts per grade, and
-// floor(100 * earned / total) from 0 to 100; the totals add up over the rows.
+// title ID, the earned and total counts over the entry's packages, the counts per grade, and the
+// grade-weighted percentage of Property 27 as amended on 2026-10-30, from 0 to 100:
+// floor(100 * earned_points / points) with gold 6, silver 2, bronze 1, and platinum 0 points, and 0
+// when points is 0 (the reference computes it here, independently of
+// Common::Trophies::Progress::Percentage()); the totals add up over the rows.
 
 #include "launcher/core/trophyModel.h"
 #include "support/property.h"
@@ -82,6 +85,8 @@ KYTY_PROPERTY(27, "Trophy overview rows") {
 		std::size_t                   row_index  = 0;
 		std::uint32_t                 all_earned = 0;
 		kyty::core::TrophyGradeCounts all_by_grade {};
+		bool                          platinum_only    = false;
+		bool                          weighted_differs = false;
 		for (std::size_t index = 0; index < entries.size(); index++) {
 			const auto&                   entry  = entries[index];
 			std::uint32_t                 earned = 0, total = 0;
@@ -114,8 +119,20 @@ KYTY_PROPERTY(27, "Trophy overview rows") {
 			RC_ASSERT(row.total == total);
 			RC_ASSERT(row.earned_by_grade == earned_by_grade);
 			RC_ASSERT(row.total_by_grade == total_by_grade);
-			RC_ASSERT(row.percent == static_cast<int>(std::uint64_t {earned} * 100 / total));
-			RC_ASSERT(row.percent >= 0 && row.percent <= 100);
+			// Counts are {platinum, gold, silver, bronze}.
+			const std::uint64_t points =
+			    6 * std::uint64_t {total_by_grade[1]} + 2 * total_by_grade[2] + total_by_grade[3];
+			const std::uint64_t earned_points = 6 * std::uint64_t {earned_by_grade[1]} +
+			                                    2 * earned_by_grade[2] + earned_by_grade[3];
+			const int percent = points == 0 ? 0 : static_cast<int>(earned_points * 100 / points);
+			RC_ASSERT(row.percent == percent);
+			RC_ASSERT(row.percent >= 0);
+			RC_ASSERT(row.percent <= 100);
+			if (points == 0) {
+				platinum_only = true;
+			} else if (percent != static_cast<int>(std::uint64_t {earned} * 100 / total)) {
+				weighted_differs = true;
+			}
 			all_earned += earned;
 			for (std::size_t g = 0; g < all_by_grade.size(); g++) {
 				all_by_grade[g] += earned_by_grade[g];
@@ -127,5 +144,7 @@ KYTY_PROPERTY(27, "Trophy overview rows") {
 
 		RC_CLASSIFY(overview.rows.size() < entries.size(), "entries without trophy data");
 		RC_CLASSIFY(!overview.rows.empty(), "rows");
+		RC_CLASSIFY(platinum_only, "a row without points (platinum only)");
+		RC_CLASSIFY(weighted_differs, "the weighted percentage differs from the unweighted one");
 	});
 }

@@ -1,17 +1,20 @@
 // Feature: linux-gtk-modernization, Property 36: Save data removal is isolated
 //
 // Validates Requirement 11.13. Each case builds a real Data_Directory with a _SaveData tree of 2-5
-// title IDs (plus look-alike names: the lower-case spelling, a longer ID, a file next to the
-// directory), random files, nested and empty directories, and symbolic links from the removed
-// title into other titles (to files and to directories) and to nowhere, and a _Trophies directory.
-// It removes the save data of one title, spelled in any letter case with whitespace around it,
+// title IDs, each drawn in a random mix of upper- and lower-case letters (plus look-alike names:
+// the upper-case, lower-case, and case-swapped spellings of the removed title, now and then with a
+// leading space or a trailing tab, a longer ID, a file next to the directory), random files, nested
+// and empty directories, and symbolic links from the removed title into other titles (to files and
+// to directories) and to nowhere, and a _Trophies directory. It removes the save data of one title,
+// passing its title ID exactly as drawn (the launcher uses the TITLE_ID as the Emulator writes it),
 // through KytyTests::ContentGen::FailingRemover with 0-3 injected undeletable paths (files, links,
 // or directories) or, in about one case in ten, for a title that has no save data. RemoveSaveData
-// must call the remover only for paths inside _SaveData/<TITLE_ID>, each once and every directory
-// after its contents; it must report exactly the injected paths and the directories above them
-// (which are then not empty), leave exactly those paths, and leave every other path below the
-// Data_Directory byte-identical (link targets included). A title ID that is not one path component
-// (in about one case in ten) is refused, and nothing is removed.
+// must remove _SaveData/<title ID as drawn> and call the remover only for paths inside it, each
+// once and every directory after its contents; it must report exactly the injected paths and the
+// directories above them (which are then not empty), leave exactly those paths, and leave every
+// other path below the Data_Directory byte-identical (the case and whitespace variants and link
+// targets included). A title ID that is not one path component (empty, ".", "..", or with '/' or
+// a NUL byte; in about one case in ten) is refused, and nothing is removed.
 
 #include "launcher/core/saveData.h"
 #include "support/contentGenerators.h"
@@ -47,16 +50,36 @@ const std::vector<std::string>& Titles() {
 	return titles;
 }
 
-std::string Spelling(const std::string& title) {
-	static const std::vector<std::string> kSpaces = {"", " ", "\t", "\xC2\xA0", "\xE3\x80\x80"};
-	std::string                           text    = title;
+// The title ID in a random mix of upper- and lower-case letters.
+std::string MixedCase(const std::string& title) {
+	std::string text = title;
 	for (auto& c: text) {
 		if (c >= 'A' && c <= 'Z' && OneIn(2)) {
 			c = static_cast<char>(c - 'A' + 'a');
 		}
 	}
-	return kSpaces[Choose<std::size_t>(0, kSpaces.size())] + text +
-	       kSpaces[Choose<std::size_t>(0, kSpaces.size())];
+	return text;
+}
+
+// The title ID with every ASCII letter converted by convert.
+template <typename Convert>
+std::string Converted(std::string text, Convert convert) {
+	for (auto& c: text) {
+		c = convert(c);
+	}
+	return text;
+}
+
+char Upper(char c) {
+	return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
+}
+
+char Lower(char c) {
+	return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+}
+
+char Swapped(char c) {
+	return c >= 'a' && c <= 'z' ? Upper(c) : Lower(c);
 }
 
 // A random subtree below directory (relative to data_dir); every created path is added to paths.
@@ -95,23 +118,37 @@ KYTY_PROPERTY(36, "Save data removal is isolated") {
 		const KytyTests::TempDir temp("kyty_p36");
 		const auto               data = temp.Path() / "data";
 
-		// The titles with save data; the removed title is one of them or, rarely, another one.
+		// The titles with save data, each spelled in mixed case; the removed title is one of them
+		// or, rarely, another one.
 		std::vector<std::string> present;
 		for (const auto& title: Titles()) {
 			if (present.size() < 2 || OneIn(2)) {
-				present.push_back(title);
+				present.push_back(MixedCase(title));
 			}
 		}
-		const bool  absent = OneIn(10);
-		const auto& removed =
-		    absent ? std::string("PPSA77777") : present[Choose<std::size_t>(0, present.size())];
+		const bool        absent = OneIn(10);
+		const std::string removed =
+		    absent ? MixedCase("PPSA77777") : present[Choose<std::size_t>(0, present.size())];
 		std::map<std::string, std::vector<fs::path>> paths; // relative to data
 		for (const auto& title: present) {
 			const fs::path directory = fs::path("_SaveData") / title;
 			temp.MakeDirectories(fs::path("data") / directory);
 			Subtree(temp, directory, 0, paths[title]);
 		}
-		temp.WriteFile("data/_SaveData/ppsa01234/lower.bin", "lower-case sibling");
+		// Siblings that differ from the removed title only in letter case or by whitespace: the
+		// title ID is used as given, so they are other directories and must stay.
+		std::set<std::string> siblings = {Converted(removed, Swapped), Converted(removed, Upper),
+		                                  Converted(removed, Lower)};
+		if (OneIn(2)) {
+			siblings.insert(" " + removed);
+		}
+		if (OneIn(2)) {
+			siblings.insert(removed + "\t");
+		}
+		siblings.erase(removed);
+		for (const auto& sibling: siblings) {
+			temp.WriteFile("data/_SaveData/" + sibling + "/sibling.bin", "case variant " + sibling);
+		}
 		temp.WriteFile("data/_SaveData/" + removed + "0/x", "longer title");
 		temp.WriteFile("data/_SaveData/" + removed + ".bak", "next to it");
 		temp.WriteFile("data/_Trophies/" + removed + "/trophies_1000_0.json", "{}");
@@ -134,11 +171,16 @@ KYTY_PROPERTY(36, "Save data removal is isolated") {
 		}
 
 		const bool                                 unsafe  = OneIn(10);
-		static const std::vector<std::string_view> kUnsafe = {
-		    "", "  ", ".", "..", " .. ", "../_Trophies", "PPSA01234/a"};
-		const std::string title_argument =
-		    unsafe ? std::string(kUnsafe[Choose<std::size_t>(0, kUnsafe.size())])
-		           : Spelling(removed);
+		static const std::vector<std::string_view> kUnsafe = {"",
+		                                                      ".",
+		                                                      "..",
+		                                                      "../_Trophies",
+		                                                      "PPSA01234/a",
+		                                                      "/",
+		                                                      std::string_view("P\0A", 3),
+		                                                      " ../ppsa01234"};
+		const std::string                          title_argument =
+		    unsafe ? std::string(kUnsafe[Choose<std::size_t>(0, kUnsafe.size())]) : removed;
 
 		// Injected failures below the removed title.
 		ContentGen::FailingRemover remover;

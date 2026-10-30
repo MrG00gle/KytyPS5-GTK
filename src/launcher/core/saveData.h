@@ -5,6 +5,14 @@
 // nothing outside that directory. Ported from the Qt launcher's remove_save_data
 // (src/launcher/src/configurationListWidget.cpp), which looked in several roots; the launcher now
 // uses the Data_Directory only.
+//
+// The title ID is used exactly as given (the Game_Entry's TITLE_ID), neither trimmed nor
+// upper-cased, because the Emulator writes the save data of a title under _SaveData/<TITLE_ID> with
+// the param.sfo TITLE_ID as it is (save_user_directory and get_title_id in
+// src/libs/libSaveData.cpp): "ppsa01234" and "PPSA01234" are different directories. The Emulator
+// saves a title whose TITLE_ID is empty or has a character outside [A-Za-z0-9_.@-] under
+// _SaveData/UNKNOWN instead; the launcher never maps a title ID to UNKNOWN, because removing that
+// directory could delete the save data of other titles.
 
 #include "launcher/core/expected.h"
 
@@ -29,9 +37,9 @@ public:
 // std::filesystem::remove.
 PathRemover& HostPathRemover();
 
-// SaveDataDirectory(data_dir) / NormalizeTitleId(title_id), or an error naming the title ID when
-// the normalized title ID is empty, ".", "..", or contains '/' or a NUL byte (it must be exactly
-// one path component below _SaveData).
+// SaveDataDirectory(data_dir) / title_id, with title_id exactly as given, or an error naming the
+// title ID when it is empty, ".", "..", or contains '/' or a NUL byte (it must be exactly one path
+// component below _SaveData).
 Expected<std::filesystem::path, std::string> SaveDataPath(const std::filesystem::path& data_dir,
                                                           std::string_view             title_id);
 

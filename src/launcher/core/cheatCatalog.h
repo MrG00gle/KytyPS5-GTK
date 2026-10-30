@@ -74,7 +74,8 @@ CheatIndex ParseCheatIndex(std::string_view bytes, std::string_view format,
                            std::string_view title_id);
 
 // The request of one collection download: GET url, User-Agent kCheatUserAgent, max_bytes,
-// total_timeout kCheatRequestTimeout, no stall timeout.
+// total_timeout kCheatRequestTimeout, no stall timeout, and RedirectPolicy::SameOrigin (the Qt
+// launcher's SameOriginRedirectPolicy).
 HttpRequest CheatRequest(std::string url, uint64_t max_bytes);
 
 // Why a collection download failed, for a result other than HttpFailure::None ("" for None):

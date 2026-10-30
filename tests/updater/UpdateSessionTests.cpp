@@ -7,9 +7,10 @@
 // releases; the refusal while a game runs; a download that stalls at 30 s, is too large, too
 // small, corrupt, or cannot be written; tar and validation failures with their standard error;
 // the gate closing before the handoff; a failed detached start; Cancel() in every running state
-// (also from on_change); each workspace fault; a refused URL; destruction mid-download; a session
-// without on_change; and a client that ignores max_bytes. Every request URL must be one of the
-// fork's release URLs, and no workspace may remain after a failure.
+// (also from on_change); each workspace fault; a refused URL; a configuration with a relative or
+// empty path; destruction mid-download; a session without on_change; and a client that ignores
+// max_bytes. Every request URL must be one of the fork's release URLs with the https-only redirect
+// policy, and no workspace may remain after a failure.
 
 #include "launcher/core/httpClient.h"
 #include "support/fakeHttpClient.h"
@@ -194,6 +195,9 @@ void CheckRequests(const std::vector<HttpRequest>& requests) {
 		           request.url.starts_with(kyty::updater::kReleaseDownloadPrefix)),
 		      "an allowed URL: " + request.url);
 		Check(request.total_timeout == milliseconds {0}, "no total timeout: " + request.url);
+		Check(request.redirects == kyty::core::RedirectPolicy::HttpsOnly,
+		      "redirects to any https URL (GitHub sends downloads to another host): " +
+		          request.url);
 		if (IsMetadataRequest(request)) {
 			Check(request.max_bytes == 2u * 1024u * 1024u &&
 			          request.stall_timeout == milliseconds {15000},
@@ -987,6 +991,71 @@ void TestBusyAndRestart() {
 	Check(harness.session->DownloadedBytes() == 0, "nothing downloaded");
 }
 
+// install_dir, helper, and working_dir must be absolute (tar and the helper run with the workspace
+// as their working directory): a relative or empty one ends Check() in Failed at once, before any
+// request, gate call, or workspace step, and the first such field is named.
+void TestRelativeConfiguration() {
+	const std::string prefix = "The update configuration is invalid: ";
+	struct Case {
+		std::string                               name;
+		std::function<void(UpdateSessionConfig&)> edit;
+		std::string                               message;
+	};
+	const std::vector<Case> cases = {
+	    {"relative install_dir", [](UpdateSessionConfig& c) { c.install_dir = "install"; },
+	     prefix + "install_dir must be an absolute path (install)."},
+	    {"empty install_dir", [](UpdateSessionConfig& c) { c.install_dir.clear(); },
+	     prefix + "install_dir must be an absolute path ()."},
+	    {"relative helper", [](UpdateSessionConfig& c) { c.helper = "./kyty_updater"; },
+	     prefix + "helper must be an absolute path (./kyty_updater)."},
+	    {"empty helper", [](UpdateSessionConfig& c) { c.helper.clear(); },
+	     prefix + "helper must be an absolute path ()."},
+	    {"relative working_dir", [](UpdateSessionConfig& c) { c.working_dir = "launcher cwd"; },
+	     prefix + "working_dir must be an absolute path (launcher cwd)."},
+	    {"empty working_dir", [](UpdateSessionConfig& c) { c.working_dir.clear(); },
+	     prefix + "working_dir must be an absolute path ()."},
+	    {"relative helper and working_dir",
+	     [](UpdateSessionConfig& c) {
+		     c.helper      = "bin/kyty_updater";
+		     c.working_dir = ".";
+	     },
+	     prefix + "helper must be an absolute path (bin/kyty_updater)."},
+	};
+	for (const auto& c: cases) {
+		Harness harness;
+		c.edit(harness.config);
+		harness.Restart();
+		harness.RunCheck(true);
+		Check(harness.outcomes.size() == 1, c.name + ": one outcome, Failed at once");
+		harness.CheckFailed(c.message, c.name);
+		Check(harness.Last().user_activated && !harness.Last().release,
+		      c.name + ": the check's flag, no release");
+		harness.RunCheck(false);
+		Check(harness.outcomes.size() == 2 && !harness.Last().user_activated,
+		      c.name + ": every check is refused");
+		harness.CheckFailed(c.message, c.name + ", again");
+
+		// Install() refuses the configuration as well, in any state (here Failed, and Idle).
+		harness.RunInstall();
+		Check(harness.outcomes.size() == 3, c.name + ": Install() reports the refusal");
+		harness.CheckFailed(c.message, c.name + ", Install()");
+		Harness idle;
+		c.edit(idle.config);
+		idle.Restart();
+		idle.RunInstall();
+		Check(idle.outcomes.size() == 1, c.name + ": Install() in Idle ends in Failed at once");
+		idle.CheckFailed(c.message, c.name + ", Install() in Idle");
+
+		for (const Harness* h: {&harness, &idle}) {
+			Check(h->http.Requests().empty() && h->runner.calls.empty(),
+			      c.name + ": no request and no process");
+			Check(h->gate.checks == 0 && h->gate.started == 0 && h->gate.finished == 0,
+			      c.name + ": the gate is untouched");
+			Check(h->Workspaces().empty(), c.name + ": no workspace");
+		}
+	}
+}
+
 // on_change is optional.
 void TestWithoutObserver() {
 	Harness harness;
@@ -1049,6 +1118,7 @@ void TestClientFailures() {
 	config.install_dir       = install;
 	config.launcher_relative = "kyty_launcher";
 	config.helper            = install / "kyty_updater";
+	config.working_dir       = temp.Path();
 	FakeScheduler               scheduler;
 	ManualHttpClient            http;
 	FakeRunner                  runner;
@@ -1126,6 +1196,7 @@ int main() {
 	TestRefusedAssetUrl();
 	TestCancel();
 	TestBusyAndRestart();
+	TestRelativeConfiguration();
 	TestWithoutObserver();
 	TestDestruction();
 	TestClientFailures();

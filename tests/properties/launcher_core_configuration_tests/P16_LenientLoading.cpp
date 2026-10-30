@@ -10,9 +10,9 @@
 // game_path are left alone: they identify the elements. LoadSettings must give each deleted or
 // corrupted field its default and every other field its stored value (unknown keys included), and
 // report exactly corrupted ∪ (deleted − optional) in defaulted_keys (plan D20), where the optional
-// keys are LauncherWindow/*, GameConfigurations/N/input_mapping_custom, and the preserved
-// MainDialog/theme and MainDialog/geometry. In a third of the cases the store is a legacy one
-// (review-u6 finding 4): game_dirs is dropped, the Game_Folders are in game_dir (kept or
+// keys are LauncherWindow/*, SettingsWindow/*, GameConfigurations/N/input_mapping_custom, and the
+// preserved MainDialog/theme and MainDialog/geometry. In a third of the cases the store is a legacy
+// one (review-u6 finding 4): game_dirs is dropped, the Game_Folders are in game_dir (kept or
 // corrupted), and Launcher/addons_dir, grid_view, and grid_icon_width are each deleted with a
 // probability of at least 1/2; in a legacy store they are optional too, so a missing one gets its
 // default without a report.
@@ -209,6 +209,12 @@ KYTY_PROPERTY(16, "Lenient loading of Qt-written stores") {
 		      defaults.window.height);
 		c.Key("LauncherWindow/maximized", true, bool_text(), expected.window.maximized,
 		      defaults.window.maximized);
+		c.Key("SettingsWindow/width", true, size_text(), expected.settings_window.width,
+		      defaults.settings_window.width);
+		c.Key("SettingsWindow/height", true, size_text(), expected.settings_window.height,
+		      defaults.settings_window.height);
+		c.Key("SettingsWindow/maximized", true, bool_text(), expected.settings_window.maximized,
+		      defaults.settings_window.maximized);
 
 		c.Configuration("GlobalConfiguration/", false, stored.global, expected.global);
 		for (const auto& field: kyty::core::GlobalOnlyFields()) {

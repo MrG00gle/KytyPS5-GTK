@@ -4,8 +4,10 @@
 // every key, including unknown keys and groups; missing, unparsable, and invalid values get their
 // defaults and are reported, optional keys are not; injected faults at each AtomicFileStep leave
 // the existing file byte-identical; a Kyty.ini that exists but cannot be loaded (EISDIR, EFBIG,
-// ENOTDIR) is not replaced before ConfirmOverwrite (plan D27); the custom settings lifecycle,
-// including stored mapping entries without '=' (plan D26); and ResolveEffectiveConfiguration.
+// ENOTDIR) is not replaced before ConfirmOverwrite (plan D27); SaveSettingsStore creates missing
+// parent directories (but never in place of a regular file); the [SettingsWindow] group; the
+// custom settings lifecycle, including stored mapping entries without '=' (plan D26); and
+// ResolveEffectiveConfiguration.
 
 #include "launcher/core/atomicFile.h"
 #include "launcher/core/gameConfiguration.h"
@@ -139,6 +141,8 @@ void TestPortable() {
 	          !s.geometry.has_value(),
 	      "portable main dialog");
 	Check(s.window == kyty::core::LauncherWindowState {}, "portable window defaults");
+	Check(s.settings_window == kyty::core::LauncherWindowState {900, 700, false},
+	      "without [SettingsWindow] the settings window is 900x700, not maximized, unreported");
 	Check(s.global == GameConfiguration {}, "portable global configuration is the default");
 	Check(s.controller == ControllerSettings {}, "portable controller defaults");
 	Check(s.games.empty(), "portable has no game configuration");
@@ -406,7 +410,8 @@ void TestResaveKeepsKeys() {
 			if (original.Find(key) != nullptr) {
 				continue;
 			}
-			const bool window = key.starts_with("LauncherWindow/");
+			const bool window =
+			    key.starts_with("LauncherWindow/") || key.starts_with("SettingsWindow/");
 			const bool mapping_custom =
 			    key.starts_with("GameConfigurations/") && key.ends_with("/input_mapping_custom");
 			const bool migrated = legacy && key.starts_with("Launcher/");
@@ -421,12 +426,14 @@ void TestResaveKeepsKeys() {
 		      name + ": a second re-save gives the same bytes");
 	}
 
-	// The portable store re-saves byte for byte, plus the new [LauncherWindow] group.
+	// The portable store re-saves byte for byte, plus the new [LauncherWindow] and [SettingsWindow]
+	// groups.
 	const std::string portable = ReadBytes(FixturePath("qt6-portable.ini"));
 	std::string       expected = portable;
 	const auto        at       = expected.find("[MainDialog]");
 	Check(at != std::string::npos, "portable has [MainDialog]");
 	expected.insert(at, "[LauncherWindow]\nheight=720\nmaximized=false\nwidth=1100\n\n");
+	expected += "\n[SettingsWindow]\nheight=700\nmaximized=false\nwidth=900\n";
 	Check(kyty::core::SerializeSettings(kyty::core::ParseSettings(portable).settings) == expected,
 	      "portable re-save bytes");
 }
@@ -732,6 +739,33 @@ void TestInvalidValuesDefaulted() {
 	     },
 	     {"LauncherWindow/width", "LauncherWindow/height", "LauncherWindow/maximized"},
 	     [](const LauncherSettings& s) { return s.window == kyty::core::LauncherWindowState {}; }},
+	    {"settings window values",
+	     [](IniFile& f) {
+		     f.SetString("SettingsWindow/width", "640");
+		     f.SetString("SettingsWindow/height", "480");
+		     f.SetString("SettingsWindow/maximized", "true");
+	     },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return s.settings_window == kyty::core::LauncherWindowState {640, 480, true} &&
+		            s.window == kyty::core::LauncherWindowState {};
+	     }},
+	    {"invalid settings window values",
+	     [](IniFile& f) {
+		     f.SetString("SettingsWindow/width", "-3");
+		     f.SetString("SettingsWindow/height", "2147483648");
+		     f.SetString("SettingsWindow/maximized", "1");
+	     },
+	     {"SettingsWindow/width", "SettingsWindow/height", "SettingsWindow/maximized"},
+	     [](const LauncherSettings& s) {
+		     return s.settings_window == kyty::core::LauncherWindowState {900, 700, false};
+	     }},
+	    {"one settings window value",
+	     [](IniFile& f) { f.SetString("SettingsWindow/height", "650"); },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return s.settings_window == kyty::core::LauncherWindowState {900, 650, false};
+	     }},
 	};
 	for (const auto& c: cases) {
 		const auto report = LoadEdited("qt6-portable.ini", c.edit);
@@ -873,6 +907,7 @@ void TestSaveAndFaults() {
 	auto settings             = loaded->settings;
 	settings.grid_icon_width  = 160;
 	settings.window.maximized = true;
+	settings.settings_window  = {1024, 768, true};
 
 	for (const auto step: {AtomicFileStep::CreateTemp, AtomicFileStep::Write, AtomicFileStep::Sync,
 	                       AtomicFileStep::Close, AtomicFileStep::Rename}) {
@@ -897,6 +932,10 @@ void TestSaveAndFaults() {
 	Check(reloaded.has_value() && reloaded->defaulted_keys.empty() &&
 	          reloaded->settings == settings,
 	      "the saved settings load back equal");
+	Check(reloaded->settings.settings_window == kyty::core::LauncherWindowState {1024, 768, true} &&
+	          IniFile::Parse(ReadBytes(ini)).GetString("SettingsWindow/width") ==
+	              std::optional<std::string>("1024"),
+	      "[SettingsWindow] round-trips");
 
 	const auto missing = kyty::core::LoadSettings(dir.Path() / "missing.ini");
 	Check(!missing.has_value() && missing.error().error_number == ENOENT, "a missing file");
@@ -1007,6 +1046,42 @@ void TestSettingsStoreFile() {
 	      "a parent that is a regular file gives load_error ENOTDIR");
 	CheckRefused(store, settings, ENOTDIR, "ENOTDIR");
 	Check(ReadBytes(parent) == "a regular file", "the regular file is unchanged");
+	// Even a confirmed save cannot create a directory in its place.
+	kyty::core::ConfirmOverwrite(store);
+	const auto not_directory = kyty::core::SaveSettingsStore(store, settings);
+	Check(!not_directory.has_value() && not_directory.error().error_number == ENOTDIR &&
+	          not_directory.error().path == parent / "Kyty.ini" &&
+	          not_directory.error().message == "cannot create the directory " + parent.string() +
+	                                               ": " + std::generic_category().message(ENOTDIR),
+	      "a confirmed save under a regular file is refused with ENOTDIR, naming the directory: " +
+	          not_directory.error().message);
+	Check(ReadBytes(parent) == "a regular file" && store.load_error.has_value(),
+	      "the regular file is still unchanged, and load_error stays");
+}
+
+// SaveSettingsStore creates the missing parent directories of the Settings_Store (a fresh
+// XDG_CONFIG_HOME has no Kyty directory, maybe not even the configuration directory); SaveSettings
+// does not (TestSaveAndFaults).
+void TestSettingsStoreCreatesDirectories() {
+	const TempDir    dir("kyty_settings_store_dirs");
+	LauncherSettings settings;
+	settings.game_folders = {"/games"};
+
+	const auto missing_kyty = dir.MakeDirectories("config") / "Kyty" / "Kyty.ini";
+	auto       store        = kyty::core::OpenSettingsStore(missing_kyty);
+	Check(!store.load_error, "a missing Kyty directory is no load error");
+	Check(kyty::core::SaveSettingsStore(store, settings).has_value(),
+	      "the first save creates the missing Kyty directory");
+	Check(fs::is_directory(missing_kyty.parent_path()) &&
+	          kyty::core::LoadSettings(missing_kyty).value_or(LoadReport {}).settings == settings &&
+	          Names(missing_kyty.parent_path()) == std::set<std::string> {"Kyty.ini"},
+	      "the file is in the new directory, without a temporary file");
+
+	const auto missing_all = dir.Path() / "fresh" / "config" / "Kyty" / "Kyty.ini";
+	store                  = kyty::core::OpenSettingsStore(missing_all);
+	Check(!store.load_error && kyty::core::SaveSettingsStore(store, settings).has_value() &&
+	          kyty::core::LoadSettings(missing_all).value_or(LoadReport {}).settings == settings,
+	      "every missing parent directory is created");
 }
 
 // ---- Custom settings (Requirements 9.2, 9.3, 9.13)
@@ -1213,6 +1288,7 @@ int main() {
 	TestGameElements();
 	TestSaveAndFaults();
 	TestSettingsStoreFile();
+	TestSettingsStoreCreatesDirectories();
 	TestCustomSettingsLifecycle();
 	TestInvalidStoredMapping();
 	TestMigrateLegacyGamePaths();

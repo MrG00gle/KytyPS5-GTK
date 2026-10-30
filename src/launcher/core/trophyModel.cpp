@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <initializer_list>
 #include <memory>
 #include <system_error>
 #include <utility>
@@ -106,14 +107,20 @@ std::string_view TrophyGradeText(TrophyGrade grade) {
 	return {};
 }
 
-int ProgressPercent(std::uint64_t earned, std::uint64_t total) {
-	if (total == 0) {
-		return 0;
+int ProgressPercent(const TrophyGradeCounts& earned_by_grade,
+                    const TrophyGradeCounts& total_by_grade) {
+	// Common::Trophies::Progress counts by the Emulator's grade numbers 1-4, which TrophyGrade's
+	// values are.
+	Common::Trophies::Progress progress;
+	for (const auto grade:
+	     {TrophyGrade::Platinum, TrophyGrade::Gold, TrophyGrade::Silver, TrophyGrade::Bronze}) {
+		const auto index                                       = TrophyGradeIndex(grade);
+		progress.total_grade[static_cast<std::size_t>(grade)]  = total_by_grade[index];
+		progress.earned_grade[static_cast<std::size_t>(grade)] = earned_by_grade[index];
+		progress.total += total_by_grade[index];
+		progress.earned += earned_by_grade[index];
 	}
-	if (earned >= total) {
-		return 100;
-	}
-	return static_cast<int>(static_cast<unsigned __int128>(earned) * 100 / total);
+	return static_cast<int>(progress.Percentage());
 }
 
 TrophyViewer BuildTrophyViewer(const TrophyPackage& package, const TrophyUnlocks& unlocks,
@@ -158,7 +165,7 @@ TrophyViewer BuildTrophyViewer(const TrophyPackage& package, const TrophyUnlocks
 	viewer.total           = progress.total;
 	viewer.earned_by_grade = progress.earned_by_grade;
 	viewer.total_by_grade  = progress.total_by_grade;
-	viewer.percent         = ProgressPercent(progress.earned, progress.total);
+	viewer.percent         = ProgressPercent(progress.earned_by_grade, progress.total_by_grade);
 	return viewer;
 }
 
@@ -181,7 +188,7 @@ TrophyOverview BuildTrophyOverview(std::span<const TrophyOverviewEntry> entries)
 		row.total           = progress.total;
 		row.earned_by_grade = progress.earned_by_grade;
 		row.total_by_grade  = progress.total_by_grade;
-		row.percent         = ProgressPercent(progress.earned, progress.total);
+		row.percent         = ProgressPercent(progress.earned_by_grade, progress.total_by_grade);
 		overview.earned += row.earned;
 		AddCounts(overview.earned_by_grade, row.earned_by_grade);
 		overview.rows.push_back(std::move(row));

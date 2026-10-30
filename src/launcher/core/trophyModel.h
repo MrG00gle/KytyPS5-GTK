@@ -34,10 +34,16 @@ constexpr std::size_t TrophyGradeIndex(TrophyGrade grade) {
 	return static_cast<std::size_t>(grade) - 1;
 }
 
-// floor(100 * earned / total), at most 100, and 0 when total is 0 (Property 27). The trophy viewer
-// header and the trophy overview rows both use it (plan D19); the Qt launcher showed
-// Common::Trophies::Progress::Percentage(), which weights the grades by points.
-int ProgressPercent(std::uint64_t earned, std::uint64_t total);
+// The grade-weighted progress of Property 27 (amended on 2026-10-30 by the user's decision):
+// floor(100 * earned_points / points), where points = 6 * gold + 2 * silver + bronze over
+// total_by_grade, earned_points is the same sum over earned_by_grade, platinum trophies count 0,
+// and the result is 0 when points is 0. It fills a Common::Trophies::Progress and returns its
+// Percentage() (uint32 arithmetic, as the Emulator and the Qt launcher), so the trophy viewer
+// header and the trophy overview rows show what the PS5 and the Qt launcher show. The counts must
+// satisfy earned_by_grade[g] <= total_by_grade[g], as BuildTrophyViewer and BuildTrophyOverview
+// count them; the result is then 0-100.
+int ProgressPercent(const TrophyGradeCounts& earned_by_grade,
+                    const TrophyGradeCounts& total_by_grade);
 
 // The placeholder that replaces the name and the description of a hidden trophy while it is locked
 // and the user has not revealed it (Requirement 11.1); the Qt launcher's "Hidden trophy".
@@ -121,7 +127,7 @@ struct TrophyViewer {
 	std::string            title;
 	std::uint32_t          earned  = 0; // trophies of the package whose ID is unlocked
 	std::uint32_t          total   = 0; // trophies of the package
-	int                    percent = 0; // ProgressPercent(earned, total)
+	int                    percent = 0; // ProgressPercent(earned_by_grade, total_by_grade)
 	TrophyGradeCounts      earned_by_grade {};
 	TrophyGradeCounts      total_by_grade {};
 	std::vector<TrophyRow> trophies; // every trophy of the package, in package order
@@ -157,7 +163,7 @@ struct TrophyOverviewRow {
 	std::string       title_id;
 	std::uint32_t     earned  = 0; // over all of the entry's packages
 	std::uint32_t     total   = 0;
-	int               percent = 0; // ProgressPercent(earned, total)
+	int               percent = 0; // ProgressPercent(earned_by_grade, total_by_grade)
 	TrophyGradeCounts earned_by_grade {};
 	TrophyGradeCounts total_by_grade {};
 

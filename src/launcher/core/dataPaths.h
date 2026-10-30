@@ -38,10 +38,13 @@ ResolvedPaths ResolvePaths(const Environment& env, const std::filesystem::path& 
 std::filesystem::path SettingsDirectory(const ResolvedPaths& paths);
 
 // Launcher data files and directories directly below the Data_Directory (Requirement 12.6):
-// compatibility_cache.json, _Patches (cheat files), _Trophies, and _SaveData.
+// compatibility_cache.json (CompatibilityLoader's cache), _Patches (cheat files), and _SaveData.
+// Trophy data is the Emulator's and lives where Common::Trophies::UnlocksPath(data_dir, title_id,
+// user_id, service_label) puts it, <data_dir>/_Trophies/<title_id>/
+// trophies_<user_id>_<service_label>.json; LoadGameTrophies (trophyModel.h) reads it through that
+// function, so the launcher has no accessor of its own for it.
 std::filesystem::path CompatibilityCachePath(const std::filesystem::path& data_dir);
 std::filesystem::path CheatDirectory(const std::filesystem::path& data_dir);
-std::filesystem::path TrophyDataDirectory(const std::filesystem::path& data_dir);
 std::filesystem::path SaveDataDirectory(const std::filesystem::path& data_dir);
 
 // The working directory of the Emulator process: the Data_Directory (Requirement 12.7).

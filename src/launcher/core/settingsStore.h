@@ -10,6 +10,8 @@
 //   missing or empty, and dropped on save), addons_dir, grid_view, grid_icon_width;
 // - [MainDialog] check_updates_on_startup, and theme and geometry, kept as their raw INI text;
 // - [LauncherWindow] width, height, maximized (new);
+// - [SettingsWindow] width, height, maximized (new; the settings editor's size, LFI-47; the Qt
+//   launcher's [ConfigurationEditDialog] geometry is an unknown key, kept but not read);
 // - [GlobalConfiguration] every <field> except input_mapping_custom, plus the GlobalOnlyFields();
 // - [GameConfigurations] size and, for each element N from 1 to size, N\name, N\basedir,
 //   N\game_path, N\custom_settings, and N\<field>.
@@ -19,9 +21,9 @@
 // grid_icon_width outside 128-320 or not a multiple of 16, a window size below 1, a controller
 // color that is not #RRGGBB) the default value and lists it in LoadReport::defaulted_keys, except:
 // - optional keys, which Qt never wrote, give the default without a report when they are missing
-//   (and are reported when present but invalid): LauncherWindow/*, GameConfigurations/N/
-//   input_mapping_custom, and, in a legacy store (game_dirs missing, game_dir present),
-//   Launcher/addons_dir, grid_view, and grid_icon_width;
+//   (and are reported when present but invalid): LauncherWindow/*, SettingsWindow/*,
+//   GameConfigurations/N/input_mapping_custom, and, in a legacy store (game_dirs missing,
+//   game_dir present), Launcher/addons_dir, grid_view, and grid_icon_width;
 // - MainDialog/theme and MainDialog/geometry are kept as they are, or stay absent;
 // - controller integers are clamped (Requirement 9.12), not defaulted; only an unparsable one is
 //   reported;
@@ -73,8 +75,9 @@ inline constexpr uint64_t kMaxSettingsFileBytes = uint64_t {16} << 20u;
 // 128-320 in steps of 16 (Requirement 7.11).
 bool IsValidGridIconWidth(int64_t width);
 
-// [LauncherWindow]: the main window's size and maximized state (LFI-47; the position is the
-// compositor's).
+// [LauncherWindow] and [SettingsWindow]: a window's size and maximized state (LFI-47; the position
+// is the compositor's). The defaults are the main window's; the settings window's are in
+// LauncherSettings::settings_window.
 struct LauncherWindowState {
 	int32_t width     = 1100;
 	int32_t height    = 720;
@@ -111,7 +114,9 @@ struct LauncherSettings {
 	bool                       check_updates_on_startup = true;
 	std::optional<std::string> theme;
 	std::optional<std::string> geometry;
-	LauncherWindowState        window;
+	// [LauncherWindow]: the main window; [SettingsWindow]: the settings editor (default 900x700).
+	LauncherWindowState window;
+	LauncherWindowState settings_window {900, 700, false};
 	// [GlobalConfiguration]; global.input_mapping_custom is not stored and loads as false.
 	GameConfiguration  global;
 	ControllerSettings controller;
@@ -127,7 +132,7 @@ struct LoadReport {
 	LauncherSettings settings;
 	// The keys that got their default, as "<group>/<key>" or "GameConfigurations/<N>/<key>" (N as
 	// in the file), in the order they are checked: [Launcher], [MainDialog], [LauncherWindow],
-	// [GlobalConfiguration], then each element.
+	// [SettingsWindow], [GlobalConfiguration], then each element.
 	std::vector<std::string> defaulted_keys;
 };
 
@@ -168,7 +173,11 @@ SettingsStoreFile OpenSettingsStore(const std::filesystem::path& ini);
 
 // SaveSettings(store.path, settings). While load_error is set and the overwrite is not confirmed,
 // nothing is written and the IoError has the path, load_error's errno, and a message naming the
-// path and the reason. A successful save clears load_error.
+// path and the reason. Otherwise the missing parent directories of store.path are created first
+// (std::filesystem::create_directories, modes from the umask), inside the Flatpak_Sandbox and
+// outside it, so the first save into a fresh XDG_CONFIG_HOME works; when that fails nothing is
+// written and the IoError has store.path, the errno, and "cannot create the directory <dir>:
+// <reason>" (a parent that is a regular file gives ENOTDIR). A successful save clears load_error.
 Expected<void, IoError> SaveSettingsStore(SettingsStoreFile&      store,
                                           const LauncherSettings& settings);
 
@@ -220,7 +229,7 @@ struct EffectiveConfiguration {
 };
 
 // cheat_plan is the game's _Patches/<TITLE_ID>.json when the caller found that file
-// (CheatFilePath, task 16.1); this function does not look at the file system.
+// (FindCheatPlan in emulatorArguments.h); this function does not look at the file system.
 EffectiveConfiguration
 ResolveEffectiveConfiguration(const LauncherSettings& settings, const GameEntry& entry,
                               std::optional<std::filesystem::path> cheat_plan);

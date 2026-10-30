@@ -39,6 +39,11 @@ public:
 	virtual void InstallFinished()        = 0;
 };
 
+// install_dir, helper, and working_dir must be absolute paths: tar and the helper run with the
+// workspace as their working directory, so a relative path would name something else there.
+// Check() and Install() refuse a configuration with a relative or empty one (Failed with
+// "The update configuration is invalid: <field> must be an absolute path (<value>).") before any
+// request, gate call, or workspace step.
 struct UpdateSessionConfig {
 	std::string           installed_tag;     // the release tag of this build (KYTY_RELEASE_TAG)
 	std::filesystem::path install_dir;       // the installation directory, updated in place
@@ -119,11 +124,14 @@ public:
 
 	// Fetches the latest release and, when its tag differs from config.installed_tag, the
 	// installed release; ends in Offering (the latest release was published later and has a
-	// package), NoNewer (same tag, or not published later), or Failed (the reason). Ignored while
-	// a check or an installation runs and after Handoff.
+	// package), NoNewer (same tag, or not published later), or Failed (the reason; at once, without
+	// a request, when the configuration has a relative path). Ignored while a check or an
+	// installation runs and after Handoff.
 	void Check(bool user_activated);
 
-	// In Offering only: refused with kCloseGameMessage (state stays Offering) while
+	// Failed at once, in any state, when the configuration has a relative path (Check() refuses
+	// such a configuration too, so the session never offers anything with one). Otherwise in
+	// Offering only: refused with kCloseGameMessage (state stays Offering) while
 	// gate.CanInstallUpdate() is false; otherwise gate.InstallStarted(), the workspace, the
 	// download (Downloading), tar -xzf (Extracting), kyty_updater --validate (Validating), a
 	// second gate check, and kyty_updater --install started detached (Handoff: quit now). Any

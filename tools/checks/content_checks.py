@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository content checks for the removed platforms (task 8.3).
+"""Repository content checks for the removed platforms (task 8.3) and the GTK settings rule.
 
 Usage:
     content_checks.py --repo DIR --check ID
@@ -30,6 +30,12 @@ match is printed as `path:line: text`. The checks mirror the phase 2 scans:
                      Apple-only files.
     vscode_patterns  Requirement 3.7: the Windows patterns (case-insensitive)
                      in .vscode/.
+    gtk_settings_save
+                     Z3 / phase 6 rule: no call of kyty::core::SaveSettings
+                     (a SaveSettings name followed by "(") in src/launcher/gtk/.
+                     The GTK launcher saves Kyty.ini only through
+                     SaveSettingsStore, which refuses to replace a file that
+                     exists but could not be loaded.
 
 The forbidden terms are built from adjacent string literals, so that this file,
 which is inside the scanned scope, does not contain them.
@@ -90,6 +96,8 @@ VSCODE_PATTERN = ("cppvs" "dbg|" r"\.ex" r"e\b|(?:^|[^a-z])[a-z]:[/\\]|\\|"
                   "vc" "vars|VsDev" "Cmd|ms" "vc|windows" "-")
 TOP_CMAKE_FILES = ("CMakeLists.txt", "3rdparty/CMakeLists.txt",
                    "3rdparty/cpuinfo/CMakeLists.txt")
+# A call of SaveSettings (not SaveSettingsStore): the name as a whole word, then "(".
+SETTINGS_SAVE_PATTERN = rf"(?<![{WORD_CHARS}])SaveSettings\s*\("
 
 
 class RepoError(Exception):
@@ -175,6 +183,9 @@ CHECKS = {
     "vscode_patterns": (
         "3.7", "Windows patterns in .vscode/",
         [(under(".vscode"), re.compile(VSCODE_PATTERN, re.IGNORECASE | re.ASCII))], False),
+    "gtk_settings_save": (
+        "Z3 / phase 6 rule", "SaveSettings calls in src/launcher/gtk/ (use SaveSettingsStore)",
+        [(under("src/launcher/gtk"), re.compile(SETTINGS_SAVE_PATTERN))], False),
 }
 
 

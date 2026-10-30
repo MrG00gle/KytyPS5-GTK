@@ -1,22 +1,23 @@
 // Example tests of the trophy views (src/launcher/core/trophyModel.h, task 16.1; Requirements 11.1
-// and 11.2): grade texts, progress percentages, the viewer rows with the hidden-trophy placeholder,
-// the overview rows, and the loader over real trophy packages built at test time
+// and 11.2): grade texts, grade-weighted progress percentages (Property 27 as amended on
+// 2026-10-30, compared with Common::Trophies::Progress), the viewer rows with the hidden-trophy
+// placeholder, the overview rows, and the loader over real trophy packages built at test time
 // (tests/support/contentGenerators.h) in a game directory and in a .zar packed with
-// Common::PackArchive, with unlock files written through Common::Trophies::SaveUnlockData.
+// Common::PackArchive, with unlock files written through Common::Trophies::SaveUnlockData where
+// Common::Trophies::UnlocksPath puts them.
 
 #include "common/archive.h"
 #include "common/trophies.h"
-#include "launcher/core/dataPaths.h"
 #include "launcher/core/trophyModel.h"
 #include "support/contentGenerators.h"
 #include "support/noDisplay.h"
 #include "support/tempDir.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <limits>
 #include <optional>
 #include <set>
 #include <string>
@@ -110,20 +111,47 @@ void TestGradeTexts() {
 	      "grade indexes");
 }
 
+std::string CountsText(const kyty::core::TrophyGradeCounts& counts) {
+	return "{" + std::to_string(counts[0]) + ", " + std::to_string(counts[1]) + ", " +
+	       std::to_string(counts[2]) + ", " + std::to_string(counts[3]) + "}";
+}
+
+// Property 27 (amended): floor(100 * earned_points / points), gold 6, silver 2, bronze 1, platinum
+// 0, and 0 when points is 0. Counts are {platinum, gold, silver, bronze}.
 void TestProgressPercent() {
-	constexpr auto kMax = std::numeric_limits<std::uint64_t>::max();
+	using Counts = kyty::core::TrophyGradeCounts;
 	struct Case {
-		std::uint64_t earned;
-		std::uint64_t total;
-		int           percent;
+		Counts      earned;
+		Counts      total;
+		int         percent;
+		const char* what;
 	};
-	for (const Case& c: {Case {0, 0, 0}, Case {5, 0, 0}, Case {0, 1, 0}, Case {1, 3, 33},
-	                     Case {2, 3, 66}, Case {1, 1, 100}, Case {3, 2, 100}, Case {1, 100, 1},
-	                     Case {199, 200, 99}, Case {kMax - 1, kMax, 99}, Case {1, kMax, 0},
-	                     Case {kMax / 2, kMax, 49}, Case {kMax, kMax, 100}}) {
+	for (const Case& c: {
+	         Case {{0, 0, 0, 0}, {0, 0, 0, 0}, 0, "no trophy"},
+	         Case {{0, 0, 0, 0}, {1, 0, 0, 0}, 0, "platinum only, nothing earned"},
+	         Case {{1, 0, 0, 0}, {1, 0, 0, 0}, 0, "platinum only gives 0 (no points)"},
+	         Case {{0, 1, 0, 0}, {0, 2, 0, 0}, 50, "one gold of two golds"},
+	         Case {{0, 1, 0, 0}, {0, 1, 0, 1}, 85, "gold earned of gold and bronze: 600 / 7"},
+	         Case {{0, 0, 0, 1}, {0, 1, 0, 1}, 14, "bronze earned of gold and bronze: 100 / 7"},
+	         Case {{1, 1, 0, 0}, {1, 2, 0, 0}, 50, "an earned platinum adds nothing"},
+	         Case {{0, 0, 1, 0}, {0, 1, 1, 0}, 25, "silver earned of gold and silver: 200 / 8"},
+	         Case {{0, 0, 0, 0}, {1, 3, 5, 9}, 0, "nothing earned"},
+	         Case {{1, 3, 5, 9}, {1, 3, 5, 9}, 100, "everything earned"},
+	         Case {{0, 0, 0, 1}, {0, 0, 0, 3}, 33, "one bronze of three"},
+	         Case {{0, 0, 0, 2}, {0, 0, 0, 3}, 66, "two bronzes of three (floor)"},
+	         Case {{0, 0, 2, 0}, {0, 0, 3, 0}, 66, "two silvers of three"},
+	     }) {
 		Check(kyty::core::ProgressPercent(c.earned, c.total) == c.percent,
-		      "ProgressPercent(" + std::to_string(c.earned) + ", " + std::to_string(c.total) +
-		          ") == " + std::to_string(c.percent));
+		      std::string(c.what) + ": ProgressPercent(" + CountsText(c.earned) + ", " +
+		          CountsText(c.total) + ") == " + std::to_string(c.percent));
+		// The Emulator's own rule, through the same counts.
+		Common::Trophies::Progress progress;
+		for (std::size_t i = 0; i < c.total.size(); i++) {
+			progress.total_grade[i + 1]  = c.total[i];
+			progress.earned_grade[i + 1] = c.earned[i];
+		}
+		Check(static_cast<int>(progress.Percentage()) == c.percent,
+		      std::string(c.what) + ": Common::Trophies::Progress::Percentage() agrees");
 	}
 }
 
@@ -136,8 +164,9 @@ void TestViewer() {
 	const auto viewer     = kyty::core::BuildTrophyViewer(package, unlocks, {12});
 
 	Check(viewer.file_name == "trophy00.ucp" && viewer.title == "Test game", "viewer title");
-	Check(viewer.total == 6 && viewer.earned == 2 && viewer.percent == 33,
-	      "2 of 6 earned (unlock ID 999 is not in the package), 33 %");
+	Check(viewer.total == 6 && viewer.earned == 2 && viewer.percent == 18,
+	      "2 of 6 earned (unlock ID 999 is not in the package): the platinum and the silver, 2 of "
+	      "11 points, 18 % (unweighted it would be 33 %)");
 	Check(viewer.total_by_grade == kyty::core::TrophyGradeCounts {1, 1, 1, 3} &&
 	          viewer.earned_by_grade == kyty::core::TrophyGradeCounts {1, 0, 1, 0},
 	      "counts per grade");
@@ -216,8 +245,10 @@ void TestOverview() {
 	Check(overview.rows.size() == 3, "rows only for entries with trophies");
 	const auto& alpha = overview.rows[0];
 	Check(alpha.entry_index == 0 && alpha.name == "Alpha" && alpha.title_id == "PPSA00001" &&
-	          alpha.earned == 3 && alpha.total == 8 && alpha.percent == 37,
-	      "the packages of an entry add up: 3 of 8, 37 %");
+	          alpha.earned == 3 && alpha.total == 8 && alpha.percent == 16,
+	      "the packages of an entry add up: 3 of 8 trophies, 3 of 18 points (2 gold, 1 silver, 4 "
+	      "bronze; the platinum, a silver, and a bronze earned), 16 % (unweighted it would be "
+	      "37 %)");
 	Check(alpha.total_by_grade == kyty::core::TrophyGradeCounts {1, 2, 1, 4} &&
 	          alpha.earned_by_grade == kyty::core::TrophyGradeCounts {1, 0, 1, 1},
 	      "grade counts over both packages");
@@ -296,8 +327,11 @@ void TestLoadDirectory() {
 	          ContentGen::WriteUnlocks(data_dir, kTitleId, kUserId, 1, dlc_unlocks) &&
 	          ContentGen::WriteUnlocks(data_dir, kTitleId, 2000, 10, ten_unlocks),
 	      "write unlock files");
-	Check(fs::exists(kyty::core::TrophyDataDirectory(data_dir) / kTitleId / "trophies_1000_0.json"),
-	      "unlock files live in TrophyDataDirectory/<title>");
+	const auto unlocks_path = Common::Trophies::UnlocksPath(data_dir, kTitleId, kUserId, 0);
+	Check(unlocks_path == data_dir / "_Trophies" / kTitleId / "trophies_1000_0.json" &&
+	          fs::exists(unlocks_path),
+	      "unlock files live where Common::Trophies::UnlocksPath puts them, "
+	      "<data_dir>/_Trophies/<title>");
 
 	GameEntry entry;
 	entry.path      = temp.Path() / "game";

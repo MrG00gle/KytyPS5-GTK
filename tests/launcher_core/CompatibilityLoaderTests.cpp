@@ -9,6 +9,7 @@
 
 #include "launcher/core/atomicFile.h"
 #include "launcher/core/compatibility.h"
+#include "launcher/core/dataPaths.h"
 #include "launcher/core/httpClient.h"
 #include "launcher/core/retrySchedule.h"
 #include "support/fakeHttpClient.h"
@@ -144,7 +145,10 @@ struct Harness {
 		        [this](CompatibilityLoadResult result) { results.push_back(std::move(result)); }});
 	}
 
-	[[nodiscard]] fs::path CachePath() const { return dir.Path() / "compatibility_cache.json"; }
+	// The cache file, where dataPaths.h puts it (DataPathsTests checks its literal path).
+	[[nodiscard]] fs::path CachePath() const {
+		return kyty::core::CompatibilityCachePath(dir.Path());
+	}
 
 	const CompatibilityLoadResult& Run() {
 		loader->Start();
@@ -168,6 +172,8 @@ struct Harness {
 			Check(request.stall_timeout == milliseconds {0}, what + ": no stall limit");
 			Check(request.headers.size() == 1 && request.headers[0].first == "User-Agent",
 			      what + ": the User-Agent header");
+			Check(request.redirects == kyty::core::RedirectPolicy::HttpsOnly,
+			      what + ": redirects to any https URL (the default policy)");
 		}
 		const std::vector<milliseconds> all = {milliseconds {750}, milliseconds {1500},
 		                                       milliseconds {2250}};
@@ -206,7 +212,11 @@ void TestSuccessOnAttempt() {
 		Check(result.last_failure.empty(), what + ": no failure");
 		Check(*result.database == *kyty::core::ParseCompatibility(kValidBody),
 		      what + ": the downloaded database");
-		Check(ReadCache(harness.CachePath()) == kValidBody, what + ": the cache holds the body");
+		Check(ReadCache(harness.CachePath()) == kValidBody,
+		      what + ": the cache file at CompatibilityCachePath(data_dir) holds the body");
+		Check(harness.loader->CachePath() == harness.CachePath() &&
+		          harness.CachePath() == harness.dir.Path() / "compatibility_cache.json",
+		      what + ": the loader's cache path");
 		Check(harness.warnings.size() == success - 1, what + ": one warning per failed attempt");
 		for (size_t i = 0; i < harness.warnings.size(); i++) {
 			Check(Contains(harness.warnings[i],
@@ -377,8 +387,8 @@ void TestCacheWriteFailure() {
 	          Contains(harness.warnings[0], "Cannot replace the compatibility cache"),
 	      "a missing data directory is a warning only");
 	Check(harness.loader->CachePath() ==
-	          harness.dir.Path() / "missing" / kyty::core::kCompatibilityCacheFileName,
-	      "CachePath()");
+	          kyty::core::CompatibilityCachePath(harness.dir.Path() / "missing"),
+	      "CachePath() is CompatibilityCachePath(data_dir)");
 }
 
 void TestEarlierStatusesKept() {

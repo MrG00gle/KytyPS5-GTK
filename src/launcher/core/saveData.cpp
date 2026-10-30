@@ -1,7 +1,6 @@
 #include "launcher/core/saveData.h"
 
 #include "launcher/core/dataPaths.h"
-#include "launcher/core/titleId.h"
 
 #include <algorithm>
 #include <utility>
@@ -73,12 +72,11 @@ PathRemover& HostPathRemover() {
 }
 
 Expected<fs::path, std::string> SaveDataPath(const fs::path& data_dir, std::string_view title_id) {
-	auto title = NormalizeTitleId(title_id);
-	if (!IsOneComponent(title)) {
-		return MakeUnexpected("The title ID \"" + title +
+	if (!IsOneComponent(title_id)) {
+		return MakeUnexpected("The title ID \"" + std::string(title_id) +
 		                      "\" does not name a save data directory.");
 	}
-	return SaveDataDirectory(data_dir) / title;
+	return SaveDataDirectory(data_dir) / title_id;
 }
 
 Expected<std::vector<fs::path>, std::string> ListSaveData(const fs::path&  data_dir,

@@ -3,6 +3,7 @@
 // portable Kyty.ini; the path accessors; and EnsureWritableDirectory, with unwritable directories
 // simulated by injected failures, never by permissions.
 
+#include "common/trophies.h"
 #include "launcher/core/dataPaths.h"
 #include "support/fakeEnvironment.h"
 #include "support/noDisplay.h"
@@ -202,8 +203,13 @@ void TestAccessors() {
 	Check(kyty::core::CompatibilityCachePath(data) == "/data/Kyty/compatibility_cache.json",
 	      "CompatibilityCachePath");
 	Check(kyty::core::CheatDirectory(data) == "/data/Kyty/_Patches", "CheatDirectory");
-	Check(kyty::core::TrophyDataDirectory(data) == "/data/Kyty/_Trophies", "TrophyDataDirectory");
 	Check(kyty::core::SaveDataDirectory(data) == "/data/Kyty/_SaveData", "SaveDataDirectory");
+	// Trophy data is where the Emulator's Common::Trophies::UnlocksPath puts it: in _Trophies
+	// directly below the Data_Directory.
+	const auto unlocks = Common::Trophies::UnlocksPath(data, "PPSA00001", 1000, 0);
+	Check(unlocks.native() == "/data/Kyty/_Trophies/PPSA00001/trophies_1000_0.json" &&
+	          unlocks.parent_path().parent_path() == data / "_Trophies",
+	      "trophy unlock data below <data_dir>/_Trophies: " + unlocks.string());
 
 	ResolvedPaths paths;
 	paths.settings_file = "/config/Kyty/Kyty.ini";

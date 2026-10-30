@@ -5,7 +5,10 @@
 
 #include <cerrno>
 #include <cstdlib>
+#include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <system_error>
@@ -103,6 +106,22 @@ std::optional<std::string> DescribeStepFailure(std::string_view step, const Proc
 		return message + ".";
 	}
 	return message + ":\n" + result.standard_error;
+}
+
+// Why config cannot be used: the first of install_dir, helper, and working_dir that is not an
+// absolute path (an empty path is not one either); nullopt when all three are.
+std::optional<std::string> ConfigurationError(const UpdateSessionConfig& config) {
+	const std::pair<std::string_view, const fs::path*> fields[] = {
+	    {"install_dir", &config.install_dir},
+	    {"helper", &config.helper},
+	    {"working_dir", &config.working_dir}};
+	for (const auto& [name, path]: fields) {
+		if (!path->is_absolute()) {
+			return "The update configuration is invalid: " + std::string(name) +
+			       " must be an absolute path (" + path->string() + ").";
+		}
+	}
+	return std::nullopt;
 }
 
 // A check or an installation step runs, or the helper took over.
@@ -233,6 +252,10 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 		latest.reset();
 		offered    = false;
 		downloaded = 0;
+		if (auto error = ConfigurationError(config)) {
+			Fail(std::move(*error));
+			return;
+		}
 		Begin(SessionState::FetchingLatest,
 		      [this] { FetchRelease(LatestReleaseUrl(), &Impl::LatestFetched); });
 	}
@@ -350,6 +373,12 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 	// ---- Install
 
 	void Install() {
+		// Refused in any state: Check() never runs or offers with such a configuration, so the
+		// session is in Idle or Failed here and nothing needs stopping.
+		if (auto error = ConfigurationError(config)) {
+			Fail(std::move(*error));
+			return;
+		}
 		if (state != SessionState::Offering) {
 			return;
 		}

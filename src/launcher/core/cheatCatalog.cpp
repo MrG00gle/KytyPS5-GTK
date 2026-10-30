@@ -162,6 +162,7 @@ HttpRequest CheatRequest(std::string url, uint64_t max_bytes) {
 	request.headers       = {{"User-Agent", kCheatUserAgent}};
 	request.max_bytes     = max_bytes;
 	request.total_timeout = kCheatRequestTimeout;
+	request.redirects     = RedirectPolicy::SameOrigin;
 	return request;
 }
 

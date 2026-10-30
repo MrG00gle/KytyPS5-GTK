@@ -1,8 +1,9 @@
 // Example tests of save data listing and removal (src/launcher/core/saveData.h, task 16.3;
-// Requirement 11.13; plan D21): the title ID safety rule, the directories listed for the
-// confirmation dialog, removal confined to _SaveData/<TITLE_ID> with links removed and never
-// followed, and every path that could not be deleted, with failures injected through
-// KytyTests::ContentGen::FailingRemover (never through permissions).
+// Requirement 11.13; plan D21): the title ID used as given (no trimming, no upper-casing, as the
+// Emulator writes it) and its safety rule, the directories listed for the confirmation dialog,
+// removal confined to _SaveData/<TITLE_ID> with links removed and never followed (a case variant
+// of the title ID is another directory), and every path that could not be deleted, with failures
+// injected through KytyTests::ContentGen::FailingRemover (never through permissions).
 
 #include "launcher/core/dataPaths.h"
 #include "launcher/core/saveData.h"
@@ -59,34 +60,47 @@ void MakeDataDirectory(const KytyTests::TempDir& temp) {
 }
 
 void TestSaveDataPath() {
-	const auto path = kyty::core::SaveDataPath("/data", " ppsa01234\t");
-	Check(path && path->native() == "/data/_SaveData/PPSA01234",
-	      "<data_dir>/_SaveData/<TITLE_ID> with the title ID normalized");
+	const auto path = kyty::core::SaveDataPath("/data", "PPSA01234");
+	Check(path && path->native() == "/data/_SaveData/PPSA01234", "<data_dir>/_SaveData/<TITLE_ID>");
 	Check(*path == kyty::core::SaveDataDirectory("/data") / "PPSA01234", "below SaveDataDirectory");
-	Check(kyty::core::SaveDataPath("/data", "...")->native() == "/data/_SaveData/...",
-	      "'...' is one path component");
+	// The title ID as given, as the Emulator writes it (src/libs/libSaveData.cpp): no trimming, no
+	// upper-casing.
 	for (const std::string_view title:
-	     {std::string_view(""), std::string_view("   "), std::string_view("."),
-	      std::string_view(".."), std::string_view(" .. "), std::string_view("a/b"),
-	      std::string_view("/"), std::string_view("../PPSA01234"), std::string_view("PPSA01234/"),
-	      std::string_view("PPSA\0x", 6)}) {
+	     {"ppsa01234", "PpSa01234", " PPSA01234", "PPSA01234 ", " ppsa01234\t", "   ", " .. ",
+	      "...", "CUSA00001_00", "a.b@c-d", "\xC3\xA9t\xC3\xA9"}) {
+		const auto as_given = kyty::core::SaveDataPath("/data", title);
+		Check(as_given && as_given->native() == "/data/_SaveData/" + std::string(title),
+		      "'" + std::string(title) + "' is used as given");
+	}
+	for (const std::string_view title:
+	     {std::string_view(""), std::string_view("."), std::string_view(".."),
+	      std::string_view("a/b"), std::string_view("/"), std::string_view("../PPSA01234"),
+	      std::string_view("PPSA01234/"), std::string_view(" ../x"), std::string_view("PPSA\0x", 6),
+	      std::string_view("\0", 1)}) {
 		const auto refused = kyty::core::SaveDataPath("/data", title);
 		Check(!refused &&
 		          refused.error().find("does not name a save data directory") != std::string::npos,
 		      "'" + std::string(title) + "' is refused");
 	}
-	Check(kyty::core::SaveDataPath("/data", "a/b").error() ==
-	          "The title ID \"A/B\" does not name a save data directory.",
-	      "the refusal names the normalized title ID");
+	Check(kyty::core::SaveDataPath("/data", "ppsa/b").error() ==
+	          "The title ID \"ppsa/b\" does not name a save data directory.",
+	      "the refusal names the title ID as given");
 }
 
 void TestList() {
 	const KytyTests::TempDir temp("kyty_save_data");
 	MakeDataDirectory(temp);
 	const auto data   = temp.Path() / "data";
-	const auto listed = kyty::core::ListSaveData(data, "ppsa01234 ");
+	const auto listed = kyty::core::ListSaveData(data, "PPSA01234");
 	Check(listed && *listed == std::vector<fs::path> {data / "_SaveData/PPSA01234"},
 	      "an existing save data directory is listed");
+	const auto lower = kyty::core::ListSaveData(data, "ppsa01234");
+	Check(lower && *lower == std::vector<fs::path> {data / "_SaveData/ppsa01234"},
+	      "the lower-case title ID lists its own directory");
+	Check(kyty::core::ListSaveData(data, "ppsa01234 ")->empty() &&
+	          kyty::core::ListSaveData(data, " PPSA01234")->empty() &&
+	          kyty::core::ListSaveData(data, "Ppsa01234")->empty(),
+	      "other spellings name directories that do not exist");
 	Check(kyty::core::ListSaveData(data, "PPSA00000")->empty(), "a title without save data");
 	Check(kyty::core::ListSaveData(data, "PPSA01234.bak")->empty(), "a file is not listed");
 	temp.MakeSymlink("PPSA05678", "data/_SaveData/PPSA00001");
@@ -112,7 +126,7 @@ void TestRemove() {
 	const auto before = ContentGen::SnapshotTree(data);
 
 	ContentGen::FailingRemover remover;
-	const auto                 removal = kyty::core::RemoveSaveData(data, "  ppsa01234 ", remover);
+	const auto                 removal = kyty::core::RemoveSaveData(data, "PPSA01234", remover);
 	Check(removal && removal->directory == title && removal->failures.empty(),
 	      "everything removed without failures");
 	Check(!fs::exists(fs::symlink_status(title)), "_SaveData/PPSA01234 is gone");
@@ -132,6 +146,39 @@ void TestRemove() {
 	const auto again = kyty::core::RemoveSaveData(data, "PPSA01234", remover);
 	Check(again && again->failures.empty() && remover.Calls().size() == 11,
 	      "removing missing save data succeeds without calling the remover");
+}
+
+// The title ID is used as given: a lower-case ID removes only its own directory, and a title ID
+// with a space names yet another directory.
+void TestRemoveCaseVariants() {
+	const KytyTests::TempDir temp("kyty_save_data");
+	MakeDataDirectory(temp);
+	temp.WriteFile("data/_SaveData/ PPSA01234/space.bin", "leading space");
+	const auto data   = temp.Path() / "data";
+	const auto before = ContentGen::SnapshotTree(data);
+
+	ContentGen::FailingRemover remover;
+	const auto                 lower = kyty::core::RemoveSaveData(data, "ppsa01234", remover);
+	Check(lower && lower->directory == data / "_SaveData/ppsa01234" && lower->failures.empty(),
+	      "the lower-case title ID removes _SaveData/ppsa01234");
+	Check(remover.Calls() == std::vector<fs::path> {data / "_SaveData/ppsa01234/lower.bin",
+	                                                data / "_SaveData/ppsa01234"},
+	      "only the lower-case directory is touched");
+	Check(ContentGen::SnapshotTree(data) == Without(before, "ppsa01234"),
+	      "_SaveData/PPSA01234 and every other path stay byte-identical");
+
+	const auto after_lower = ContentGen::SnapshotTree(data);
+	const auto spaced      = kyty::core::RemoveSaveData(data, " PPSA01234", remover);
+	Check(spaced && spaced->directory == data / "_SaveData/ PPSA01234" && spaced->failures.empty(),
+	      "' PPSA01234' with a space is a different directory");
+	Check(ContentGen::SnapshotTree(data) == Without(after_lower, " PPSA01234") &&
+	          fs::exists(data / "_SaveData/PPSA01234/0/savedata0/data.bin"),
+	      "removing it leaves _SaveData/PPSA01234 alone");
+
+	const auto mixed = kyty::core::RemoveSaveData(data, "PpSa01234", remover);
+	Check(mixed && mixed->directory == data / "_SaveData/PpSa01234" && mixed->failures.empty() &&
+	          ContentGen::SnapshotTree(data) == Without(after_lower, " PPSA01234"),
+	      "a mixed-case title ID without save data removes nothing");
 }
 
 void TestRemoveFailures() {
@@ -206,16 +253,16 @@ void TestRemoveSpecialCases() {
 	          ContentGen::SnapshotTree(data) == Without(before, "PPSA00001"),
 	      "a linked title directory: the link is removed, its target kept");
 
-	// A regular file in its place is removed; the title ID is upper-cased, so the lower-case
-	// "PPSA01234.bak" is a different path.
+	// A regular file in its place is removed; the title ID is used as given, so the upper-case
+	// "PPSA01234.BAK" is a different path from the file "PPSA01234.bak".
 	temp.WriteFile("data/_SaveData/PPSA00003.BAK", "file");
-	const auto file = kyty::core::RemoveSaveData(data, "ppsa00003.bak");
+	const auto file = kyty::core::RemoveSaveData(data, "PPSA00003.BAK");
 	Check(file && file->failures.empty() && !fs::exists(data / "_SaveData/PPSA00003.BAK"),
 	      "a file at the save data path is removed");
-	const auto lower = kyty::core::RemoveSaveData(data, "PPSA01234.bak");
-	Check(lower && lower->directory == data / "_SaveData/PPSA01234.BAK" &&
-	          lower->failures.empty() && fs::exists(data / "_SaveData/PPSA01234.bak"),
-	      "save data paths use the normalized title ID");
+	const auto upper = kyty::core::RemoveSaveData(data, "PPSA01234.BAK");
+	Check(upper && upper->directory == data / "_SaveData/PPSA01234.BAK" &&
+	          upper->failures.empty() && fs::exists(data / "_SaveData/PPSA01234.bak"),
+	      "save data paths use the title ID as given");
 
 	// Refused title IDs touch nothing.
 	before = ContentGen::SnapshotTree(data);
@@ -295,6 +342,7 @@ int main() {
 	TestSaveDataPath();
 	TestList();
 	TestRemove();
+	TestRemoveCaseVariants();
 	TestRemoveFailures();
 	TestRemoveSpecialCases();
 	TestHostRemover();

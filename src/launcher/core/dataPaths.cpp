@@ -171,10 +171,6 @@ fs::path CheatDirectory(const fs::path& data_dir) {
 	return data_dir / "_Patches";
 }
 
-fs::path TrophyDataDirectory(const fs::path& data_dir) {
-	return data_dir / "_Trophies";
-}
-
 fs::path SaveDataDirectory(const fs::path& data_dir) {
 	return data_dir / "_SaveData";
 }

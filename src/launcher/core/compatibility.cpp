@@ -1,5 +1,6 @@
 #include "launcher/core/compatibility.h"
 
+#include "launcher/core/dataPaths.h"
 #include "launcher/core/jsonErrorCapture.h"
 #include "launcher/core/retrySchedule.h"
 #include "launcher/core/text.h"
@@ -168,7 +169,7 @@ struct CompatibilityLoader::State: std::enable_shared_from_this<CompatibilityLoa
 	std::string           body;
 
 	[[nodiscard]] std::filesystem::path CachePath() const {
-		return data_dir / kCompatibilityCacheFileName;
+		return CompatibilityCachePath(data_dir);
 	}
 
 	void Warn(const std::string& message) const {

@@ -289,6 +289,7 @@ inline const std::vector<std::string>& UnknownKeys() {
 	                                              "Launcher/future_key",
 	                                              "MainDialog/other",
 	                                              "LauncherWindow/x",
+	                                              "SettingsWindow/x",
 	                                              "GlobalConfiguration/red_zone_protection_enabled",
 	                                              "GlobalConfiguration/name",
 	                                              "GlobalConfiguration/custom_settings",
@@ -329,10 +330,10 @@ inline kyty::core::IniValue UnknownValue() {
 }
 
 // Valid settings: 0-3 Game_Folders, any add-ons folder and view, a grid icon width of 128-320 in
-// steps of 16, raw theme and geometry values or none, a window size, a valid Global_Configuration
-// (input_mapping_custom false: it is not stored globally) and controller, 0-4 games with distinct
-// game paths (absolute, or now and then relative as an old Qt launcher stored them), and unknown
-// keys at the top and in the elements.
+// steps of 16, raw theme and geometry values or none, the main and the settings window sizes, a
+// valid Global_Configuration (input_mapping_custom false: it is not stored globally) and
+// controller, 0-4 games with distinct game paths (absolute, or now and then relative as an old Qt
+// launcher stored them), and unknown keys at the top and in the elements.
 inline kyty::core::LauncherSettings ValidSettings() {
 	kyty::core::LauncherSettings s;
 	const int                    folders = Choose(0, 4);
@@ -356,6 +357,7 @@ inline kyty::core::LauncherSettings ValidSettings() {
 		s.geometry = kyty::core::IniValue::FromByteArray(bytes).Raw();
 	}
 	s.window                      = {Choose(1, 5000), Choose(1, 5000), OneIn(2)};
+	s.settings_window             = {Choose(1, 5000), Choose(1, 5000), OneIn(2)};
 	s.global                      = ValidConfiguration();
 	s.global.input_mapping_custom = false;
 	s.controller                  = ValidController();

@@ -125,9 +125,10 @@ private:
 //   (750, 1500, 2250 ms) on the Scheduler after failed attempt n. An attempt fails on a network
 //   error, a status outside 200-299, a timeout, a stall, a body over the limit, or content that
 //   ParseCompatibility rejects;
-// - the first attempt whose content parses ends the run: its bytes replace
-//   <data_dir>/compatibility_cache.json through WriteFileAtomically (a write failure is only a
-//   warning) and its database is delivered (Source::Download);
+// - the first attempt whose content parses ends the run: its bytes replace the cache,
+//   CompatibilityCachePath(data_dir) (dataPaths.h: <data_dir>/compatibility_cache.json), through
+//   WriteFileAtomically (a write failure is only a warning) and its database is delivered
+//   (Source::Download);
 // - after the last failed attempt the cache is read (ReadFileLimited, kMaxCompatibilityBytes) and
 //   its database delivered when it parses (Source::Cache); else the result has no database
 //   (Source::None) and a warning names the last download failure.
@@ -156,6 +157,7 @@ public:
 	// True once on_finished has run.
 	[[nodiscard]] bool Finished() const;
 
+	// CompatibilityCachePath(data_dir).
 	[[nodiscard]] std::filesystem::path CachePath() const;
 
 private:

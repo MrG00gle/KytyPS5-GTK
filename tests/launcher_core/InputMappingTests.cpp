@@ -3,7 +3,8 @@
 // (src/graphics/presentation/window/hostInput.cpp), parsing host_input_mapping entries as the
 // Emulator reads them (defaults, Disabled entries, conflicts, the last mouse sensitivity, the first
 // known skin, unknown entries kept), the serialized order, assign, unmap, restore defaults, and
-// saving to the global or a per-game target without touching Kyty.ini before the caller saves.
+// saving to the global or a per-game target without touching Kyty.ini before the caller saves it
+// through SaveSettingsStore.
 
 #include "launcher/core/inputMapping.h"
 #include "launcher/core/keyNames.h"
@@ -453,12 +454,19 @@ void TestTargets() {
 	      "a game list with an invalid entry is refused");
 }
 
+// Kyty.ini is opened with OpenSettingsStore and saved with SaveSettingsStore, as the GTK launcher
+// does.
 void TestStoreUntouchedUntilSave() {
-	const KytyTests::TempDir     temp("kyty_input_mapping");
-	const auto                   ini = temp.Path() / "Kyty.ini";
-	kyty::core::LauncherSettings settings;
+	const KytyTests::TempDir temp("kyty_input_mapping");
+	const auto               ini     = temp.Path() / "Kyty.ini";
+	auto                     initial = kyty::core::OpenSettingsStore(ini);
+	Check(!initial.load_error, "a new Settings_Store");
+	auto settings                      = initial.loaded.settings;
 	settings.global.host_input_mapping = {"Cross=K", "Foo=Bar"};
-	Check(kyty::core::SaveSettings(ini, settings).has_value(), "the initial store");
+	Check(kyty::core::SaveSettingsStore(initial, settings).has_value(), "the initial store");
+	auto store = kyty::core::OpenSettingsStore(ini);
+	Check(!store.load_error && store.loaded.settings == settings, "the editor opens the store");
+	settings         = store.loaded.settings;
 	const auto bytes = kyty::core::ReadFileLimited(ini, kyty::core::kMaxSettingsFileBytes);
 
 	const auto game  = Game("/games/a");
@@ -471,17 +479,18 @@ void TestStoreUntouchedUntilSave() {
 	Check(bytes && unchanged && *unchanged == *bytes,
 	      "no edit and no SaveMapping touches Kyty.ini");
 
-	Check(kyty::core::SaveSettings(ini, settings).has_value(), "the caller saves");
-	const auto loaded = kyty::core::LoadSettings(ini);
-	Check(loaded.has_value(), "loads");
-	Check(kyty::core::MappingForTarget(loaded->settings, MappingTarget::Game, game) ==
+	Check(kyty::core::SaveSettingsStore(store, settings).has_value(),
+	      "the caller saves through SaveSettingsStore");
+	const auto  reopened = kyty::core::OpenSettingsStore(ini);
+	const auto& loaded   = reopened.loaded.settings;
+	Check(!reopened.load_error, "loads");
+	Check(kyty::core::MappingForTarget(loaded, MappingTarget::Game, game) ==
 	          SerializeMapping(model),
 	      "the stored mapping is the serialized model: " +
-	          Join(kyty::core::MappingForTarget(loaded->settings, MappingTarget::Game, game)));
-	Check(ParseMapping(kyty::core::MappingForTarget(loaded->settings, MappingTarget::Game, game)) ==
-	          model,
+	          Join(kyty::core::MappingForTarget(loaded, MappingTarget::Game, game)));
+	Check(ParseMapping(kyty::core::MappingForTarget(loaded, MappingTarget::Game, game)) == model,
 	      "and parses back to the model");
-	Check(loaded->settings.global.host_input_mapping == Entries {"Cross=K", "Foo=Bar"},
+	Check(loaded.global.host_input_mapping == Entries {"Cross=K", "Foo=Bar"},
 	      "the global list is unchanged");
 }
 

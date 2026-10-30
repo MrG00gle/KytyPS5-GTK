@@ -7,10 +7,11 @@
 // set of revealed IDs. BuildTrophyViewer must list every trophy in package order with its grade
 // text and lock state; the name and description are the package values, except for hidden trophies
 // that are locked and not revealed, which show "Hidden trophy" for both (and no reward text or
-// icon); the counts and the percentage follow the unlocked IDs of the package. In about one case in
-// four the package and its unlock file are also written for real
-// (tests/support/contentGenerators.h) and read through LoadGameTrophies, which must give the same
-// package and unlock data, or one error naming the file when the package has no trophy.
+// icon); the counts and the grade-weighted percentage (Property 27 as amended on 2026-10-30)
+// follow the unlocked IDs of the package. In about one case in four the package and its unlock
+// file are also written for real (tests/support/contentGenerators.h) and read through
+// LoadGameTrophies, which must give the same package and unlock data, or one error naming the file
+// when the package has no trophy.
 
 #include "common/trophies.h"
 #include "launcher/core/trophyModel.h"
@@ -170,12 +171,24 @@ std::string GradeName(TrophyGrade grade) {
 	return "?";
 }
 
+std::uint32_t GradePoints(TrophyGrade grade) {
+	switch (grade) {
+		case TrophyGrade::Platinum: return 0;
+		case TrophyGrade::Gold: return 6;
+		case TrophyGrade::Silver: return 2;
+		case TrophyGrade::Bronze: return 1;
+	}
+	return 0;
+}
+
 void CheckViewer(const kyty::core::TrophyPackage& package, const kyty::core::TrophyUnlocks& unlocks,
                  const std::set<int>& revealed, bool& any_masked) {
 	const auto viewer = kyty::core::BuildTrophyViewer(package, unlocks, revealed);
 	RC_ASSERT(viewer.title == package.title);
 	RC_ASSERT(viewer.trophies.size() == package.trophies.size());
-	std::uint32_t earned = 0;
+	std::uint32_t earned        = 0;
+	std::uint32_t points        = 0;
+	std::uint32_t earned_points = 0;
 	for (std::size_t i = 0; i < package.trophies.size(); i++) {
 		const auto& trophy = package.trophies[i];
 		const auto& row    = viewer.trophies[i];
@@ -213,11 +226,14 @@ void CheckViewer(const kyty::core::TrophyPackage& package, const kyty::core::Tro
 			RC_ASSERT(!row.earned_unix_ms.has_value());
 		}
 		earned += locked ? 0 : 1;
+		const std::uint32_t trophy_points = GradePoints(trophy.grade);
+		points += trophy_points;
+		earned_points += locked ? 0 : trophy_points;
 	}
 	RC_ASSERT(viewer.earned == earned);
 	RC_ASSERT(viewer.total == package.trophies.size());
-	RC_ASSERT(viewer.percent ==
-	          (package.trophies.empty() ? 0 : static_cast<int>(earned * 100 / viewer.total)));
+	// The grade-weighted percentage of Property 27: gold 6, silver 2, bronze 1, platinum 0 points.
+	RC_ASSERT(viewer.percent == (points == 0 ? 0 : static_cast<int>(earned_points * 100 / points)));
 }
 
 } // namespace

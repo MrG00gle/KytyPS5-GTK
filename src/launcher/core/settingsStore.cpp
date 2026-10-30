@@ -18,6 +18,7 @@ namespace {
 constexpr std::string_view kLauncher           = "Launcher/";
 constexpr std::string_view kMainDialog         = "MainDialog/";
 constexpr std::string_view kLauncherWindow     = "LauncherWindow/";
+constexpr std::string_view kSettingsWindow     = "SettingsWindow/";
 constexpr std::string_view kGlobal             = "GlobalConfiguration/";
 constexpr std::string_view kGameConfigurations = "GameConfigurations";
 constexpr std::string_view kElementPrefix      = "GameConfigurations/";
@@ -67,8 +68,10 @@ void RemoveSchemaKeys(IniFile& file) {
 	for (const auto name: {"check_updates_on_startup", "theme", "geometry"}) {
 		file.Remove(Key(kMainDialog, name));
 	}
-	for (const auto name: {"width", "height", "maximized"}) {
-		file.Remove(Key(kLauncherWindow, name));
+	for (const auto window: {kLauncherWindow, kSettingsWindow}) {
+		for (const auto name: {"width", "height", "maximized"}) {
+			file.Remove(Key(window, name));
+		}
 	}
 	for (const auto& field: GameConfigurationFields()) {
 		if (field.name != kInputMappingCustomField) {
@@ -230,11 +233,18 @@ void LoadMainDialog(const IniFile& file, Loader& loader, LauncherSettings& setti
 	settings.geometry = file.GetRaw(Key(kMainDialog, "geometry"));
 }
 
-void LoadLauncherWindow(Loader& loader, LauncherSettings& settings) {
+// [LauncherWindow] or [SettingsWindow]: optional keys, a size of at least 1.
+void LoadWindow(Loader& loader, std::string_view group, LauncherWindowState& window) {
 	const auto positive = [](int64_t value) { return value >= 1; };
-	loader.Int(Key(kLauncherWindow, "width"), true, settings.window.width, positive);
-	loader.Int(Key(kLauncherWindow, "height"), true, settings.window.height, positive);
-	loader.Bool(Key(kLauncherWindow, "maximized"), true, settings.window.maximized);
+	loader.Int(Key(group, "width"), true, window.width, positive);
+	loader.Int(Key(group, "height"), true, window.height, positive);
+	loader.Bool(Key(group, "maximized"), true, window.maximized);
+}
+
+void WriteWindow(IniFile& out, std::string_view group, const LauncherWindowState& window) {
+	out.SetString(Key(group, "width"), std::to_string(window.width));
+	out.SetString(Key(group, "height"), std::to_string(window.height));
+	out.SetString(Key(group, "maximized"), FormatBoolText(window.maximized));
 }
 
 void LoadGlobal(Loader& loader, LauncherSettings& settings) {
@@ -364,7 +374,8 @@ LoadReport ParseSettings(std::string_view bytes) {
 	auto&         settings = report.settings;
 	LoadLauncher(file, loader, settings);
 	LoadMainDialog(file, loader, settings);
-	LoadLauncherWindow(loader, settings);
+	LoadWindow(loader, kLauncherWindow, settings.window);
+	LoadWindow(loader, kSettingsWindow, settings.settings_window);
 	LoadGlobal(loader, settings);
 	LoadGames(file, loader, settings);
 	settings.unknown = file;
@@ -390,9 +401,8 @@ std::string SerializeSettings(const LauncherSettings& settings) {
 		out.SetRaw(Key(kMainDialog, "geometry"), *settings.geometry);
 	}
 
-	out.SetString(Key(kLauncherWindow, "width"), std::to_string(settings.window.width));
-	out.SetString(Key(kLauncherWindow, "height"), std::to_string(settings.window.height));
-	out.SetString(Key(kLauncherWindow, "maximized"), FormatBoolText(settings.window.maximized));
+	WriteWindow(out, kLauncherWindow, settings.window);
+	WriteWindow(out, kSettingsWindow, settings.settings_window);
 
 	WriteConfiguration(out, kGlobal, false, settings.global);
 	for (const auto& field: GlobalOnlyFields()) {
@@ -451,6 +461,15 @@ Expected<void, IoError> SaveSettingsStore(SettingsStoreFile&      store,
 		    store.path.string() + " was not saved because it exists but could not be loaded (" +
 		        std::generic_category().message(error_number) +
 		        "). Fix or move the file, or confirm replacing it."});
+	}
+	if (const auto directory = store.path.parent_path(); !directory.empty()) {
+		std::error_code ec;
+		std::filesystem::create_directories(directory, ec);
+		if (ec) {
+			return MakeUnexpected(IoError {store.path, ec.value(),
+			                               "cannot create the directory " + directory.string() +
+			                                   ": " + ec.message()});
+		}
 	}
 	auto saved = SaveSettings(store.path, settings);
 	if (saved) {

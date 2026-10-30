@@ -13,6 +13,8 @@
 // caller saves, the stored mapping of the target (global, or the game with input_mapping_custom)
 // must equal SerializeMapping(model) while the other lists stay as they were. A model with an
 // unknown entry that Validate refuses (no "=") must not be saved and leave the settings unchanged.
+// Kyty.ini is opened with OpenSettingsStore and saved with SaveSettingsStore, as the GTK launcher
+// does (its first save creates the missing Kyty directory).
 
 #include "launcher/core/atomicFile.h"
 #include "launcher/core/inputMapping.h"
@@ -171,7 +173,7 @@ void CheckEdit(const ContentGen::MappingEdit& edit, bool applied, const InputMap
 KYTY_PROPERTY(37, "Input mapping edits") {
 	return rc::check(name, []() {
 		const KytyTests::TempDir temp("kyty_p37");
-		const auto               ini = temp.Path() / "Kyty.ini";
+		const auto               ini = temp.Path() / "Kyty" / "Kyty.ini";
 
 		kyty::core::GameEntry game;
 		game.path         = temp.Path() / "games" / "Game";
@@ -194,10 +196,14 @@ KYTY_PROPERTY(37, "Input mapping edits") {
 			element.configuration = configuration;
 			settings.games.push_back(std::move(element));
 		}
-		RC_ASSERT(kyty::core::SaveSettings(ini, settings).has_value());
-		const auto loaded = kyty::core::LoadSettings(ini);
-		RC_ASSERT(loaded.has_value());
-		settings         = loaded->settings;
+		// The first save creates the missing Kyty directory, as in a fresh XDG_CONFIG_HOME.
+		auto initial = kyty::core::OpenSettingsStore(ini);
+		RC_ASSERT(!initial.load_error.has_value());
+		RC_ASSERT(kyty::core::SaveSettingsStore(initial, settings).has_value());
+		// The editor opens the Settings_Store as the GTK launcher does.
+		auto store = kyty::core::OpenSettingsStore(ini);
+		RC_ASSERT(!store.load_error.has_value());
+		settings         = store.loaded.settings;
 		const auto bytes = kyty::core::ReadFileLimited(ini, kyty::core::kMaxSettingsFileBytes);
 		RC_ASSERT(bytes.has_value());
 		const auto original = settings;
@@ -218,7 +224,12 @@ KYTY_PROPERTY(37, "Input mapping edits") {
 		const bool valid     = kyty::core::FindInvalidMappingEntries(serialized).empty();
 		const auto saved     = kyty::core::SaveMapping(settings, target, game, model);
 		const auto unchanged = kyty::core::ReadFileLimited(ini, kyty::core::kMaxSettingsFileBytes);
-		RC_ASSERT(unchanged.has_value() && *unchanged == *bytes);
+		// Nothing reaches Kyty.ini before Save. (RC_ASSERT does not short-circuit &&, so the value
+		// is checked first.)
+		RC_ASSERT(unchanged.has_value());
+		if (unchanged.has_value()) {
+			RC_ASSERT(*unchanged == *bytes);
+		}
 		if (!valid) {
 			RC_ASSERT(!saved.has_value());
 			RC_ASSERT(saved.error().field == "host_input_mapping");
@@ -228,22 +239,26 @@ KYTY_PROPERTY(37, "Input mapping edits") {
 		}
 		RC_ASSERT(saved.has_value());
 
-		// The caller saves the Settings_Store.
-		RC_ASSERT(kyty::core::SaveSettings(ini, settings).has_value());
-		const auto stored = kyty::core::LoadSettings(ini);
-		RC_ASSERT(stored.has_value());
-		RC_ASSERT(kyty::core::MappingForTarget(stored->settings, target, game) == serialized);
+		// The caller saves the Settings_Store through SaveSettingsStore, as the GTK launcher does.
+		RC_ASSERT(kyty::core::SaveSettingsStore(store, settings).has_value());
+		const auto reopened = kyty::core::OpenSettingsStore(ini);
+		RC_ASSERT(!reopened.load_error.has_value());
+		const auto& stored = reopened.loaded.settings;
+		RC_ASSERT(kyty::core::MappingForTarget(stored, target, game) == serialized);
 		if (target == MappingTarget::Game) {
-			const auto* custom = kyty::core::FindGameSettings(stored->settings, game);
-			RC_ASSERT(custom != nullptr && custom->configuration.input_mapping_custom);
-			RC_ASSERT(stored->settings.global.host_input_mapping ==
-			          original.global.host_input_mapping);
-			if (game_state != 0) {
-				RC_ASSERT(custom->configuration.user_name == "Game user");
+			const auto* custom = kyty::core::FindGameSettings(stored, game);
+			// RC_ASSERT does not short-circuit: check the pointer before using it.
+			RC_ASSERT(custom != nullptr);
+			if (custom != nullptr) {
+				RC_ASSERT(custom->configuration.input_mapping_custom);
+				if (game_state != 0) {
+					RC_ASSERT(custom->configuration.user_name == "Game user");
+				}
 			}
+			RC_ASSERT(stored.global.host_input_mapping == original.global.host_input_mapping);
 		} else {
-			RC_ASSERT(stored->settings.global.host_input_mapping == serialized);
-			RC_ASSERT(stored->settings.games == original.games);
+			RC_ASSERT(stored.global.host_input_mapping == serialized);
+			RC_ASSERT(stored.games == original.games);
 		}
 		RC_TAG(target == MappingTarget::Global ? "global" : "game");
 		RC_TAG(edits == 0 ? "no edit" : "edits");

@@ -234,7 +234,12 @@ void TestLoad() {
 		Check(request.headers.size() == 1 && request.headers[0].first == "User-Agent" &&
 		          request.headers[0].second == "Kyty-Launcher",
 		      "the Qt user agent");
+		Check(request.redirects == kyty::core::RedirectPolicy::SameOrigin,
+		      "same-origin redirects only (the Qt launcher's SameOriginRedirectPolicy)");
 	}
+	Check(kyty::core::CheatRequest("https://example.invalid/x", 5).redirects ==
+	          kyty::core::RedirectPolicy::SameOrigin,
+	      "CheatRequest sets the same-origin policy");
 }
 
 void TestFailures() {
