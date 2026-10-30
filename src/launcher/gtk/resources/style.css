@@ -1,0 +1,4 @@
+/* The GTK launcher's style sheet. libadwaita loads it by itself from the application's resource
+ * base path (/io/github/MrG00gle/KytyPS5_GTK/style.css). Rules use the libadwaita named colors, so
+ * that the light and the dark color scheme both work. The windows of later tasks add their rules
+ * here. */

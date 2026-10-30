@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The GTK launcher's GResource bundle (plan D8). The app icon files are byte-identical copies of
+     src/launcher/icons/kyty.svg and kyty-small.svg; the small artwork serves every fixed size.
+     The icon paths follow gtk_icon_theme_add_resource_path(): <path>/<size>/<context>/<name>.
+     images/ comes from assets/ (the second source directory). -->
+<gresources>
+  <gresource prefix="/io/github/MrG00gle/KytyPS5_GTK">
+    <file>style.css</file>
+    <file alias="icons/scalable/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK.svg</file>
+    <file alias="icons/16x16/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK-small.svg</file>
+    <file alias="icons/24x24/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK-small.svg</file>
+    <file alias="icons/32x32/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK-small.svg</file>
+    <file alias="icons/48x48/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK-small.svg</file>
+    <file alias="icons/64x64/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK-small.svg</file>
+    <file alias="icons/scalable/actions/kyty-trophy-symbolic.svg">icons/kyty-trophy-symbolic.svg</file>
+    <file>images/hidden-trophy.png</file>
+  </gresource>
+</gresources>

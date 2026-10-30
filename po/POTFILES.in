@@ -1,0 +1,4 @@
+# Files of the GTK launcher with translatable strings (kyty-launcher domain), one per line, sorted.
+src/launcher/gtk/application.cpp
+src/launcher/gtk/dialogRegistry.cpp
+src/launcher/gtk/main.cpp

@@ -572,6 +572,19 @@ kyty_add_test_directory(tests/updater LINK kyty_updater_installer kyty_updater_c
 target_compile_options(updater_installer_rollback_tests PRIVATE -fexceptions)
 target_compile_options(updater_command_tests PRIVATE -fexceptions)
 
+# Display-free tests of the GTK launcher's helpers and services (plan D11): they never call
+# gtk_init, run without a display and without a session bus, and use GLib's in-memory settings, the
+# local VFS, and no proxy resolver. kyty_launcher_gtk exists only with KYTY_BUILD_LAUNCHER=ON, so the
+# directory is OPTIONAL only when it is OFF; with ON a missing link target fails the configure.
+set(kyty_launcher_gtk_optional "")
+if(NOT KYTY_BUILD_LAUNCHER)
+	set(kyty_launcher_gtk_optional OPTIONAL)
+endif()
+kyty_add_test_directory(tests/launcher_gtk ${kyty_launcher_gtk_optional}
+	LINK kyty_launcher_gtk kyty_test_support
+	ENVIRONMENT GSETTINGS_BACKEND=memory GIO_USE_VFS=local GIO_USE_PROXY_RESOLVER=dummy
+	ENVIRONMENT_MODIFICATION ${kyty_no_display} DBUS_SESSION_BUS_ADDRESS=unset:)
+
 # Build classification (task 17.6, Requirement 13.2): kyty_classify_build() in script mode over every
 # combination of its inputs.
 kyty_add_test(NAME build_classification

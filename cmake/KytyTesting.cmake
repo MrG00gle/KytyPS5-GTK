@@ -11,12 +11,16 @@
 #       environment (cmake/KytyCoverage.cmake). ENVIRONMENT_MODIFICATION sets the CTest property of
 #       that name (for example "DISPLAY=unset:", which ENVIRONMENT cannot express); it needs CMake 3.22
 #       or newer, and an older CMake stops the configure instead of ignoring it.
-#   kyty_add_test_directory(<dir> LINK <target>... [LABELS ...] [TIMEOUT <s>] [ENVIRONMENT ...]
-#                           [ENVIRONMENT_MODIFICATION ...])
+#   kyty_add_test_directory(<dir> [OPTIONAL] LINK <target>... [LABELS ...] [TIMEOUT <s>]
+#                           [ENVIRONMENT ...] [ENVIRONMENT_MODIFICATION ...])
 #       One executable and one test per <dir>/*Tests.cpp (globbed with CONFIGURE_DEPENDS). <Name>Tests.cpp
 #       in tests/<d> becomes test <d>_<snake_case(Name)> (no doubled <d>_ prefix) and executable
 #       <test>_tests. Skips with a status message when <dir> has no sources or a LINK item is not a
-#       target yet.
+#       target yet. OPTIONAL marks a directory whose LINK targets exist only in some configurations
+#       (tests/launcher_gtk needs kyty_launcher_gtk, which KYTY_BUILD_LAUNCHER=OFF does not define):
+#       its skip line ends with "(optional)", and its sources are then exempt from the
+#       "not compiled into a registered test executable" check below. Pass it only in the
+#       configurations without the targets, so that a missing target elsewhere still fails.
 #   kyty_add_property_executable(<target> SOURCES <src>... [LINK <item>...])
 #       A RapidCheck property test executable (Requirements 17.8, 17.9): kyty_add_test_executable() of
 #       SOURCES plus tests/support/propertyMain.cpp, compiled with -fexceptions -frtti, with tests/ on
@@ -32,9 +36,10 @@
 # with kyty_add_test(), a test executable is not a kyty_tests dependency or is not run by any
 # kyty_add_test() COMMAND (Requirement 17.4), a .cpp file under tests/ is not compiled into a
 # registered test executable (an executable named by $<TARGET_FILE:...> in a kyty_add_test() COMMAND,
-# directly or through a library that only such executables or other tests-only libraries link), or
-# no executable that compiles it is a kyty_tests dependency. An ALIAS counts as the target it names,
-# both in LINK_LIBRARIES and in $<TARGET_FILE:...>.
+# directly or through a library that only such executables or other tests-only libraries link; the
+# sources of a skipped OPTIONAL test directory are exempt), or no executable that compiles it is a
+# kyty_tests dependency. An ALIAS counts as the target it names, both in LINK_LIBRARIES and in
+# $<TARGET_FILE:...>.
 include_guard(GLOBAL)
 include(KytyLinker)
 include(KytyTargets)
@@ -164,7 +169,7 @@ function(_kyty_testing_snake_case value out)
 endfunction()
 
 function(kyty_add_test_directory dir)
-	cmake_parse_arguments(PARSE_ARGV 1 kyty "" "TIMEOUT" "LINK;LABELS;ENVIRONMENT;ENVIRONMENT_MODIFICATION")
+	cmake_parse_arguments(PARSE_ARGV 1 kyty "OPTIONAL" "TIMEOUT" "LINK;LABELS;ENVIRONMENT;ENVIRONMENT_MODIFICATION")
 	if(kyty_UNPARSED_ARGUMENTS)
 		message(FATAL_ERROR "kyty_add_test_directory(${dir}): unexpected arguments: ${kyty_UNPARSED_ARGUMENTS}")
 	endif()
@@ -177,7 +182,14 @@ function(kyty_add_test_directory dir)
 	endif()
 	foreach(kyty_item IN LISTS kyty_LINK)
 		if(NOT TARGET ${kyty_item})
-			message(STATUS "KytyTesting: skipping ${kyty_dir_text}: link target ${kyty_item} does not exist yet")
+			if(kyty_OPTIONAL)
+				# Every .cpp of the directory, not only the *Tests.cpp ones, is exempt.
+				file(GLOB_RECURSE kyty_skipped_sources CONFIGURE_DEPENDS "${kyty_dir}/*.cpp")
+				set_property(GLOBAL APPEND PROPERTY KYTY_TESTING_OPTIONAL_SKIPPED_SOURCES ${kyty_skipped_sources})
+				message(STATUS "KytyTesting: skipping ${kyty_dir_text}: link target ${kyty_item} does not exist (optional)")
+			else()
+				message(STATUS "KytyTesting: skipping ${kyty_dir_text}: link target ${kyty_item} does not exist yet")
+			endif()
 			return()
 		endif()
 	endforeach()
@@ -479,6 +491,10 @@ function(_kyty_testing_final_checks)
 		endforeach()
 
 		file(GLOB_RECURSE kyty_test_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/tests/*.cpp")
+		get_property(kyty_optional_skipped GLOBAL PROPERTY KYTY_TESTING_OPTIONAL_SKIPPED_SOURCES)
+		if(kyty_optional_skipped)
+			list(REMOVE_ITEM kyty_test_sources ${kyty_optional_skipped})
+		endif()
 		list(SORT kyty_test_sources)
 		foreach(kyty_source IN LISTS kyty_test_sources)
 			file(RELATIVE_PATH kyty_source_text "${CMAKE_SOURCE_DIR}" "${kyty_source}")

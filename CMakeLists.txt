@@ -400,6 +400,8 @@ if(KYTY_BUILD_LAUNCHER)
 	if(LINUX)
 		target_link_options(launcher PRIVATE $<$<CONFIG:Release>:-Wl,--strip-all>)
 	endif()
+	# The GTK launcher (kyty_launcher_gtk and, until task 23.1, kyty_gtk_launcher).
+	add_subdirectory("${KYTY_SOURCE_DIR}/launcher/gtk" "${CMAKE_CURRENT_BINARY_DIR}/launcher/gtk")
 endif()
 
 if(BUILD_TESTING)
