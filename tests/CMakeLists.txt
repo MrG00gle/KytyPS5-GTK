@@ -543,6 +543,9 @@ add_dependencies(kyty_test_support argv_echo fake_emulator)
 
 kyty_add_test_directory(tests/launcher_core LINK kyty_launcher_core kyty_test_support
 	ENVIRONMENT_MODIFICATION ${kyty_no_display})
+# jsonErrorCapture.h is internal to Launcher_Core: it includes nlohmann/json.hpp, which
+# kyty_launcher_core links PRIVATE. Its test includes it too, so it needs the header-only library.
+target_link_libraries(launcher_core_json_error_capture_tests nlohmann_json::nlohmann_json)
 
 # Last, so that the property groups see every library.
 add_subdirectory(properties)

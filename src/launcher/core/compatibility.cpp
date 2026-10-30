@@ -1,5 +1,6 @@
 #include "launcher/core/compatibility.h"
 
+#include "launcher/core/jsonErrorCapture.h"
 #include "launcher/core/retrySchedule.h"
 #include "launcher/core/text.h"
 #include "launcher/core/titleId.h"
@@ -15,25 +16,6 @@ namespace kyty::core {
 namespace {
 
 using Json = nlohmann::json;
-
-// nlohmann's accepting SAX handler, recording the parser's error message: with exceptions
-// disabled, Json::parse(..., false) says that the content is invalid but not why. sax_parse()
-// calls the handler's members statically, so this parse_error() hides the base one.
-struct JsonErrorCapture: nlohmann::detail::json_sax_acceptor<Json> {
-	std::string message;
-
-	bool parse_error(std::size_t /*position*/, const std::string& /*last_token*/,
-	                 const Json::exception& error) {
-		message = error.what();
-		return false;
-	}
-};
-
-std::string DescribeJsonError(std::string_view json) {
-	JsonErrorCapture capture;
-	Json::sax_parse(json.begin(), json.end(), &capture);
-	return capture.message.empty() ? std::string("invalid JSON") : capture.message;
-}
 
 std::string DescribeFailure(const HttpResult& result) {
 	switch (result.failure) {
@@ -87,7 +69,7 @@ Expected<CompatibilityDatabase, std::string> ParseCompatibility(std::string_view
 	// No exceptions: a parse error gives a discarded value.
 	const auto root = Json::parse(json.begin(), json.end(), nullptr, false);
 	if (root.is_discarded()) {
-		return MakeUnexpected("the content is not valid JSON: " + DescribeJsonError(json));
+		return MakeUnexpected("the content is not valid JSON: " + DescribeJsonError<Json>(json));
 	}
 	if (!root.is_object()) {
 		return MakeUnexpected(std::string("the top-level JSON value is not an object"));

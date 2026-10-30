@@ -164,11 +164,10 @@ private:
 };
 
 // The --local maintainer mode (design.md, "Gaps against the approved requirements" 2, LFI-21): the
-// launcher reads and writes
-// ./compatibility_db.json (kLocalCompatibilityFileName) in the Qt format and downloads nothing.
-// A missing file gives an empty database (as the Qt launcher); an unreadable file, one over
-// kMaxCompatibilityBytes, or content that does not parse is an error naming the path and the
-// reason.
+// launcher reads and writes ./compatibility_db.json (kLocalCompatibilityFileName) in the Qt format
+// and downloads nothing. A missing file gives an empty database (as the Qt launcher); an
+// unreadable file, one over kMaxCompatibilityBytes, or content that does not parse is an error
+// naming the path and the reason.
 Expected<CompatibilityDatabase, std::string>
 LoadLocalCompatibility(const std::filesystem::path& path);
 
