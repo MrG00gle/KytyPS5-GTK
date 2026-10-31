@@ -1,4 +1,49 @@
 /* The GTK launcher's style sheet. libadwaita loads it by itself from the application's resource
  * base path (/io/github/MrG00gle/KytyPS5_GTK/style.css). Rules use the libadwaita named colors, so
- * that the light and the dark color scheme both work. The windows of later tasks add their rules
- * here. */
+ * that the light and the dark color scheme both work; the compatibility status colors are the Qt
+ * launcher's, which read on both. The windows of later tasks add their rules here. */
+
+/* Game list and grid (task 20.2). */
+
+.game-status-indicator {
+	min-width: 12px;
+	min-height: 12px;
+	border-radius: 3px;
+}
+
+.game-status-indicator.status-in-game {
+	background-color: #2fb344;
+}
+
+.game-status-indicator.status-main-menu {
+	background-color: #2f80ed;
+}
+
+.game-status-indicator.status-logo {
+	background-color: #f2c94c;
+}
+
+.game-status-indicator.status-doesnt-boot {
+	background-color: #e55353;
+}
+
+.game-status-indicator.status-unknown {
+	background-color: #8a8a8a;
+}
+
+/* The running game: a bold title (LFI-11). */
+.game-title.game-running {
+	font-weight: bold;
+}
+
+/* The emblems over a game icon: metadata unavailable (warning color) and running (accent). */
+.game-emblem {
+	background-color: @view_bg_color;
+	border-radius: 9999px;
+	padding: 2px;
+	margin: 1px;
+}
+
+.game-grid-item {
+	padding: 6px;
+}

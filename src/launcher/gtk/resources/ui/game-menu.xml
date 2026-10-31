@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The per-game menu (task 20.2; LFI-12, plan D30): the context menu of the list and grid views,
+     in the Qt launcher's order. The game.* actions belong to the main window, which enables each
+     one for the selected game; Cheats is hidden while game.cheats is disabled (only title IDs that
+     core::IsCheatTitleId accepts offer cheats, as in Qt). -->
+<interface domain="kyty-launcher">
+  <menu id="game-menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes" context="game menu">Run</attribute>
+        <attribute name="action">game.run</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Open game folder</attribute>
+        <attribute name="action">game.open-folder</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">View trophies…</attribute>
+        <attribute name="action">game.trophies</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Cheats (experimental)…</attribute>
+        <attribute name="action">game.cheats</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Additional content…</attribute>
+        <attribute name="action">game.additional-content</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Compress to ZAR…</attribute>
+        <attribute name="action">game.compress</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Remove save data…</attribute>
+        <attribute name="action">game.remove-save-data</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Edit game config…</attribute>
+        <attribute name="action">game.edit-config</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Clear game config</attribute>
+        <attribute name="action">game.clear-config</attribute>
+      </item>
+    </section>
+  </menu>
+</interface>
