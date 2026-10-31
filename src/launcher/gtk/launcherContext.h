@@ -3,8 +3,8 @@
 // What the windows of the GTK launcher share (tasks 19.3-19.5; plan D14). KytyApplication owns the
 // one LauncherContext of the process and the real services; the visual harness and the tests build
 // their own, with fakes where they need them. Every window and dialog takes a LauncherContext&, so
-// none of them owns a copy of the Settings_Store, of the run state, or of a service. A later unit
-// adds the game library.
+// none of them owns a copy of the Settings_Store, of the run state, of the game library, or of a
+// service.
 
 #include "launcher/core/compatibility.h"
 #include "launcher/core/dataPaths.h"
@@ -13,6 +13,7 @@
 #include "launcher/core/runState.h"
 #include "launcher/core/scheduler.h"
 #include "launcher/core/settingsStore.h"
+#include "launcher/gtk/gameListModel.h"
 #include "launcher/gtk/installation.h"
 #include "updater/core/processRunner.h"
 #include "updater/core/updatePolicy.h"
@@ -59,6 +60,9 @@ struct LauncherContext {
 	core::SettingsStoreFile  settings;
 	core::RunState           run_state;
 	core::CompatibilityModel compatibility;
+	// The game library of the last scan (empty until the first scan replaces it). The settings
+	// window's Game configs import and export list its games.
+	GameListModel            library;
 	updater::UpdateUiMode    update_mode = updater::UpdateUiMode::Other;
 	// --local: the compatibility database is ./compatibility_db.json, with editable entries.
 	bool local = false;

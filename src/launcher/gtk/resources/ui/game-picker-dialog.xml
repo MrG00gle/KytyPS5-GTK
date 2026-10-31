@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The game picker of the settings window's "Game configs" export (task 21.1, plan D39). The
+     rows, the window title, the description, and the accept label come from
+     gamePickerDialog.cpp. -->
+<interface domain="kyty-launcher">
+  <template class="KytyGamePickerDialog" parent="AdwWindow">
+    <property name="modal">True</property>
+    <property name="destroy-with-parent">True</property>
+    <property name="default-width">600</property>
+    <property name="default-height">480</property>
+    <property name="width-request">360</property>
+    <property name="height-request">240</property>
+    <property name="content">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-start-title-buttons">False</property>
+            <property name="show-end-title-buttons">False</property>
+            <child type="start">
+              <object class="GtkButton" id="cancel_button">
+                <property name="label" translatable="yes">Cancel</property>
+                <property name="action-name">window.close</property>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="accept_button">
+                <property name="sensitive">False</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <property name="content">
+          <object class="AdwPreferencesPage">
+            <child>
+              <object class="AdwPreferencesGroup" id="group">
+                <child>
+                  <object class="GtkListBox" id="list">
+                    <property name="selection-mode">single</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>

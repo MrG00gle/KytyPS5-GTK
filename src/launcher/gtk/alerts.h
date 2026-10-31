@@ -15,15 +15,18 @@ namespace kyty::gtk {
 // cancel button is the default button and the one Escape and closing the alert choose. With
 // destructive, the accept button has the destructive-action style. callback runs once from the
 // main loop with true for the accept button and false otherwise, unless cancellable is cancelled
-// first (the alert closes then, and callback never runs). Returns the alert's window (the new
-// toplevel), or nullptr when it could not be found.
+// first (the alert closes then, and callback never runs). With a cancellable, destroying parent
+// counts as cancelling: the alert closes and callback never runs, also when nobody cancels
+// cancellable (the alert has its own cancellable, chained to it). Returns the alert's window (the
+// new toplevel), or nullptr when it could not be found.
 GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view body,
                    std::string_view accept_label, std::string_view cancel_label, bool destructive,
                    std::function<void(bool accepted)> callback,
                    GCancellable*                      cancellable = nullptr);
 
-// A modal alert with heading, body, and GTK's own Close button. Cancelling cancellable closes it.
-// Returns the alert's window, or nullptr when it could not be found.
+// A modal alert with heading, body, and GTK's own Close button. Cancelling cancellable closes it;
+// with a cancellable, destroying parent closes it too (as for Confirm). Returns the alert's
+// window, or nullptr when it could not be found.
 GtkWindow* ShowError(GtkWindow* parent, std::string_view heading, std::string_view body,
                      GCancellable* cancellable = nullptr);
 

@@ -47,3 +47,11 @@
 .game-grid-item {
 	padding: 6px;
 }
+
+/* Settings window (task 21.1). */
+
+/* The percentage after a scale: GtkScale already sizes it for the widest value ("100%"); the gap
+ * keeps it clear of the knob, which reaches past the end of the trough at 100 %. */
+scale.percent-scale > value {
+	margin-left: 16px;
+}

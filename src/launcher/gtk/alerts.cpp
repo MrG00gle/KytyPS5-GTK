@@ -72,8 +72,66 @@ bool WasCancelled(const GErrorPtr& error) {
 	                 g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED));
 }
 
+// The life of an alert opened with a cancellable. The alert runs with a GCancellable of its own,
+// cancelled when the caller's cancellable is cancelled or when the parent window is destroyed,
+// whichever comes first: the alert then closes and its callback does not run, also when the
+// parent's owner never cancels. GTK's destroy-with-parent is off for such an alert, because
+// destroying the window after its cancellable closed it destroyed it a second time (Gtk-CRITICAL
+// gtk_window_destroy: assertion 'GTK_IS_WINDOW (window)' failed, U5 harness). Main thread only.
+class AlertLink {
+public:
+	AlertLink(GtkWindow* parent, GCancellable* owner)
+	    : m_own(GObjectPtr<GCancellable>::Adopt(g_cancellable_new())),
+	      m_owner(GObjectPtr<GCancellable>::Ref(owner)) {
+		if (g_cancellable_is_cancelled(owner) != FALSE) {
+			g_cancellable_cancel(m_own.get());
+			return;
+		}
+		m_owner_cancelled = SignalScope::Connect(owner, "cancelled", G_CALLBACK(OnGone), this);
+		if (parent != nullptr) {
+			m_parent_destroyed = SignalScope::Connect(parent, "destroy", G_CALLBACK(OnGone), this);
+		}
+	}
+	AlertLink(const AlertLink&)            = delete;
+	AlertLink& operator=(const AlertLink&) = delete;
+	AlertLink(AlertLink&&)                 = delete;
+	AlertLink& operator=(AlertLink&&)      = delete;
+	~AlertLink()                           = default;
+
+	[[nodiscard]] GCancellable* Cancellable() const { return m_own.get(); }
+
+	// The alert's window closes through the cancellable only.
+	static void Attach(GtkWindow* window) {
+		if (window != nullptr) {
+			gtk_window_set_destroy_with_parent(window, FALSE);
+		}
+	}
+
+private:
+	// The caller's cancellable was cancelled, or the parent is being destroyed. Cancelling can
+	// finish the alert at once, which deletes this link, so the cancellable is held by a copy.
+	static void OnGone(gpointer /*instance*/, gpointer data) {
+		const auto own = static_cast<AlertLink*>(data)->m_own;
+		g_cancellable_cancel(own.get());
+	}
+
+	GObjectPtr<GCancellable> m_own;
+	GObjectPtr<GCancellable> m_owner;
+	SignalScope              m_owner_cancelled;
+	SignalScope              m_parent_destroyed;
+};
+
+std::unique_ptr<AlertLink> LinkFor(GtkWindow* parent, GCancellable* cancellable) {
+	return cancellable != nullptr ? std::make_unique<AlertLink>(parent, cancellable) : nullptr;
+}
+
 struct ConfirmCall {
 	std::function<void(bool accepted)> callback;
+	std::unique_ptr<AlertLink>         link;
+};
+
+struct ErrorCall {
+	std::unique_ptr<AlertLink> link;
 };
 
 void OnConfirmChosen(GObject* source, GAsyncResult* result, gpointer data) {
@@ -89,8 +147,9 @@ void OnConfirmChosen(GObject* source, GAsyncResult* result, gpointer data) {
 	}
 }
 
-void OnErrorClosed(GObject* source, GAsyncResult* result, gpointer /*data*/) {
-	GErrorPtr error;
+void OnErrorClosed(GObject* source, GAsyncResult* result, gpointer data) {
+	std::unique_ptr<ErrorCall> call(static_cast<ErrorCall*>(data));
+	GErrorPtr                  error;
 	static_cast<void>(
 	    gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), result, error.Out()));
 }
@@ -108,10 +167,16 @@ GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view
 	gtk_alert_dialog_set_cancel_button(alert.get(), kCancelButton);
 	gtk_alert_dialog_set_default_button(alert.get(), kCancelButton);
 
-	const auto before = Toplevels();
-	gtk_alert_dialog_choose(alert.get(), parent, cancellable, OnConfirmChosen,
-	                        new ConfirmCall {std::move(callback)});
+	auto call            = std::make_unique<ConfirmCall>();
+	call->callback       = std::move(callback);
+	call->link           = LinkFor(parent, cancellable);
+	GCancellable* own    = call->link ? call->link->Cancellable() : nullptr;
+	const auto    before = Toplevels();
+	gtk_alert_dialog_choose(alert.get(), parent, own, OnConfirmChosen, call.release());
 	GtkWindow* window = NewToplevel(before);
+	if (own != nullptr) {
+		AlertLink::Attach(window);
+	}
 	if (destructive) {
 		if (window == nullptr) {
 			g_debug("confirmation \"%s\": alert window not found, the accept button keeps its "
@@ -131,10 +196,17 @@ GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view
 
 GtkWindow* ShowError(GtkWindow* parent, std::string_view heading, std::string_view body,
                      GCancellable* cancellable) {
-	auto       alert  = NewAlert(heading, body);
-	const auto before = Toplevels();
-	gtk_alert_dialog_choose(alert.get(), parent, cancellable, OnErrorClosed, nullptr);
-	return NewToplevel(before);
+	auto alert           = NewAlert(heading, body);
+	auto call            = std::make_unique<ErrorCall>();
+	call->link           = LinkFor(parent, cancellable);
+	GCancellable* own    = call->link ? call->link->Cancellable() : nullptr;
+	const auto    before = Toplevels();
+	gtk_alert_dialog_choose(alert.get(), parent, own, OnErrorClosed, call.release());
+	GtkWindow* window = NewToplevel(before);
+	if (own != nullptr) {
+		AlertLink::Attach(window);
+	}
+	return window;
 }
 
 } // namespace kyty::gtk
