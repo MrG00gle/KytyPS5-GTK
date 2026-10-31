@@ -5,7 +5,9 @@
 // launchers may run at once).
 //
 // - Command line: --local (the compatibility database is ./compatibility_db.json).
-// - startup: builds the LauncherContext (paths, Emulator, Settings_Store), sets the App_ID as the
+// - startup: creates the real services (HTTP, timers, processes, file chooser, desktop launcher,
+//   devices, controllers, title sound) and builds the LauncherContext on them (paths, Emulator,
+//   Settings_Store); finalize destroys both and shuts SDL down (SDL_Quit). Sets the App_ID as the
 //   default window icon name, adds the GResource icons to the icon theme, follows the desktop's
 //   color scheme (ADW_COLOR_SCHEME_DEFAULT), registers app.quit (Ctrl+Q), starts the Emulator
 //   version probe, and logs "startup complete" (g_debug).

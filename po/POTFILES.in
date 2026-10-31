@@ -2,3 +2,6 @@
 src/launcher/gtk/application.cpp
 src/launcher/gtk/dialogRegistry.cpp
 src/launcher/gtk/main.cpp
+src/launcher/gtk/services/deviceLists.cpp
+src/launcher/gtk/services/fileChooser.cpp
+src/launcher/gtk/services/soupHttpClient.cpp

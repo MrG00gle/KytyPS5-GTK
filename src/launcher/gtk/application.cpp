@@ -4,8 +4,16 @@
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/installation.h"
+#include "launcher/gtk/services/controllerService.h"
+#include "launcher/gtk/services/desktopLauncher.h"
+#include "launcher/gtk/services/deviceLists.h"
+#include "launcher/gtk/services/fileChooser.h"
+#include "launcher/gtk/services/glibScheduler.h"
+#include "launcher/gtk/services/soupHttpClient.h"
+#include "launcher/gtk/services/titleSoundPlayer.h"
 #include "updater/core/buildInfo.h"
 
+#include <SDL3/SDL.h>
 #include <csignal>
 #include <glib-unix.h>
 #include <string>
@@ -13,8 +21,27 @@
 
 namespace kyty::gtk {
 
+// The real services (plan D14). They are created before the context and destroyed after it.
+struct ApplicationServices {
+	std::unique_ptr<core::Environment>      environment = core::MakePosixEnvironment();
+	GlibScheduler                           scheduler;
+	SoupHttpClient                          http;
+	std::unique_ptr<updater::ProcessRunner> process_runner = updater::MakePosixProcessRunner();
+	std::unique_ptr<FileChooser>            file_chooser   = MakeGtkFileChooser();
+	std::unique_ptr<DesktopLauncher>        desktop        = MakeGtkDesktopLauncher();
+	std::unique_ptr<DeviceLists>            device_lists   = MakeSdlDeviceLists();
+	std::unique_ptr<ControllerService>      controller     = MakeSdlControllerService();
+	TitleSoundPlayer                        title_sound;
+
+	Services Get() {
+		return {http,     scheduler,     *environment, *process_runner, *file_chooser,
+		        *desktop, *device_lists, *controller,  title_sound};
+	}
+};
+
 // The C++ members of a KytyApplication.
 struct KytyApplicationState {
+	std::unique_ptr<ApplicationServices>  services; // destroyed after the context
 	std::unique_ptr<LauncherContext>      context;
 	std::unique_ptr<EmulatorVersionProbe> version_probe;
 	bool                                  local = false;
@@ -122,12 +149,13 @@ static void kyty_application_startup(GApplication* application) {
 		g_message("cannot read the working directory: %s", ec.message().c_str());
 		working_directory = "/";
 	}
-	const auto environment = kyty::core::MakePosixEnvironment();
-	state->context         = kyty::gtk::CreateLauncherContext(
-	    *environment, {.working_directory  = working_directory,
-	                   .launcher_directory = kyty::gtk::LauncherDirectory(),
-	                   .update_mode        = kyty::updater::CurrentUpdateUiMode(),
-	                   .local              = state->local});
+	state->services = std::make_unique<kyty::gtk::ApplicationServices>();
+	state->context =
+	    kyty::gtk::CreateLauncherContext({.working_directory  = working_directory,
+	                                      .launcher_directory = kyty::gtk::LauncherDirectory(),
+	                                      .update_mode = kyty::updater::CurrentUpdateUiMode(),
+	                                      .local       = state->local},
+	                                     state->services->Get());
 
 	gtk_window_set_default_icon_name(kyty::gtk::kApplicationId);
 	kyty::gtk::AddIconResourcePath();
@@ -161,7 +189,9 @@ static void kyty_application_shutdown(GApplication* application) {
 }
 
 static void kyty_application_finalize(GObject* object) {
+	// The context first, then the services; SDL (audio, gamepad) shuts down after its users.
 	delete KYTY_APPLICATION(object)->state;
+	SDL_Quit();
 	G_OBJECT_CLASS(kyty_application_parent_class)->finalize(object);
 }
 

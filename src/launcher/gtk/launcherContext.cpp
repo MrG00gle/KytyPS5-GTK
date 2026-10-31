@@ -5,11 +5,11 @@
 
 namespace kyty::gtk {
 
-std::unique_ptr<LauncherContext> CreateLauncherContext(const core::Environment&      environment,
-                                                       const LauncherContextOptions& options) {
-	auto context         = std::make_unique<LauncherContext>();
+std::unique_ptr<LauncherContext> CreateLauncherContext(const LauncherContextOptions& options,
+                                                       const Services&               services) {
+	auto context         = std::make_unique<LauncherContext>(services);
 	context->emulator    = LocateEmulator(options.launcher_directory);
-	context->paths       = core::ResolvePaths(environment, options.working_directory,
+	context->paths       = core::ResolvePaths(services.environment, options.working_directory,
 	                                          context->emulator.executable.parent_path());
 	context->update_mode = options.update_mode;
 	context->local       = options.local;
