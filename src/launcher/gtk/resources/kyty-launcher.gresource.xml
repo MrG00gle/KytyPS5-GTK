@@ -8,6 +8,7 @@
     <file>style.css</file>
     <file>ui/game-menu.xml</file>
     <file>ui/game-picker-dialog.xml</file>
+    <file>ui/main-window.xml</file>
     <file>ui/settings-window.xml</file>
     <file alias="icons/scalable/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK.svg</file>
     <file alias="icons/16x16/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK-small.svg</file>

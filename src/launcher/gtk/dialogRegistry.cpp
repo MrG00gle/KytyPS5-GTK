@@ -4,6 +4,7 @@
 #include "launcher/gtk/gamePickerDialog.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
+#include "launcher/gtk/mainWindow.h"
 #include "launcher/gtk/settingsWindow.h"
 
 #include <algorithm>
@@ -83,6 +84,13 @@ DialogHandle OpenGamePickerDialog(LauncherContext& context, GtkWindow* parent,
 	                                _("Export"), [](const core::GameEntry& /*entry*/) {})));
 }
 
+// The main window without an application (its app.* actions are then the window's own); a
+// toplevel of its own, so parent is not used. It starts the library work on context.
+DialogHandle OpenMainWindow(LauncherContext& context, GtkWindow* /*parent*/,
+                            const DialogArgs& /*args*/) {
+	return Presented(GTK_WINDOW(kyty_main_window_new(context, nullptr)));
+}
+
 // Destroys the window unless it is gone already (a window may close itself, for example after
 // Save).
 void CloseWindow(DialogHandle& handle) {
@@ -106,6 +114,7 @@ constexpr DialogType kDialogTypes[] = {
     {"settings-window", OpenSettingsWindow, CloseWindow},
     {"game-settings-window", OpenGameSettingsWindow, CloseWindow},
     {"game-picker-dialog", OpenGamePickerDialog, CloseWindow},
+    {"main-window", OpenMainWindow, CloseWindow},
 };
 
 } // namespace

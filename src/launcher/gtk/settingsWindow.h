@@ -53,3 +53,7 @@ KytySettingsWindow* kyty_settings_window_new_global(kyty::gtk::LauncherContext& 
 KytySettingsWindow* kyty_settings_window_new_for_game(kyty::gtk::LauncherContext&  context,
                                                       GtkWindow*                   parent,
                                                       const kyty::core::GameEntry& entry);
+
+// Shows the page named name: "general", "network", "debug", and in the global editor "folders",
+// "controller", "updates" (not in Flatpak builds), "about".
+void kyty_settings_window_show_page(KytySettingsWindow* window, const char* name);

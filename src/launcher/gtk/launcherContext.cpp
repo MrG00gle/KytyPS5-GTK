@@ -25,7 +25,8 @@ std::unique_ptr<LauncherContext> CreateLauncherContext(const LauncherContextOpti
 			          ec.message().c_str());
 		}
 	}
-	context->settings = core::OpenSettingsStore(context->paths.settings_file);
+	context->settings        = core::OpenSettingsStore(context->paths.settings_file);
+	context->stored_settings = context->settings.loaded.settings;
 	if (context->settings.load_error) {
 		g_message("cannot load %s: %s", context->paths.settings_file.c_str(),
 		          context->settings.load_error->message.c_str());
@@ -33,6 +34,32 @@ std::unique_ptr<LauncherContext> CreateLauncherContext(const LauncherContextOpti
 	g_debug("settings store %s, data directory %s", context->paths.settings_file.c_str(),
 	        context->paths.data_dir.c_str());
 	return context;
+}
+
+core::Expected<void, core::IoError> WriteSettingsStore(LauncherContext&              context,
+                                                       const core::LauncherSettings& settings) {
+	auto written = core::SaveSettingsStore(context.settings, settings);
+	if (written) {
+		context.stored_settings = settings;
+	}
+	return written;
+}
+
+std::optional<core::IoError> SaveSettingsAutomatically(LauncherContext&       context,
+                                                       core::LauncherSettings next) {
+	auto& store           = context.settings;
+	store.loaded.settings = std::move(next);
+	if (store.load_error && !store.overwrite_confirmed) {
+		g_debug("not saving %s: it could not be loaded and overwriting it is not allowed",
+		        store.path.c_str());
+		return std::nullopt;
+	}
+	auto written = WriteSettingsStore(context, store.loaded.settings);
+	if (!written) {
+		g_message("cannot save %s: %s", store.path.c_str(), written.error().message.c_str());
+		return written.error();
+	}
+	return std::nullopt;
 }
 
 } // namespace kyty::gtk

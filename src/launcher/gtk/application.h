@@ -9,10 +9,14 @@
 //   devices, controllers, title sound) and builds the LauncherContext on them (paths, Emulator,
 //   Settings_Store); finalize destroys both and shuts SDL down (SDL_Quit). Sets the App_ID as the
 //   default window icon name, adds the GResource icons to the icon theme, follows the desktop's
-//   color scheme (ADW_COLOR_SCHEME_DEFAULT), registers app.quit (Ctrl+Q), starts the Emulator
-//   version probe, and logs "startup complete" (g_debug).
-// - activate: opens nothing until the main window exists (task 20.3), so the process ends after
-//   startup.
+//   color scheme (ADW_COLOR_SCHEME_DEFAULT), registers app.quit and sets the accelerators of the
+//   D30 action table (Ctrl+Q quits), starts the Emulator version probe (the main window's footer
+//   shows the version when it arrives), and logs "startup complete" (g_debug).
+// - activate: creates and presents the main window (task 20.3; mainWindow.h), which adds the other
+//   app.* actions, or presents the existing one; "main window presented" (g_debug) is logged when
+//   it is first mapped.
+// - app.quit stores the main window's size first; shutdown destroys the main window (and with it
+//   the windows it opened) before the context goes away.
 
 #include "launcher/gtk/launcherContext.h"
 

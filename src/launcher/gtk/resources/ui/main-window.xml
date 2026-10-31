@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The main window (task 20.3; plan D30-D33; LFI-01-LFI-14, LFI-32, LFI-36, LFI-40, LFI-47):
+     the header bar (Run, Stop, Refresh, the grid toggle and the icon width slider, the search
+     entry, Global settings, Input mapping, Edit and Clear game config, Trophy overview, the game
+     menu, and the primary menu), the banners (settings load error, Emulator not found, scan
+     warnings), the library (the selected game's background art under a scrim, and the list and
+     grid views in views_stack, added by mainWindow.cpp) or the empty state, the footer, and the
+     toast overlay. Every button acts through an app.* or game.* action (D30), so its sensitivity
+     follows the action. -->
+<interface domain="kyty-launcher">
+  <template class="KytyMainWindow" parent="AdwApplicationWindow">
+    <property name="title" translatable="yes">KytyPS5 Launcher</property>
+    <property name="width-request">720</property>
+    <property name="height-request">420</property>
+    <property name="content">
+      <object class="AdwToastOverlay" id="toast_overlay">
+        <property name="child">
+          <object class="AdwToolbarView">
+            <property name="top-bar-style">raised</property>
+            <property name="bottom-bar-style">raised</property>
+            <child type="top">
+              <object class="AdwHeaderBar">
+                <child type="start">
+                  <object class="GtkButton">
+                    <property name="icon-name">media-playback-start-symbolic</property>
+                    <property name="action-name">game.run</property>
+                    <property name="tooltip-text" translatable="yes">Run the selected game</property>
+                    <accessibility>
+                      <property name="label" translatable="yes" context="header bar">Run</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="start">
+                  <object class="GtkButton">
+                    <property name="icon-name">media-playback-stop-symbolic</property>
+                    <property name="action-name">game.stop</property>
+                    <property name="tooltip-text" translatable="yes">Stop the running game</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Stop</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="start">
+                  <object class="GtkButton">
+                    <property name="icon-name">view-refresh-symbolic</property>
+                    <property name="action-name">app.refresh</property>
+                    <property name="tooltip-text" translatable="yes">Rescan game folders for new games</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Refresh game list</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="start">
+                  <object class="GtkToggleButton" id="grid_button">
+                    <property name="icon-name">view-grid-symbolic</property>
+                    <property name="action-name">app.toggle-grid</property>
+                    <property name="tooltip-text" translatable="yes">Toggle grid view</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Grid view</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="start">
+                  <object class="GtkScale" id="icon_width_scale">
+                    <property name="visible">False</property>
+                    <property name="width-request">150</property>
+                    <property name="draw-value">False</property>
+                    <property name="tooltip-text" translatable="yes">Game image size</property>
+                    <property name="adjustment">
+                      <object class="GtkAdjustment">
+                        <property name="lower">128</property>
+                        <property name="upper">320</property>
+                        <property name="step-increment">16</property>
+                        <property name="page-increment">32</property>
+                        <property name="value">224</property>
+                      </object>
+                    </property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Game image size</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <property name="title-widget">
+                  <object class="GtkSearchEntry" id="search_entry">
+                    <property name="placeholder-text" translatable="yes">Search name or serial</property>
+                    <property name="tooltip-text" translatable="yes">Search game name or serial</property>
+                    <property name="search-delay">0</property>
+                    <property name="width-chars">24</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Search name or serial</property>
+                    </accessibility>
+                  </object>
+                </property>
+                <child type="end">
+                  <object class="GtkMenuButton">
+                    <property name="icon-name">open-menu-symbolic</property>
+                    <property name="menu-model">primary_menu</property>
+                    <property name="primary">True</property>
+                    <property name="tooltip-text" translatable="yes">Main menu</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Main menu</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="end">
+                  <object class="GtkMenuButton" id="game_menu_button">
+                    <property name="icon-name">view-more-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">Game menu</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Game menu</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="end">
+                  <object class="GtkButton">
+                    <property name="icon-name">kyty-trophy-symbolic</property>
+                    <property name="action-name">app.trophy-overview</property>
+                    <property name="tooltip-text" translatable="yes">View saved trophies</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Trophy overview</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="end">
+                  <object class="GtkButton">
+                    <property name="icon-name">edit-clear-all-symbolic</property>
+                    <property name="action-name">game.clear-config</property>
+                    <property name="tooltip-text" translatable="yes">Clear game config</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Clear game config</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="end">
+                  <object class="GtkButton">
+                    <property name="icon-name">document-edit-symbolic</property>
+                    <property name="action-name">game.edit-config</property>
+                    <property name="tooltip-text" translatable="yes">Edit game config</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Edit game config</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="end">
+                  <object class="GtkButton">
+                    <property name="icon-name">input-gaming-symbolic</property>
+                    <property name="action-name">app.input-mapping</property>
+                    <property name="tooltip-text" translatable="yes">Edit input mapping</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Input mapping</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="end">
+                  <object class="GtkButton">
+                    <property name="icon-name">emblem-system-symbolic</property>
+                    <property name="action-name">app.global-settings</property>
+                    <property name="tooltip-text" translatable="yes">Edit global settings</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Global settings</property>
+                    </accessibility>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child type="top">
+              <object class="AdwBanner" id="settings_banner">
+                <property name="use-markup">False</property>
+                <property name="button-label" translatable="yes">Allow saving</property>
+              </object>
+            </child>
+            <child type="top">
+              <object class="AdwBanner" id="emulator_banner">
+                <property name="use-markup">False</property>
+              </object>
+            </child>
+            <child type="top">
+              <object class="AdwBanner" id="scan_banner">
+                <property name="use-markup">False</property>
+                <property name="button-label" translatable="yes">Details</property>
+              </object>
+            </child>
+            <property name="content">
+              <object class="GtkStack" id="content_stack">
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">library</property>
+                    <property name="child">
+                      <object class="GtkOverlay" id="library_overlay">
+                        <style>
+                          <class name="game-library"/>
+                        </style>
+                        <property name="child">
+                          <object class="GtkPicture" id="background_art">
+                            <property name="content-fit">cover</property>
+                            <property name="can-shrink">True</property>
+                            <property name="can-target">False</property>
+                            <property name="visible">False</property>
+                            <property name="alternative-text" translatable="yes">Background art of the selected game</property>
+                          </object>
+                        </property>
+                        <child type="overlay">
+                          <object class="GtkBox" id="art_scrim">
+                            <property name="can-target">False</property>
+                            <property name="visible">False</property>
+                            <style>
+                              <class name="game-art-scrim"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child type="overlay">
+                          <object class="GtkStack" id="views_stack">
+                            <property name="hexpand">True</property>
+                            <property name="vexpand">True</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">empty</property>
+                    <property name="child">
+                      <object class="AdwStatusPage" id="empty_page">
+                        <property name="icon-name">folder-open-symbolic</property>
+                        <property name="title" translatable="yes">No game folders</property>
+                        <property name="description" translatable="yes">Add the folders that hold your games to see them here.</property>
+                        <property name="child">
+                          <object class="GtkButton" id="add_folder_button">
+                            <property name="label" translatable="yes">Add game folder</property>
+                            <property name="action-name">app.add-game-folder</property>
+                            <property name="halign">center</property>
+                            <style>
+                              <class name="pill"/>
+                              <class name="suggested-action"/>
+                            </style>
+                          </object>
+                        </property>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+              </object>
+            </property>
+            <child type="bottom">
+              <object class="GtkBox">
+                <property name="spacing">18</property>
+                <style>
+                  <class name="main-footer"/>
+                </style>
+                <child>
+                  <object class="GtkLabel" id="settings_label">
+                    <property name="xalign">0</property>
+                    <property name="ellipsize">middle</property>
+                    <property name="hexpand">True</property>
+                    <style>
+                      <class name="caption"/>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="emulator_label">
+                    <property name="xalign">0</property>
+                    <property name="ellipsize">middle</property>
+                    <property name="hexpand">True</property>
+                    <style>
+                      <class name="caption"/>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="version_label">
+                    <property name="xalign">1</property>
+                    <property name="ellipsize">end</property>
+                    <property name="visible">False</property>
+                    <style>
+                      <class name="caption"/>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+  <menu id="primary_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Refresh game list</attribute>
+        <attribute name="action">app.refresh</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Grid view</attribute>
+        <attribute name="action">app.toggle-grid</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Show log</attribute>
+        <attribute name="action">app.toggle-log</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Save log…</attribute>
+        <attribute name="action">app.save-log</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Global settings…</attribute>
+        <attribute name="action">app.global-settings</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Add game folder…</attribute>
+        <attribute name="action">app.add-game-folder</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Input mapping…</attribute>
+        <attribute name="action">app.input-mapping</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Trophy overview…</attribute>
+        <attribute name="action">app.trophy-overview</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Check for updates…</attribute>
+        <attribute name="action">app.check-updates</attribute>
+        <attribute name="hidden-when">action-missing</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Open releases page</attribute>
+        <attribute name="action">app.open-releases-page</attribute>
+        <attribute name="hidden-when">action-missing</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Quit</attribute>
+        <attribute name="action">app.quit</attribute>
+      </item>
+    </section>
+  </menu>
+  <menu id="empty_space_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Global settings…</attribute>
+        <attribute name="action">app.global-settings</attribute>
+      </item>
+    </section>
+  </menu>
+</interface>

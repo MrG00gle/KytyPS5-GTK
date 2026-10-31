@@ -1364,7 +1364,7 @@ std::string SaveErrorText(const core::IoError& error) {
 void WriteStore(KytySettingsWindow* self, core::LauncherSettings next, std::function<void()> done) {
 	auto& state   = *self->state;
 	auto& store   = state.context->settings;
-	auto  written = core::SaveSettingsStore(store, next);
+	auto  written = kyty::gtk::WriteSettingsStore(*state.context, next);
 	if (written) {
 		store.loaded.settings = std::move(next);
 		g_signal_emit(self, g_saved_signal, 0);
@@ -1834,4 +1834,9 @@ KytySettingsWindow* kyty_settings_window_new_for_game(kyty::gtk::LauncherContext
                                                       GtkWindow*                   parent,
                                                       const kyty::core::GameEntry& entry) {
 	return NewWindow(context, parent, &entry);
+}
+
+void kyty_settings_window_show_page(KytySettingsWindow* window, const char* name) {
+	g_return_if_fail(KYTY_IS_SETTINGS_WINDOW(window));
+	adw_view_stack_set_visible_child_name(window->stack, name);
 }

@@ -4,6 +4,7 @@
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/installation.h"
+#include "launcher/gtk/mainWindow.h"
 #include "launcher/gtk/services/controllerService.h"
 #include "launcher/gtk/services/desktopLauncher.h"
 #include "launcher/gtk/services/deviceLists.h"
@@ -18,6 +19,7 @@
 #include <glib-unix.h>
 #include <string>
 #include <system_error>
+#include <vector>
 
 namespace kyty::gtk {
 
@@ -74,8 +76,30 @@ gboolean OnQuitSignal(gpointer data) {
 	return G_SOURCE_CONTINUE;
 }
 
+// The application's main windows (one in practice), each with a reference for the caller.
+std::vector<GObjectPtr<KytyMainWindow>> MainWindows(GtkApplication* application) {
+	std::vector<GObjectPtr<KytyMainWindow>> windows;
+	for (GList* item = gtk_application_get_windows(application); item != nullptr;
+	     item        = item->next) {
+		if (KYTY_IS_MAIN_WINDOW(item->data)) {
+			windows.push_back(GObjectPtr<KytyMainWindow>::Ref(KYTY_MAIN_WINDOW(item->data)));
+		}
+	}
+	return windows;
+}
+
+// Quitting does not close the windows, so the main window stores its size first (D32).
 void OnQuitAction(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	for (const auto& window: MainWindows(GTK_APPLICATION(data))) {
+		kyty_main_window_save_state(window.get());
+	}
 	g_application_quit(G_APPLICATION(data));
+}
+
+void OnMainWindowMapped(GtkWidget* window, gpointer /*data*/) {
+	g_signal_handlers_disconnect_by_func(window, reinterpret_cast<gpointer>(&OnMainWindowMapped),
+	                                     nullptr);
+	g_debug("main window presented");
 }
 
 // GtkApplication adds <resource base path>/icons by itself; adding it again would only duplicate
@@ -105,6 +129,9 @@ void StartVersionProbe(KytyApplication* self) {
 		    auto* probe_state                      = self->state;
 		    probe_state->context->emulator_version = std::move(version);
 		    g_debug("emulator version: %s", probe_state->context->emulator_version.c_str());
+		    for (const auto& window: MainWindows(GTK_APPLICATION(self))) {
+			    kyty_main_window_update_footer(window.get());
+		    }
 		    probe_state->version_probe.reset();
 	    });
 }
@@ -166,8 +193,8 @@ static void kyty_application_startup(GApplication* application) {
 	};
 	g_action_map_add_action_entries(G_ACTION_MAP(application), kActions, G_N_ELEMENTS(kActions),
 	                                application);
-	static const char* const kQuitAccels[] = {"<Control>q", nullptr};
-	gtk_application_set_accels_for_action(GTK_APPLICATION(application), "app.quit", kQuitAccels);
+	// The D30 table, app.quit (Ctrl+Q) included; the main window adds the other actions.
+	kyty::gtk::SetMainWindowAccelerators(GTK_APPLICATION(application));
 
 	kyty::gtk::StartVersionProbe(self);
 	kyty::gtk::running_application = self;
@@ -177,14 +204,29 @@ static void kyty_application_startup(GApplication* application) {
 	}
 }
 
-static void kyty_application_activate(GApplication* /*application*/) {
-	// The main window (task 20.3) is created here; until then nothing opens and the process ends.
+static void kyty_application_activate(GApplication* application) {
+	auto*      self    = KYTY_APPLICATION(application);
+	const auto windows = kyty::gtk::MainWindows(GTK_APPLICATION(application));
+	if (!windows.empty()) {
+		gtk_window_present(GTK_WINDOW(windows.front().get()));
+		return;
+	}
+	KytyMainWindow* window =
+	    kyty_main_window_new(*self->state->context, GTK_APPLICATION(application));
+	g_signal_connect(window, "map", G_CALLBACK(&kyty::gtk::OnMainWindowMapped), nullptr);
+	gtk_window_present(GTK_WINDOW(window));
 }
 
 static void kyty_application_shutdown(GApplication* application) {
 	auto* self                     = KYTY_APPLICATION(application);
 	kyty::gtk::running_application = nullptr;
 	self->state->version_probe.reset();
+	// The windows use the context, which finalize destroys. The main window takes its transient
+	// windows along (destroy-with-parent) and closes its alerts (their cancellable); an alert is
+	// never destroyed from outside (FEAT-005 (6)).
+	for (const auto& window: kyty::gtk::MainWindows(GTK_APPLICATION(application))) {
+		gtk_window_destroy(GTK_WINDOW(window.get()));
+	}
 	G_APPLICATION_CLASS(kyty_application_parent_class)->shutdown(application);
 }
 

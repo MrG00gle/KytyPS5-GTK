@@ -48,6 +48,24 @@
 	padding: 6px;
 }
 
+/* Main window (task 20.3). */
+
+/* The selected game's background art behind the views (LFI-08): with art, the views are
+ * transparent and a scrim in the view color keeps the rows readable (the Qt launcher drew its base
+ * color at alpha 185 over the art). */
+.game-library.with-art columnview.view,
+.game-library.with-art gridview.view {
+	background-color: transparent;
+}
+
+.game-art-scrim {
+	background-color: alpha(@view_bg_color, 0.73);
+}
+
+.main-footer {
+	padding: 4px 12px;
+}
+
 /* Settings window (task 21.1). */
 
 /* The percentage after a scale: GtkScale already sizes it for the widest value ("100%"); the gap

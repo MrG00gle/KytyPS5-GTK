@@ -20,6 +20,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace kyty::gtk {
@@ -56,8 +57,15 @@ struct LauncherContext {
 	EmulatorLocation emulator;
 	std::string      emulator_version;
 	// The one in-memory Settings_Store of the process: windows edit copies of
-	// settings.loaded.settings and save through core::SaveSettingsStore (never core::SaveSettings).
+	// settings.loaded.settings and save through WriteSettingsStore (core::SaveSettingsStore, never
+	// core::SaveSettings).
 	core::SettingsStoreFile  settings;
+	// What the Settings_Store holds as far as the launcher knows: the settings OpenSettingsStore
+	// loaded (the defaults when the file does not exist or could not be loaded), then those of
+	// every successful WriteSettingsStore. settings.loaded.settings is ahead of it while a change
+	// is only in memory (an automatic save that was skipped or failed, the settings window's
+	// size); the main window's close-time save writes such changes (plan D32, D40).
+	core::LauncherSettings   stored_settings;
 	core::RunState           run_state;
 	core::CompatibilityModel compatibility;
 	// The game library of the last scan (empty until the first scan replaces it). The settings
@@ -85,5 +93,19 @@ struct LauncherContextOptions {
 // settings.load_error).
 std::unique_ptr<LauncherContext> CreateLauncherContext(const LauncherContextOptions& options,
                                                        const Services&               services);
+
+// core::SaveSettingsStore(context.settings, settings); on success context.stored_settings becomes
+// settings (the caller updates settings.loaded.settings). Every write of the Settings_Store goes
+// through here.
+core::Expected<void, core::IoError> WriteSettingsStore(LauncherContext&              context,
+                                                       const core::LauncherSettings& settings);
+
+// An automatic save of the launcher's own state (plan D32: view mode, icon width, window size, the
+// migrated game paths): next becomes the in-memory settings, then the Settings_Store is written
+// through WriteSettingsStore. While the store could not be loaded and the user has not allowed
+// overwriting it (HC-17), nothing is written, quietly. The error of a failed write, or nullopt. A
+// skipped or failed save leaves next ahead of stored_settings, so the next save writes it.
+std::optional<core::IoError> SaveSettingsAutomatically(LauncherContext&       context,
+                                                       core::LauncherSettings next);
 
 } // namespace kyty::gtk
