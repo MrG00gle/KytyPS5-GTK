@@ -2,6 +2,7 @@
 src/launcher/gtk/additionalContentWindow.cpp
 src/launcher/gtk/application.cpp
 src/launcher/gtk/bindingCaptureDialog.cpp
+src/launcher/gtk/cheatsWindow.cpp
 src/launcher/gtk/compressionDialog.cpp
 src/launcher/gtk/dialogRegistry.cpp
 src/launcher/gtk/dualsenseWidget.cpp
@@ -16,6 +17,7 @@ src/launcher/gtk/logView.cpp
 src/launcher/gtk/main.cpp
 src/launcher/gtk/mainWindow.cpp
 src/launcher/gtk/resources/ui/additional-content-window.xml
+src/launcher/gtk/resources/ui/cheats-window.xml
 src/launcher/gtk/resources/ui/compression-dialog.xml
 src/launcher/gtk/resources/ui/game-menu.xml
 src/launcher/gtk/resources/ui/game-picker-dialog.xml

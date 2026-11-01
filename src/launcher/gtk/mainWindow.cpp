@@ -1,7 +1,9 @@
 #include "launcher/gtk/mainWindow.h"
 
+#include "launcher/core/cheats.h"
 #include "launcher/gtk/additionalContentWindow.h"
 #include "launcher/gtk/alerts.h"
+#include "launcher/gtk/cheatsWindow.h"
 #include "launcher/gtk/compressionDialog.h"
 #include "launcher/gtk/gameGridView.h"
 #include "launcher/gtk/gameListView.h"
@@ -238,6 +240,9 @@ void UpdateActions(KytyMainWindow* self) {
 	SetEnabled(actions, "compress",
 	           game != nullptr &&
 	               kyty_game_get_entry(game).kind == core::GameEntry::Kind::Directory);
+	// Task 21.4, 11.4: cheats only for PPSA title IDs (the game menu hides the item otherwise).
+	SetEnabled(actions, "cheats",
+	           game != nullptr && core::IsCheatTitleId(kyty_game_get_entry(game).title_id));
 	// 10.4, LFI-11: Run for no game while one runs (or an update installs), Stop only then.
 	SetEnabled(actions, "run",
 	           game != nullptr && state.context->run_state.CanRun(kyty_game_get_entry(game).path));
@@ -438,6 +443,18 @@ void OnCompress(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer dat
 	gtk_window_present(GTK_WINDOW(dialog));
 }
 
+// ---- Cheats (task 21.4)
+
+void OnCheats(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto*     self = KYTY_MAIN_WINDOW(data);
+	KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	if (game == nullptr || !core::IsCheatTitleId(kyty_game_get_entry(game).title_id)) {
+		return;
+	}
+	gtk_window_present(GTK_WINDOW(kyty_cheats_window_new(*self->state->context, GTK_WINDOW(self),
+	                                                     kyty_game_get_entry(game))));
+}
+
 // ---- Run, stop, and the log (task 20.5)
 
 void OnRun(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
@@ -630,6 +647,7 @@ void InstallActions(KytyMainWindow* self, GtkApplication* application) {
 	connect("trophies", G_CALLBACK(&OnTrophies));
 	connect("additional-content", G_CALLBACK(&OnAdditionalContent));
 	connect("compress", G_CALLBACK(&OnCompress));
+	connect("cheats", G_CALLBACK(&OnCheats));
 	connect("run", G_CALLBACK(&OnRun));
 	connect("stop", G_CALLBACK(&OnStop));
 	gtk_widget_insert_action_group(GTK_WIDGET(self), "game",

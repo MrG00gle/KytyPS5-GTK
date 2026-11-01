@@ -5,6 +5,7 @@
 #include "launcher/gtk/additionalContentWindow.h"
 #include "launcher/gtk/alerts.h"
 #include "launcher/gtk/bindingCaptureDialog.h"
+#include "launcher/gtk/cheatsWindow.h"
 #include "launcher/gtk/compressionDialog.h"
 #include "launcher/gtk/gamePickerDialog.h"
 #include "launcher/gtk/gobjectPtr.h"
@@ -134,6 +135,12 @@ DialogHandle OpenCompressionDialog(LauncherContext& /*context*/, GtkWindow* pare
 	return Presented(GTK_WINDOW(kyty_compression_dialog_new(parent, *args.entry)));
 }
 
+// The cheats of DialogArgs::entry (required).
+DialogHandle OpenCheatsWindow(LauncherContext& context, GtkWindow* parent, const DialogArgs& args) {
+	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
+	return Presented(GTK_WINDOW(kyty_cheats_window_new(context, parent, *args.entry)));
+}
+
 // A sample trophy, earned on 2026-10-30 12:34:56 UTC with a reward (only the UI tests and the
 // screenshot harness open it through the registry; the trophy window opens the real ones).
 DialogHandle OpenTrophyDetailsDialog(LauncherContext& /*context*/, GtkWindow* parent,
@@ -198,6 +205,7 @@ constexpr DialogType kDialogTypes[] = {
     {"trophy-overview-window", OpenTrophyOverviewWindow, CloseWindow},
     {"additional-content-window", OpenAdditionalContentWindow, CloseWindow},
     {"compression-dialog", OpenCompressionDialog, CloseWindow},
+    {"cheats-window", OpenCheatsWindow, CloseWindow},
 };
 
 } // namespace
