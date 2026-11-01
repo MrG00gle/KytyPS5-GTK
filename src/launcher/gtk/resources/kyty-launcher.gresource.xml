@@ -18,6 +18,7 @@
     <file>ui/trophy-details-dialog.xml</file>
     <file>ui/trophy-overview-window.xml</file>
     <file>ui/trophy-window.xml</file>
+    <file>ui/update-progress-window.xml</file>
     <file alias="icons/scalable/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK.svg</file>
     <file alias="icons/16x16/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK-small.svg</file>
     <file alias="icons/24x24/apps/io.github.MrG00gle.KytyPS5_GTK.svg">icons/io.github.MrG00gle.KytyPS5_GTK-small.svg</file>

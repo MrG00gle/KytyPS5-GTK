@@ -72,6 +72,13 @@ struct LauncherContext {
 	// window's Game configs import and export list its games.
 	GameListModel            library;
 	updater::UpdateUiMode    update_mode = updater::UpdateUiMode::Other;
+	// This installation for the update UI (task 21.6; HC-05, HC-34): the launcher's directory (the
+	// installation directory) and the directory it started in, both absolute in the launcher, and
+	// this build's release tag (updater::CurrentBuildFlags().release_tag). The harness and the UI
+	// tests replace them.
+	std::filesystem::path launcher_directory;
+	std::filesystem::path working_directory;
+	std::string           release_tag;
 	// --local: the compatibility database is ./compatibility_db.json, with editable entries.
 	bool local = false;
 
@@ -87,7 +94,8 @@ struct LauncherContextOptions {
 };
 
 // Locates the Emulator (LocateEmulator), resolves the Settings_Store and Data_Directory
-// (core::ResolvePaths with services.environment and the Emulator's directory), creates the
+// (core::ResolvePaths with services.environment and the Emulator's directory), keeps the launcher
+// and working directories and this build's release tag for the update UI, creates the
 // Settings_Store's directory inside the Flatpak_Sandbox (a failure is logged; the first save then
 // names the path), and opens the Settings_Store (core::OpenSettingsStore; a load error stays in
 // settings.load_error).

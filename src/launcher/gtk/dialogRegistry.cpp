@@ -17,8 +17,11 @@
 #include "launcher/gtk/trophyDetailsDialog.h"
 #include "launcher/gtk/trophyOverviewWindow.h"
 #include "launcher/gtk/trophyWindow.h"
+#include "launcher/gtk/updateProgressWindow.h"
+#include "launcher/gtk/updateUi.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <iterator>
 #include <optional>
 #include <string>
@@ -167,6 +170,39 @@ DialogHandle OpenTrophyOverviewWindow(LauncherContext& context, GtkWindow* paren
 	return Presented(GTK_WINDOW(kyty_trophy_overview_window_new(context, parent)));
 }
 
+// The update windows (task 21.6) with sample releases (only the UI tests and the screenshot
+// harness open them through the registry; the main window's UpdateUi opens the real ones): the
+// offer with a callback that does nothing, the progress window at 40 % of a 48 MiB package, and
+// the previous result of a successful update without a message (the default text).
+constexpr const char* kSampleTag          = "2026.04.01-def5678";
+constexpr const char* kSampleInstalledTag = "2026.03.01-abc1234";
+
+DialogHandle OpenUpdateOfferAlert(LauncherContext& /*context*/, GtkWindow* parent,
+                                  const DialogArgs& /*args*/) {
+	DialogHandle handle;
+	handle.cancellable = g_cancellable_new();
+	handle.window      = ShowUpdateOffer(
+	    parent, kSampleTag, kSampleInstalledTag, [](UpdateOfferResponse /*response*/) {},
+	    handle.cancellable);
+	return handle;
+}
+
+DialogHandle OpenUpdateProgressWindow(LauncherContext& /*context*/, GtkWindow* parent,
+                                      const DialogArgs& /*args*/) {
+	KytyUpdateProgressWindow* window = kyty_update_progress_window_new(parent, kSampleTag);
+	constexpr uint64_t        kSize  = uint64_t {48} << 20u;
+	kyty_update_progress_window_set_downloaded(window, kSize * 2 / 5, kSize);
+	return Presented(GTK_WINDOW(window));
+}
+
+DialogHandle OpenUpdateResultAlert(LauncherContext& /*context*/, GtkWindow* parent,
+                                   const DialogArgs& /*args*/) {
+	DialogHandle handle;
+	handle.cancellable = g_cancellable_new();
+	handle.window      = ShowPreviousUpdateResult(parent, {true, ""}, handle.cancellable);
+	return handle;
+}
+
 // The main window without an application (its app.* actions are then the window's own); a
 // toplevel of its own, so parent is not used. It starts the library work on context.
 DialogHandle OpenMainWindow(LauncherContext& context, GtkWindow* /*parent*/,
@@ -206,6 +242,9 @@ constexpr DialogType kDialogTypes[] = {
     {"additional-content-window", OpenAdditionalContentWindow, CloseWindow},
     {"compression-dialog", OpenCompressionDialog, CloseWindow},
     {"cheats-window", OpenCheatsWindow, CloseWindow},
+    {"update-offer-alert", OpenUpdateOfferAlert, CloseAlert},
+    {"update-progress-window", OpenUpdateProgressWindow, CloseWindow},
+    {"update-result-alert", OpenUpdateResultAlert, CloseAlert},
 };
 
 } // namespace

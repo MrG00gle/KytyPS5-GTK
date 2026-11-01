@@ -1,7 +1,7 @@
 #pragma once
 
 // The main window (task 20.3; plan D29-D33; Requirements 6.2, 6.8, 6.11, 7.3, 7.10, 7.11, 7.17;
-// LFI-01-LFI-14, LFI-32, LFI-36, LFI-40, LFI-47; HC-17), an AdwApplicationWindow from
+// LFI-01-LFI-14, LFI-32, LFI-33, LFI-36, LFI-40, LFI-47; HC-17), an AdwApplicationWindow from
 // resources/ui/main-window.xml:
 // - the header bar: Run, Stop, Refresh (F5), the grid toggle (Ctrl+G) with the icon width slider
 //   (128-320 in steps of 16, shown in the grid view), the search entry (Ctrl+F focuses it, Escape
@@ -10,8 +10,9 @@
 //   the game's own input mapping), and the primary menu;
 // - the banners: the Settings_Store could not be loaded (HC-17: its path and reason, nothing is
 //   saved until "Allow saving" and a confirmation, core::ConfirmOverwrite), "Emulator not found at
-//   <path>" (LFI-40), and "<n> folder(s) could not be read" with a Details alert that names every
-//   path and its reason (D33, 7.10);
+//   <path>" (LFI-40), "<n> folder(s) could not be read" with a Details alert that names every
+//   path and its reason (D33, 7.10), and, in Official builds, "Version <tag> is available" while
+//   an update is offered, whose button shows the offer again (task 21.6, updateUi.h);
 // - the library: the list and grid views (gameListView.h, gameGridView.h) over
 //   LauncherContext::library in a GtkStack, over the selected game's background art (LFI-08) and a
 //   translucent scrim; with no Game_Folder, the empty state with "Add game folder" (LFI-36), which
@@ -20,7 +21,9 @@
 //   library, hidden until app.toggle-log (Ctrl+L) shows it; app.save-log (Ctrl+S) writes its rows
 //   to a file chosen through FileChooser::SaveFile (10.8; an error names the file and the reason
 //   and changes nothing, 10.13);
-// - the footer: the Settings_Store path, the Emulator path, and the Emulator version (LFI-32);
+// - the footer: the Settings_Store path, the Emulator path, the Emulator version (LFI-32), and the
+//   update link of the build's mode (LFI-33: "Check for updates" in Official builds, "Releases
+//   page" in Other builds, none in Flatpak builds);
 // - a toast overlay for messages.
 // Running games is a RunController's (runController.h): game.run (Ctrl+R, Enter, double-click, the
 // game menu) runs the selected game, game.stop (Ctrl+Period) stops the running one; errors are
@@ -36,9 +39,11 @@
 //
 // Actions (D30). The window registers the app.* actions on its application (without one, in a
 // group of its own named "app", where quit closes the window), and inserts the game.* group (the
-// selected game). Actions of later tasks exist but stay disabled: app.check-updates (Official
-// builds), app.open-releases-page (Other builds), game.open-folder, game.remove-save-data,
-// game.clear-config, game.export-settings, game.import-settings. Enabled:
+// selected game). Actions of later tasks exist but stay disabled: game.open-folder,
+// game.remove-save-data, game.clear-config, game.export-settings, game.import-settings. Enabled:
+// app.check-updates (Official builds only: a user-activated update check, off while a check or an
+// installation runs), app.open-releases-page (Other builds only: the releases page), both through
+// the window's UpdateUi (updateUi.h, task 21.6), which also does the update work at startup;
 // app.refresh, app.search, app.toggle-grid (stateful), app.global-settings, app.add-game-folder,
 // app.input-mapping (the global input mapping editor, inputMappingWindow.h), app.trophy-overview
 // (trophyOverviewWindow.h), app.toggle-log (stateful), app.save-log, game.edit-config and
@@ -83,14 +88,16 @@ namespace kyty::gtk {
 class LibraryController;
 class LogView;
 class RunController;
+class UpdateUi;
 
-// The window's library work, its game.* actions, its run flow, and its log (for the harness and
-// the UI tests).
+// The window's library work, its game.* actions, its run flow, its log, and its update UI (for
+// the harness and the UI tests).
 LibraryController& MainWindowLibrary(KytyMainWindow* window);
 GActionGroup*      MainWindowGameActions(KytyMainWindow* window);
 RunController&     MainWindowRun(KytyMainWindow* window);
 KytyLogModel*      MainWindowLog(KytyMainWindow* window);
 LogView&           MainWindowLogView(KytyMainWindow* window);
+UpdateUi&          MainWindowUpdate(KytyMainWindow* window);
 
 // A game started from the window has not exited yet.
 bool MainWindowGameRunning(KytyMainWindow* window);

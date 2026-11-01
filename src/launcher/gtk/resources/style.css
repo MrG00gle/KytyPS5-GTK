@@ -66,6 +66,12 @@
 	padding: 4px 12px;
 }
 
+/* The footer's update link (task 21.6, LFI-33): a link button as compact as the labels beside it. */
+.main-footer button.link {
+	min-height: 0;
+	padding: 0 4px;
+}
+
 /* The log pane below the library (task 20.5): one compact monospace row per line. */
 .log-view > row {
 	padding: 1px 8px;

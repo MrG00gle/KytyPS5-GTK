@@ -3,10 +3,10 @@
      the header bar (Run, Stop, Refresh, the grid toggle and the icon width slider, the search
      entry, Global settings, Input mapping, Edit and Clear game config, Trophy overview, the game
      menu, and the primary menu), the banners (settings load error, Emulator not found, scan
-     warnings), the library (the selected game's background art under a scrim, and the list and
+     warnings, an available update), the library (the selected game's background art under a scrim, and the list and
      grid views in views_stack, added by mainWindow.cpp) or the empty state, above the log pane
-     in log_paned (task 20.5; log_area, hidden until app.toggle-log shows it), the footer, and the
-     toast overlay. Every button acts through an app.* or game.* action (D30), so its sensitivity
+     in log_paned (task 20.5; log_area, hidden until app.toggle-log shows it), the footer (with the
+     update link of task 21.6), and the toast overlay. Every button acts through an app.* or game.* action (D30), so its sensitivity
      follows the action. -->
 <interface domain="kyty-launcher">
   <template class="KytyMainWindow" parent="AdwApplicationWindow">
@@ -181,6 +181,14 @@
                 <property name="button-label" translatable="yes">Details</property>
               </object>
             </child>
+            <child type="top">
+              <!-- Task 21.6 (Official builds): a newer release is offered; the button shows the
+                   offer again. -->
+              <object class="AdwBanner" id="update_banner">
+                <property name="use-markup">False</property>
+                <property name="button-label" translatable="yes">Update…</property>
+              </object>
+            </child>
             <property name="content">
               <object class="GtkPaned" id="log_paned">
                 <property name="orientation">vertical</property>
@@ -299,6 +307,36 @@
                     <style>
                       <class name="caption"/>
                       <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <!-- The update link of the build's mode (task 21.6, LFI-33): mainWindow.cpp shows
+                     one of them, or none in Flatpak builds. -->
+                <child>
+                  <object class="GtkButton" id="check_updates_link">
+                    <property name="visible">False</property>
+                    <property name="label" translatable="yes">Check for updates</property>
+                    <property name="action-name">app.check-updates</property>
+                    <property name="tooltip-text" translatable="yes">Look for a newer release</property>
+                    <property name="valign">center</property>
+                    <style>
+                      <class name="flat"/>
+                      <class name="link"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="releases_link">
+                    <property name="visible">False</property>
+                    <property name="label" translatable="yes">Releases page</property>
+                    <property name="action-name">app.open-releases-page</property>
+                    <property name="tooltip-text" translatable="yes">Open the releases page in the web browser</property>
+                    <property name="valign">center</property>
+                    <style>
+                      <class name="flat"/>
+                      <class name="link"/>
+                      <class name="caption"/>
                     </style>
                   </object>
                 </child>

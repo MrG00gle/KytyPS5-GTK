@@ -130,6 +130,12 @@ struct ConfirmCall {
 	std::unique_ptr<AlertLink>         link;
 };
 
+struct ChoiceCall {
+	std::function<void(int index)> callback;
+	int                            cancel_index = 0;
+	std::unique_ptr<AlertLink>     link;
+};
+
 struct ErrorCall {
 	std::unique_ptr<AlertLink> link;
 };
@@ -144,6 +150,19 @@ void OnConfirmChosen(GObject* source, GAsyncResult* result, gpointer data) {
 	}
 	if (call->callback) {
 		call->callback(button == kAcceptButton);
+	}
+}
+
+void OnChoiceChosen(GObject* source, GAsyncResult* result, gpointer data) {
+	std::unique_ptr<ChoiceCall> call(static_cast<ChoiceCall*>(data));
+	GErrorPtr                   error;
+	const int                   button =
+	    gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), result, error.Out());
+	if (WasCancelled(error)) {
+		return;
+	}
+	if (call->callback) {
+		call->callback(button >= 0 ? button : call->cancel_index);
 	}
 }
 
@@ -190,6 +209,33 @@ GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view
 			        "style",
 			        std::string(heading).c_str(), accept_text.c_str());
 		}
+	}
+	return window;
+}
+
+GtkWindow* Choose(GtkWindow* parent, std::string_view heading, std::string_view body,
+                  const std::vector<std::string>& labels, int cancel_index, int default_index,
+                  std::function<void(int index)> callback, GCancellable* cancellable) {
+	auto                     alert = NewAlert(heading, body);
+	std::vector<const char*> buttons;
+	for (const auto& label: labels) {
+		buttons.push_back(label.c_str());
+	}
+	buttons.push_back(nullptr);
+	gtk_alert_dialog_set_buttons(alert.get(), buttons.data());
+	gtk_alert_dialog_set_cancel_button(alert.get(), cancel_index);
+	gtk_alert_dialog_set_default_button(alert.get(), default_index);
+
+	auto call            = std::make_unique<ChoiceCall>();
+	call->callback       = std::move(callback);
+	call->cancel_index   = cancel_index;
+	call->link           = LinkFor(parent, cancellable);
+	GCancellable* own    = call->link ? call->link->Cancellable() : nullptr;
+	const auto    before = Toplevels();
+	gtk_alert_dialog_choose(alert.get(), parent, own, OnChoiceChosen, call.release());
+	GtkWindow* window = NewToplevel(before);
+	if (own != nullptr) {
+		AlertLink::Attach(window);
 	}
 	return window;
 }

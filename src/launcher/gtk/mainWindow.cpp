@@ -19,6 +19,7 @@
 #include "launcher/gtk/settingsWindow.h"
 #include "launcher/gtk/trophyOverviewWindow.h"
 #include "launcher/gtk/trophyWindow.h"
+#include "launcher/gtk/updateUi.h"
 
 #include <cmath>
 #include <cstdarg>
@@ -46,6 +47,7 @@ struct MainWindowState {
 	GObjectPtr<KytyLogModel>           log;
 	std::unique_ptr<LogView>           log_view;
 	std::unique_ptr<RunController>     run;
+	std::unique_ptr<UpdateUi>          update; // task 21.6
 	// Quitting while a game runs (D34): what runs once the game has exited, whether the
 	// confirmation is open, and whether the game was asked to stop for the quit.
 	std::function<void()> quit_done;
@@ -72,6 +74,7 @@ struct _KytyMainWindow {
 	AdwBanner*           settings_banner;
 	AdwBanner*           emulator_banner;
 	AdwBanner*           scan_banner;
+	AdwBanner*           update_banner;
 	GtkPaned*            log_paned;
 	GtkWidget*           log_area;
 	GtkStack*            content_stack;
@@ -82,6 +85,8 @@ struct _KytyMainWindow {
 	GtkLabel*            settings_label;
 	GtkLabel*            emulator_label;
 	GtkLabel*            version_label;
+	GtkWidget*           check_updates_link;
+	GtkWidget*           releases_link;
 
 	kyty::gtk::MainWindowState* state;
 };
@@ -95,21 +100,20 @@ namespace core = kyty::core;
 
 constexpr const char* kTemplateResource = "/io/github/MrG00gle/KytyPS5_GTK/ui/main-window.xml";
 
-// The app.* and game.* actions of later tasks (plan D30): registered now, enabled by their tasks.
-constexpr const char* kLaterAppActions[] = {"check-updates", "open-releases-page"};
-constexpr const char* kGameActions[]     = {"run",
-                                            "stop",
-                                            "open-folder",
-                                            "trophies",
-                                            "cheats",
-                                            "additional-content",
-                                            "compress",
-                                            "remove-save-data",
-                                            "edit-config",
-                                            "clear-config",
-                                            "input-mapping",
-                                            "export-settings",
-                                            "import-settings"};
+// The game.* actions (plan D30): registered disabled, enabled by UpdateActions once implemented.
+constexpr const char* kGameActions[] = {"run",
+                                        "stop",
+                                        "open-folder",
+                                        "trophies",
+                                        "cheats",
+                                        "additional-content",
+                                        "compress",
+                                        "remove-save-data",
+                                        "edit-config",
+                                        "clear-config",
+                                        "input-mapping",
+                                        "export-settings",
+                                        "import-settings"};
 
 struct Accelerator {
 	const char* action;
@@ -247,6 +251,8 @@ void UpdateActions(KytyMainWindow* self) {
 	SetEnabled(actions, "run",
 	           game != nullptr && state.context->run_state.CanRun(kyty_game_get_entry(game).path));
 	SetEnabled(actions, "stop", state.context->run_state.CanStop());
+	// Task 21.6 (Official builds): no second check while a check or an installation runs.
+	SetEnabled(state.app_actions, "check-updates", state.update && state.update->CanCheck());
 }
 
 void ShowArt(KytyMainWindow* self, GdkTexture* art) {
@@ -455,6 +461,48 @@ void OnCheats(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data)
 	                                                     kyty_game_get_entry(game))));
 }
 
+// ---- Updates (task 21.6): the check and the releases page by the build's mode (updateUi.h)
+
+void OnCheckUpdates(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (Alive(self) && self->state->update) {
+		self->state->update->Check();
+	}
+}
+
+void OnOpenReleasesPage(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (Alive(self) && self->state->update) {
+		self->state->update->OpenReleasesPage();
+	}
+}
+
+// The banner stands while the session offers a release.
+void UpdateUpdateBanner(KytyMainWindow* self) {
+	const auto tag = self->state->update ? self->state->update->OfferedTag() : std::nullopt;
+	if (tag) {
+		adw_banner_set_title(self->update_banner,
+		                     // TRANSLATORS: %s is the tag of the newer release.
+		                     Format(_("Version %s is available"), tag->c_str()).c_str());
+	}
+	adw_banner_set_revealed(self->update_banner, tag ? TRUE : FALSE);
+}
+
+// The session or the installation changed: Run is off while an update installs (10.4).
+void OnUpdateChanged(KytyMainWindow* self) {
+	if (Alive(self)) {
+		UpdateActions(self);
+		UpdateUpdateBanner(self);
+	}
+}
+
+void OnUpdateBanner(AdwBanner* /*banner*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (Alive(self) && self->state->update) {
+		self->state->update->ShowOffer();
+	}
+}
+
 // ---- Run, stop, and the log (task 20.5)
 
 void OnRun(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
@@ -581,10 +629,10 @@ constexpr GActionEntry kAppActions[] = {
     {"save-log", OnSaveLog, nullptr, nullptr, nullptr, {0, 0, 0}},
 };
 constexpr GActionEntry kOfficialActions[] = {
-    {"check-updates", nullptr, nullptr, nullptr, nullptr, {0, 0, 0}},
+    {"check-updates", OnCheckUpdates, nullptr, nullptr, nullptr, {0, 0, 0}},
 };
 constexpr GActionEntry kOtherActions[] = {
-    {"open-releases-page", nullptr, nullptr, nullptr, nullptr, {0, 0, 0}},
+    {"open-releases-page", OnOpenReleasesPage, nullptr, nullptr, nullptr, {0, 0, 0}},
 };
 constexpr GActionEntry kOwnQuitAction[] = {
     {"quit", OnCloseWindow, nullptr, nullptr, nullptr, {0, 0, 0}},
@@ -621,9 +669,6 @@ void InstallActions(KytyMainWindow* self, GtkApplication* application) {
 			AddAppActions(self, kOtherActions, G_N_ELEMENTS(kOtherActions));
 			break;
 		case kyty::updater::UpdateUiMode::Flatpak: break;
-	}
-	for (const char* name: kLaterAppActions) {
-		SetEnabled(state.app_actions, name, false);
 	}
 	if (GSimpleAction* grid = FindAction(state.app_actions, "toggle-grid"); grid != nullptr) {
 		g_simple_action_set_state(
@@ -771,6 +816,8 @@ static void kyty_main_window_dispose(GObject* object) {
 		state->quit_idle.Remove();
 		state->quit_done = nullptr;
 		state->signals.clear();
+		// The update UI uses the run state and the window (its session ends here).
+		state->update.reset();
 		// The run controller uses the library's games and the log model.
 		state->run.reset();
 		state->log_view.reset();
@@ -816,6 +863,7 @@ static void kyty_main_window_class_init(KytyMainWindowClass* klass) {
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, settings_banner);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, emulator_banner);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, scan_banner);
+	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, update_banner);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, log_paned);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, log_area);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, content_stack);
@@ -826,6 +874,8 @@ static void kyty_main_window_class_init(KytyMainWindowClass* klass) {
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, settings_label);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, emulator_label);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, version_label);
+	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, check_updates_link);
+	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, releases_link);
 }
 
 KytyMainWindow* kyty_main_window_new(kyty::gtk::LauncherContext& context,
@@ -894,7 +944,26 @@ KytyMainWindow* kyty_main_window_new(kyty::gtk::LauncherContext& context,
 	state.run = std::make_unique<kyty::gtk::RunController>(context, state.log.get(),
 	                                                       std::move(run_callbacks));
 
+	// The update UI of the build's mode (task 21.6) and its footer link (LFI-33).
+	kyty::gtk::UpdateUi::Callbacks update_callbacks;
+	update_callbacks.changed = [self]() { OnUpdateChanged(self); };
+	update_callbacks.quit    = [self]() {
+		if (Alive(self)) {
+			gtk_widget_activate_action(GTK_WIDGET(self), "app.quit", nullptr);
+		}
+	};
+	state.update = std::make_unique<kyty::gtk::UpdateUi>(context, GTK_WINDOW(self),
+	                                                     std::move(update_callbacks));
+
+	const bool official = context.update_mode == kyty::updater::UpdateUiMode::Official;
+	const bool other    = context.update_mode == kyty::updater::UpdateUiMode::Other;
+	gtk_widget_set_visible(self->check_updates_link, official ? TRUE : FALSE);
+	gtk_widget_set_visible(self->releases_link, other ? TRUE : FALSE);
+	state.signals.push_back(SignalScope::Connect(self->update_banner, "button-clicked",
+	                                             G_CALLBACK(&OnUpdateBanner), self));
+
 	state.library->Start();
+	state.update->Start();
 	UpdateActions(self);
 	g_debug("main window: %s view, icon width %d, size %dx%d%s",
 	        settings.grid_view ? "grid" : "list", state.grid_view->IconWidth(),
@@ -969,6 +1038,10 @@ KytyLogModel* MainWindowLog(KytyMainWindow* window) {
 
 LogView& MainWindowLogView(KytyMainWindow* window) {
 	return *window->state->log_view;
+}
+
+UpdateUi& MainWindowUpdate(KytyMainWindow* window) {
+	return *window->state->update;
 }
 
 bool MainWindowGameRunning(KytyMainWindow* window) {

@@ -1,5 +1,7 @@
 #include "launcher/gtk/launcherContext.h"
 
+#include "updater/core/buildInfo.h"
+
 #include <glib.h>
 #include <system_error>
 
@@ -13,6 +15,10 @@ std::unique_ptr<LauncherContext> CreateLauncherContext(const LauncherContextOpti
 	                                          context->emulator.executable.parent_path());
 	context->update_mode = options.update_mode;
 	context->local       = options.local;
+	// This installation, for the update UI (task 21.6).
+	context->launcher_directory = options.launcher_directory;
+	context->working_directory  = options.working_directory;
+	context->release_tag        = std::string(updater::CurrentBuildFlags().release_tag);
 	if (!context->emulator.found) {
 		g_message("the emulator was not found at %s", context->emulator.executable.c_str());
 	}

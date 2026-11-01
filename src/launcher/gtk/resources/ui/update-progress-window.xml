@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The update progress window (task 21.6, plan D45, LFI-35): the download with its progress bar,
+     then the preparation and the restart with a spinner, and Cancel below.
+     updateProgressWindow.cpp sets the texts. -->
+<interface domain="kyty-launcher">
+  <template class="KytyUpdateProgressWindow" parent="AdwWindow">
+    <property name="modal">True</property>
+    <property name="destroy-with-parent">True</property>
+    <property name="title" translatable="yes">KytyPS5 Update</property>
+    <property name="default-width">480</property>
+    <property name="default-height">240</property>
+    <property name="width-request">360</property>
+    <property name="height-request">220</property>
+    <property name="content">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar"/>
+        </child>
+        <property name="content">
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">12</property>
+            <property name="valign">center</property>
+            <property name="margin-top">24</property>
+            <property name="margin-bottom">24</property>
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <child>
+              <object class="GtkLabel" id="status_label">
+                <property name="xalign">0</property>
+                <property name="wrap">True</property>
+                <property name="wrap-mode">word-char</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkStack" id="progress_stack">
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">download</property>
+                    <property name="child">
+                      <object class="GtkProgressBar" id="progress_bar">
+                        <property name="show-text">True</property>
+                        <property name="valign">center</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Download progress</property>
+                        </accessibility>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">busy</property>
+                    <property name="child">
+                      <object class="GtkSpinner" id="spinner">
+                        <property name="halign">center</property>
+                        <property name="width-request">32</property>
+                        <property name="height-request">32</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Update in progress</property>
+                        </accessibility>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+        <child type="bottom">
+          <object class="GtkActionBar">
+            <child type="end">
+              <object class="GtkButton" id="cancel_button">
+                <property name="label" translatable="yes">_Cancel</property>
+                <property name="use-underline">True</property>
+                <property name="tooltip-text" translatable="yes">Stop the update and delete the downloaded files</property>
+                <signal name="clicked" handler="kyty_update_progress_window_on_cancel"/>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </property>
+  </template>
+</interface>
