@@ -6,6 +6,7 @@
 #include "launcher/core/settingsStore.h"
 #include "launcher/core/titleId.h"
 #include "launcher/gtk/i18n.h"
+#include "launcher/gtk/imageDecoding.h"
 #include "launcher/gtk/services/controllerService.h"
 #include "launcher/gtk/services/titleSoundPlayer.h"
 
@@ -21,65 +22,12 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// Only PNG data is decoded (Requirement 7.16 names PNG; other formats show the placeholder).
-constexpr std::string_view kPngSignature("\x89PNG\r\n\x1a\n", 8);
-// The largest decoded image: Qt 6's default QImageReader allocation limit (256 MiB), which kept
-// the Qt launcher from decoding a small PNG with huge dimensions; 8192 x 8192 RGBA fits.
-constexpr uint64_t kMaxDecodedImageBytes = uint64_t {256} << 20u;
 // A batch of details goes to the main thread after this many results or this time.
 constexpr std::size_t kBatchItems        = 64;
 constexpr gint64      kBatchMicroseconds = 100000;
 
 double MillisecondsSince(gint64 start_us) {
 	return static_cast<double>(g_get_monotonic_time() - start_us) / 1000.0;
-}
-
-uint32_t BigEndian32(std::string_view bytes, std::size_t offset) {
-	uint32_t value = 0;
-	for (std::size_t i = 0; i < 4; i++) {
-		value = (value << 8u) | static_cast<uint8_t>(bytes[offset + i]);
-	}
-	return value;
-}
-
-// Whether the PNG's IHDR chunk (the first one: length 13, "IHDR", width, height, bit depth) gives
-// an image that fits kMaxDecodedImageBytes, estimated as the decoder's RGBA layout: 4 bytes per
-// pixel, 8 for a bit depth of 16. A PNG without a readable IHDR does not decode anyway.
-bool FitsDecodeLimit(std::string_view png, const fs::path& game, const char* file) {
-	// Signature (8), length (4), type (4), width (4), height (4), bit depth (1).
-	constexpr std::size_t kIhdrEnd = 25;
-	if (png.size() < kIhdrEnd || BigEndian32(png, 8) != 13 || png.substr(12, 4) != "IHDR") {
-		return false;
-	}
-	const uint64_t width  = BigEndian32(png, 16);
-	const uint64_t height = BigEndian32(png, 20);
-	const uint64_t pixel  = static_cast<uint8_t>(png[24]) == 16 ? 8 : 4;
-	if (width == 0 || height == 0) {
-		return false;
-	}
-	if (width * height > kMaxDecodedImageBytes / pixel) {
-		g_message("not decoding the %s of %s: %" G_GUINT64_FORMAT "x%" G_GUINT64_FORMAT
-		          " pixels need more than %" G_GUINT64_FORMAT " MiB",
-		          file, game.c_str(), width, height, kMaxDecodedImageBytes >> 20u);
-		return false;
-	}
-	return true;
-}
-
-// A texture of the PNG bytes (transfer full), or nullptr for none, other data, an image above the
-// decode limit, or a decode failure. file names the image in the log. Thread-safe
-// (gdk_texture_new_from_bytes).
-GdkTexture* DecodePng(const std::optional<std::string>& bytes, const fs::path& game,
-                      const char* file) {
-	if (!bytes || std::string_view(*bytes).substr(0, kPngSignature.size()) != kPngSignature ||
-	    !FitsDecodeLimit(*bytes, game, file)) {
-		return nullptr;
-	}
-	GBytes*     data = g_bytes_new(bytes->data(), bytes->size());
-	GErrorPtr   error;
-	GdkTexture* texture = gdk_texture_new_from_bytes(data, error.Out());
-	g_bytes_unref(data);
-	return texture;
 }
 
 // The size of an entry as the Qt launcher computed it (LFI-39): the .zar file's size, or the sum of
@@ -398,9 +346,9 @@ void LibraryController::RunDetails(GTask* task, gpointer /*source*/, gpointer ta
 		if (cancel.IsCancelled()) {
 			break;
 		}
-		batch->icons.emplace_back(path.native(),
-		                          GObjectPtr<GdkTexture>::Adopt(
-		                              DecodePng(core::ReadIcon0(path, kind), path, "icon0.png")));
+		batch->icons.emplace_back(
+		    path.native(), GObjectPtr<GdkTexture>::Adopt(DecodePng(
+		                       core::ReadIcon0(path, kind).value_or(""), path, "icon0.png")));
 		post(false);
 	}
 	for (const auto& [path, kind]: details->entries) {
@@ -611,7 +559,7 @@ void LibraryController::RunArt(GTask* task, gpointer /*source*/, gpointer task_d
 	auto* art = static_cast<ArtTask*>(task_data);
 	if (!art->cancel->IsCancelled()) {
 		art->art = GObjectPtr<GdkTexture>::Adopt(
-		    DecodePng(core::ReadPic0(art->path, art->kind), art->path, "pic0.png"));
+		    DecodePng(core::ReadPic0(art->path, art->kind).value_or(""), art->path, "pic0.png"));
 	}
 	g_task_return_boolean(task, TRUE);
 }

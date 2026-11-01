@@ -1,6 +1,8 @@
 # Files of the GTK launcher with translatable strings (kyty-launcher domain), one per line, sorted.
+src/launcher/gtk/additionalContentWindow.cpp
 src/launcher/gtk/application.cpp
 src/launcher/gtk/bindingCaptureDialog.cpp
+src/launcher/gtk/compressionDialog.cpp
 src/launcher/gtk/dialogRegistry.cpp
 src/launcher/gtk/dualsenseWidget.cpp
 src/launcher/gtk/gameListView.cpp
@@ -13,14 +15,23 @@ src/launcher/gtk/libraryController.cpp
 src/launcher/gtk/logView.cpp
 src/launcher/gtk/main.cpp
 src/launcher/gtk/mainWindow.cpp
+src/launcher/gtk/resources/ui/additional-content-window.xml
+src/launcher/gtk/resources/ui/compression-dialog.xml
 src/launcher/gtk/resources/ui/game-menu.xml
 src/launcher/gtk/resources/ui/game-picker-dialog.xml
 src/launcher/gtk/resources/ui/input-mapping-window.xml
 src/launcher/gtk/resources/ui/main-window.xml
 src/launcher/gtk/resources/ui/settings-window.xml
+src/launcher/gtk/resources/ui/trophy-details-dialog.xml
+src/launcher/gtk/resources/ui/trophy-overview-window.xml
+src/launcher/gtk/resources/ui/trophy-window.xml
 src/launcher/gtk/runController.cpp
 src/launcher/gtk/services/deviceLists.cpp
 src/launcher/gtk/services/fileChooser.cpp
 src/launcher/gtk/services/soupHttpClient.cpp
 src/launcher/gtk/settingsWindow.cpp
 src/launcher/gtk/settingsWrite.cpp
+src/launcher/gtk/trophyDetailsDialog.cpp
+src/launcher/gtk/trophyOverviewWindow.cpp
+src/launcher/gtk/trophyPresentation.cpp
+src/launcher/gtk/trophyWindow.cpp

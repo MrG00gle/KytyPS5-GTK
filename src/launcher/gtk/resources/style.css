@@ -96,3 +96,25 @@ button.binding.binding-selected {
 .binding-capture {
 	min-height: 120px;
 }
+
+/* Trophy windows (task 21.3). The grade cups in the Qt launcher's colors, which read on both
+ * color schemes; a locked trophy's icon is grayed (the Qt launcher drew it in gray levels). */
+image.trophy-grade-icon.trophy-platinum {
+	color: #7fc8ff;
+}
+
+image.trophy-grade-icon.trophy-gold {
+	color: #f5c542;
+}
+
+image.trophy-grade-icon.trophy-silver {
+	color: #c4cad2;
+}
+
+image.trophy-grade-icon.trophy-bronze {
+	color: #cd7f4f;
+}
+
+image.trophy-icon.trophy-locked {
+	filter: grayscale(1);
+}

@@ -1,6 +1,8 @@
 #include "launcher/gtk/mainWindow.h"
 
+#include "launcher/gtk/additionalContentWindow.h"
 #include "launcher/gtk/alerts.h"
+#include "launcher/gtk/compressionDialog.h"
 #include "launcher/gtk/gameGridView.h"
 #include "launcher/gtk/gameListView.h"
 #include "launcher/gtk/gameViewSupport.h"
@@ -13,6 +15,8 @@
 #include "launcher/gtk/runController.h"
 #include "launcher/gtk/services/fileChooser.h"
 #include "launcher/gtk/settingsWindow.h"
+#include "launcher/gtk/trophyOverviewWindow.h"
+#include "launcher/gtk/trophyWindow.h"
 
 #include <cmath>
 #include <cstdarg>
@@ -90,8 +94,7 @@ namespace core = kyty::core;
 constexpr const char* kTemplateResource = "/io/github/MrG00gle/KytyPS5_GTK/ui/main-window.xml";
 
 // The app.* and game.* actions of later tasks (plan D30): registered now, enabled by their tasks.
-constexpr const char* kLaterAppActions[] = {"trophy-overview", "check-updates",
-                                            "open-releases-page"};
+constexpr const char* kLaterAppActions[] = {"check-updates", "open-releases-page"};
 constexpr const char* kGameActions[]     = {"run",
                                             "stop",
                                             "open-folder",
@@ -228,6 +231,13 @@ void UpdateActions(KytyMainWindow* self) {
 	GActionMap* actions = G_ACTION_MAP(state.game_actions.get());
 	SetEnabled(actions, "edit-config", game != nullptr && !kyty_game_get_running(game));
 	SetEnabled(actions, "input-mapping", game != nullptr && !kyty_game_get_running(game));
+	// Tasks 21.3, 21.5: trophies and add-ons for any selected game; compression for a directory
+	// entry (task 21.7 adds the running entry's rule, 11.18).
+	SetEnabled(actions, "trophies", game != nullptr);
+	SetEnabled(actions, "additional-content", game != nullptr);
+	SetEnabled(actions, "compress",
+	           game != nullptr &&
+	               kyty_game_get_entry(game).kind == core::GameEntry::Kind::Directory);
 	// 10.4, LFI-11: Run for no game while one runs (or an update installs), Stop only then.
 	SetEnabled(actions, "run",
 	           game != nullptr && state.context->run_state.CanRun(kyty_game_get_entry(game).path));
@@ -379,6 +389,55 @@ void OnGameInputMapping(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpoi
 	                                                                 kyty_game_get_entry(game)));
 }
 
+// ---- Trophies, add-ons, and compression (tasks 21.3, 21.5)
+
+void OnTrophyOverview(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (Alive(self)) {
+		gtk_window_present(
+		    GTK_WINDOW(kyty_trophy_overview_window_new(*self->state->context, GTK_WINDOW(self))));
+	}
+}
+
+void OnTrophies(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	    game != nullptr) {
+		gtk_window_present(GTK_WINDOW(kyty_trophy_window_new(
+		    *self->state->context, GTK_WINDOW(self), kyty_game_get_entry(game))));
+	}
+}
+
+void OnAdditionalContent(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	    game != nullptr) {
+		gtk_window_present(GTK_WINDOW(kyty_additional_content_window_new(
+		    *self->state->context, GTK_WINDOW(self), kyty_game_get_entry(game))));
+	}
+}
+
+// Requirement 11.11: the new archive appears in the list after a rescan.
+void OnArchiveCreated(GtkWindow* /*dialog*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (Alive(self)) {
+		self->state->library->Rescan();
+	}
+}
+
+void OnCompress(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto*     self = KYTY_MAIN_WINDOW(data);
+	KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	if (game == nullptr || kyty_game_get_entry(game).kind != core::GameEntry::Kind::Directory) {
+		return;
+	}
+	KytyCompressionDialog* dialog =
+	    kyty_compression_dialog_new(GTK_WINDOW(self), kyty_game_get_entry(game));
+	g_signal_connect_object(dialog, "archive-created", G_CALLBACK(&OnArchiveCreated), self,
+	                        GConnectFlags(0));
+	gtk_window_present(GTK_WINDOW(dialog));
+}
+
 // ---- Run, stop, and the log (task 20.5)
 
 void OnRun(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
@@ -500,7 +559,7 @@ constexpr GActionEntry kAppActions[] = {
     {"global-settings", OnGlobalSettings, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"add-game-folder", OnAddGameFolder, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"input-mapping", OnInputMapping, nullptr, nullptr, nullptr, {0, 0, 0}},
-    {"trophy-overview", nullptr, nullptr, nullptr, nullptr, {0, 0, 0}},
+    {"trophy-overview", OnTrophyOverview, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"toggle-log", nullptr, nullptr, "false", OnToggleLog, {0, 0, 0}},
     {"save-log", OnSaveLog, nullptr, nullptr, nullptr, {0, 0, 0}},
 };
@@ -568,6 +627,9 @@ void InstallActions(KytyMainWindow* self, GtkApplication* application) {
 	};
 	connect("edit-config", G_CALLBACK(&OnEditConfig));
 	connect("input-mapping", G_CALLBACK(&OnGameInputMapping));
+	connect("trophies", G_CALLBACK(&OnTrophies));
+	connect("additional-content", G_CALLBACK(&OnAdditionalContent));
+	connect("compress", G_CALLBACK(&OnCompress));
 	connect("run", G_CALLBACK(&OnRun));
 	connect("stop", G_CALLBACK(&OnStop));
 	gtk_widget_insert_action_group(GTK_WIDGET(self), "game",

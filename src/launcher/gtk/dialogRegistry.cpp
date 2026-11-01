@@ -1,8 +1,11 @@
 #include "launcher/gtk/dialogRegistry.h"
 
 #include "launcher/core/inputMapping.h"
+#include "launcher/core/trophyModel.h"
+#include "launcher/gtk/additionalContentWindow.h"
 #include "launcher/gtk/alerts.h"
 #include "launcher/gtk/bindingCaptureDialog.h"
+#include "launcher/gtk/compressionDialog.h"
 #include "launcher/gtk/gamePickerDialog.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
@@ -10,6 +13,9 @@
 #include "launcher/gtk/inputMappingWindow.h"
 #include "launcher/gtk/mainWindow.h"
 #include "launcher/gtk/settingsWindow.h"
+#include "launcher/gtk/trophyDetailsDialog.h"
+#include "launcher/gtk/trophyOverviewWindow.h"
+#include "launcher/gtk/trophyWindow.h"
 
 #include <algorithm>
 #include <iterator>
@@ -110,6 +116,50 @@ DialogHandle OpenBindingCaptureDialog(LauncherContext& context, GtkWindow* paren
 	                                    [](const std::optional<std::string>& /*input*/) {})));
 }
 
+// The trophies, add-ons, and compression of DialogArgs::entry (required).
+DialogHandle OpenTrophyWindow(LauncherContext& context, GtkWindow* parent, const DialogArgs& args) {
+	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
+	return Presented(GTK_WINDOW(kyty_trophy_window_new(context, parent, *args.entry)));
+}
+
+DialogHandle OpenAdditionalContentWindow(LauncherContext& context, GtkWindow* parent,
+                                         const DialogArgs& args) {
+	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
+	return Presented(GTK_WINDOW(kyty_additional_content_window_new(context, parent, *args.entry)));
+}
+
+DialogHandle OpenCompressionDialog(LauncherContext& /*context*/, GtkWindow* parent,
+                                   const DialogArgs& args) {
+	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
+	return Presented(GTK_WINDOW(kyty_compression_dialog_new(parent, *args.entry)));
+}
+
+// A sample trophy, earned on 2026-10-30 12:34:56 UTC with a reward (only the UI tests and the
+// screenshot harness open it through the registry; the trophy window opens the real ones).
+DialogHandle OpenTrophyDetailsDialog(LauncherContext& /*context*/, GtkWindow* parent,
+                                     const DialogArgs& /*args*/) {
+	core::TrophyRow row;
+	row.id       = 1;
+	row.grade    = core::TrophyGrade::Gold;
+	row.unlocked = true;
+	// TRANSLATORS: a sample trophy that only the UI tests and screenshots show.
+	row.name         = C_("registry sample", "First steps");
+	row.display_name = row.name;
+	// TRANSLATORS: a sample trophy description that only the UI tests and screenshots show.
+	row.description = C_("registry sample", "Finish the first chapter.");
+	row.has_reward  = true;
+	// TRANSLATORS: a sample trophy reward that only the UI tests and screenshots show.
+	row.reward         = C_("registry sample", "A profile avatar");
+	row.earned_unix_ms = 1793363696000;
+	return Presented(
+	    GTK_WINDOW(kyty_trophy_details_dialog_new(parent, row, row, nullptr, nullptr)));
+}
+
+DialogHandle OpenTrophyOverviewWindow(LauncherContext& context, GtkWindow* parent,
+                                      const DialogArgs& /*args*/) {
+	return Presented(GTK_WINDOW(kyty_trophy_overview_window_new(context, parent)));
+}
+
 // The main window without an application (its app.* actions are then the window's own); a
 // toplevel of its own, so parent is not used. It starts the library work on context.
 DialogHandle OpenMainWindow(LauncherContext& context, GtkWindow* /*parent*/,
@@ -143,6 +193,11 @@ constexpr DialogType kDialogTypes[] = {
     {"main-window", OpenMainWindow, CloseWindow},
     {"input-mapping-window", OpenInputMappingWindow, CloseWindow},
     {"binding-capture-dialog", OpenBindingCaptureDialog, CloseWindow},
+    {"trophy-window", OpenTrophyWindow, CloseWindow},
+    {"trophy-details-dialog", OpenTrophyDetailsDialog, CloseWindow},
+    {"trophy-overview-window", OpenTrophyOverviewWindow, CloseWindow},
+    {"additional-content-window", OpenAdditionalContentWindow, CloseWindow},
+    {"compression-dialog", OpenCompressionDialog, CloseWindow},
 };
 
 } // namespace

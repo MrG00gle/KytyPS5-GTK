@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The trophy overview (task 21.3, plan D42, LFI-26): a loading state, the empty state (no game
+     with trophy data), and the list: the earned total and the earned count of each grade over every
+     game, then one row per game with trophy data. trophyOverviewWindow.cpp adds the grade counts
+     and the rows. -->
+<interface domain="kyty-launcher">
+  <template class="KytyTrophyOverviewWindow" parent="AdwWindow">
+    <property name="modal">True</property>
+    <property name="destroy-with-parent">True</property>
+    <property name="title" translatable="yes">Trophy overview</property>
+    <property name="default-width">820</property>
+    <property name="default-height">640</property>
+    <property name="width-request">360</property>
+    <property name="height-request">300</property>
+    <property name="content">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar"/>
+        </child>
+        <property name="content">
+          <object class="GtkStack" id="content_stack">
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">loading</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">12</property>
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <child>
+                      <object class="GtkSpinner" id="spinner">
+                        <property name="width-request">32</property>
+                        <property name="height-request">32</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Reading the trophies…</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">empty</property>
+                <property name="child">
+                  <object class="AdwStatusPage">
+                    <property name="icon-name">kyty-trophy-symbolic</property>
+                    <property name="title" translatable="yes">No trophies</property>
+                    <property name="description" translatable="yes">No games with trophies found in the game folders.</property>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">games</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">12</property>
+                    <property name="margin-top">18</property>
+                    <property name="margin-start">18</property>
+                    <property name="margin-end">18</property>
+                    <child>
+                      <object class="GtkBox" id="totals_box">
+                        <property name="spacing">18</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Trophies</property>
+                            <property name="xalign">0</property>
+                            <property name="hexpand">True</property>
+                            <style>
+                              <class name="title-1"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="total_label">
+                            <style>
+                              <class name="title-4"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vexpand">True</property>
+                        <property name="child">
+                          <object class="GtkListBox" id="games_list">
+                            <property name="selection-mode">none</property>
+                            <property name="valign">start</property>
+                            <property name="margin-bottom">18</property>
+                            <accessibility>
+                              <property name="label" translatable="yes">Games with trophies</property>
+                            </accessibility>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>
