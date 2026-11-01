@@ -15,8 +15,19 @@
 //   LauncherContext::library in a GtkStack, over the selected game's background art (LFI-08) and a
 //   translucent scrim; with no Game_Folder, the empty state with "Add game folder" (LFI-36), which
 //   opens the global settings on their Folders page;
+// - the log pane (task 20.5; logView.h over a KytyLogModel, logModel.h) in a GtkPaned below the
+//   library, hidden until app.toggle-log (Ctrl+L) shows it; app.save-log (Ctrl+S) writes its rows
+//   to a file chosen through FileChooser::SaveFile (10.8; an error names the file and the reason
+//   and changes nothing, 10.13);
 // - the footer: the Settings_Store path, the Emulator path, and the Emulator version (LFI-32);
 // - a toast overlay for messages.
+// Running games is a RunController's (runController.h): game.run (Ctrl+R, Enter, double-click, the
+// game menu) runs the selected game, game.stop (Ctrl+Period) stops the running one; errors are
+// alerts, the backslash warning (HC-20) a toast.
+// Quitting while a game runs (D34): closing the window or app.quit asks "Stop the running game and
+// quit?" (MainWindowRequestQuit); on accept the game gets SIGTERM (SIGKILL 5 s later) and the
+// window closes or the application quits after the exit; SIGINT and SIGTERM to the launcher stop
+// the game the same way without asking.
 // The view mode and the icon width (500 ms after the slider stops) are saved when they change, the
 // window size and maximized state when the window closes or the application quits (D32, LFI-04,
 // LFI-47), all through SaveSettingsAutomatically (nothing is written while the Settings_Store could
@@ -25,17 +36,21 @@
 // Actions (D30). The window registers the app.* actions on its application (without one, in a
 // group of its own named "app", where quit closes the window), and inserts the game.* group (the
 // selected game). Actions of later tasks exist but stay disabled: app.input-mapping,
-// app.trophy-overview, app.toggle-log, app.save-log, app.check-updates (Official builds),
-// app.open-releases-page (Other builds), game.run, game.stop, game.open-folder, game.trophies,
-// game.cheats, game.additional-content, game.compress, game.remove-save-data, game.clear-config,
-// game.input-mapping, game.export-settings, game.import-settings. Enabled: app.refresh,
-// app.search, app.toggle-grid (stateful), app.global-settings, app.add-game-folder, and
-// game.edit-config (a selected game that is not running). Delete, Enter, Shift+F10, and the Menu
-// key are the views' own keys (D31).
+// app.trophy-overview, app.check-updates (Official builds), app.open-releases-page (Other builds),
+// game.open-folder, game.trophies, game.cheats, game.additional-content, game.compress,
+// game.remove-save-data, game.clear-config, game.input-mapping, game.export-settings,
+// game.import-settings. Enabled: app.refresh, app.search, app.toggle-grid (stateful),
+// app.global-settings, app.add-game-folder, app.toggle-log (stateful), app.save-log,
+// game.edit-config (a selected game that is not running), game.run (a selected game while
+// core::RunState::CanRun, so no game while one runs or an update installs, 10.4), and game.stop
+// (while core::RunState::CanStop). Delete, Enter, Shift+F10, and the Menu key are the views' own
+// keys (D31).
 
 #include "launcher/gtk/launcherContext.h"
+#include "launcher/gtk/logModel.h"
 
 #include <adwaita.h>
+#include <functional>
 
 G_BEGIN_DECLS
 
@@ -62,10 +77,27 @@ void kyty_main_window_save_state(KytyMainWindow* window);
 namespace kyty::gtk {
 
 class LibraryController;
+class LogView;
+class RunController;
 
-// The window's library work and its game.* actions (for the harness and the UI tests).
+// The window's library work, its game.* actions, its run flow, and its log (for the harness and
+// the UI tests).
 LibraryController& MainWindowLibrary(KytyMainWindow* window);
 GActionGroup*      MainWindowGameActions(KytyMainWindow* window);
+RunController&     MainWindowRun(KytyMainWindow* window);
+KytyLogModel*      MainWindowLog(KytyMainWindow* window);
+LogView&           MainWindowLogView(KytyMainWindow* window);
+
+// A game started from the window has not exited yet.
+bool MainWindowGameRunning(KytyMainWindow* window);
+
+// Quitting (D34). Without a running game, done runs at once. While one runs: with ask, the window
+// first asks "Stop the running game and quit?" (Cancel keeps everything, and done never runs);
+// then, or at once without ask (SIGINT, SIGTERM), the game gets SIGTERM and, if it is still alive
+// 5 s later, SIGKILL, and done runs from the main loop after it exited. A request while the
+// question is open replaces done (without ask it also stops the game at once); one after the user
+// agreed stops the game again (SIGTERM, same SIGKILL deadline). done may close the window.
+void MainWindowRequestQuit(KytyMainWindow* window, bool ask, std::function<void()> done);
 
 // The accelerators of the D30 action table (app.* and game.*), set on application.
 void SetMainWindowAccelerators(GtkApplication* application);

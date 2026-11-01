@@ -7,11 +7,18 @@
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/libraryController.h"
+#include "launcher/gtk/logModel.h"
+#include "launcher/gtk/logView.h"
+#include "launcher/gtk/runController.h"
+#include "launcher/gtk/services/fileChooser.h"
 #include "launcher/gtk/settingsWindow.h"
 
 #include <cmath>
 #include <cstdarg>
+#include <filesystem>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,6 +36,15 @@ struct MainWindowState {
 	std::unique_ptr<GameListView>      list_view;
 	std::unique_ptr<GameGridView>      grid_view;
 	std::unique_ptr<LibraryController> library;
+	GObjectPtr<KytyLogModel>           log;
+	std::unique_ptr<LogView>           log_view;
+	std::unique_ptr<RunController>     run;
+	// Quitting while a game runs (D34): what runs once the game has exited, whether the
+	// confirmation is open, and whether the game was asked to stop for the quit.
+	std::function<void()> quit_done;
+	bool                  quit_asking   = false;
+	bool                  quit_stopping = false;
+	SourceId              quit_idle;
 	// Cancelled when the window goes away: no alert callback runs after it.
 	GObjectPtr<GCancellable> cancellable = GObjectPtr<GCancellable>::Adopt(g_cancellable_new());
 	std::vector<SignalScope> signals;
@@ -49,6 +65,8 @@ struct _KytyMainWindow {
 	AdwBanner*           settings_banner;
 	AdwBanner*           emulator_banner;
 	AdwBanner*           scan_banner;
+	GtkPaned*            log_paned;
+	GtkWidget*           log_area;
 	GtkStack*            content_stack;
 	GtkWidget*           library_overlay;
 	GtkPicture*          background_art;
@@ -71,9 +89,8 @@ namespace core = kyty::core;
 constexpr const char* kTemplateResource = "/io/github/MrG00gle/KytyPS5_GTK/ui/main-window.xml";
 
 // The app.* and game.* actions of later tasks (plan D30): registered now, enabled by their tasks.
-constexpr const char* kLaterAppActions[] = {"input-mapping", "trophy-overview",
-                                            "toggle-log",    "save-log",
-                                            "check-updates", "open-releases-page"};
+constexpr const char* kLaterAppActions[] = {"input-mapping", "trophy-overview", "check-updates",
+                                            "open-releases-page"};
 constexpr const char* kGameActions[]     = {"run",
                                             "stop",
                                             "open-folder",
@@ -205,10 +222,14 @@ void UpdateContent(KytyMainWindow* self) {
 }
 
 void UpdateActions(KytyMainWindow* self) {
-	auto&     state = *self->state;
-	KytyGame* game  = state.context->library.Selected();
-	SetEnabled(G_ACTION_MAP(state.game_actions.get()), "edit-config",
-	           game != nullptr && !kyty_game_get_running(game));
+	auto&       state   = *self->state;
+	KytyGame*   game    = state.context->library.Selected();
+	GActionMap* actions = G_ACTION_MAP(state.game_actions.get());
+	SetEnabled(actions, "edit-config", game != nullptr && !kyty_game_get_running(game));
+	// 10.4, LFI-11: Run for no game while one runs (or an update installs), Stop only then.
+	SetEnabled(actions, "run",
+	           game != nullptr && state.context->run_state.CanRun(kyty_game_get_entry(game).path));
+	SetEnabled(actions, "stop", state.context->run_state.CanStop());
 }
 
 void ShowArt(KytyMainWindow* self, GdkTexture* art) {
@@ -326,6 +347,120 @@ void OnEditConfig(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer d
 	gtk_window_present(GTK_WINDOW(window));
 }
 
+// ---- Run, stop, and the log (task 20.5)
+
+void OnRun(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	    game != nullptr) {
+		self->state->run->Run(game);
+	}
+}
+
+void OnStop(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (Alive(self)) {
+		self->state->run->Stop();
+	}
+}
+
+void ShowLog(KytyMainWindow* self, bool shown) {
+	gtk_widget_set_visible(self->log_area, shown ? TRUE : FALSE);
+}
+
+void OnToggleLog(GSimpleAction* action, GVariant* value, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (!Alive(self)) {
+		return;
+	}
+	g_simple_action_set_state(action, value);
+	ShowLog(self, g_variant_get_boolean(value) != FALSE);
+}
+
+// Requirements 10.8, 10.13: the rows of the log view, one line each, to the chosen file; a failure
+// names the file and the reason and changes nothing.
+void OnSaveLog(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (!Alive(self)) {
+		return;
+	}
+	self->state->context->services.file_chooser.SaveFile(
+	    GTK_WINDOW(self), _("Save log"), "kyty.log",
+	    [self](std::optional<std::filesystem::path> file, const std::string& error) {
+		    if (!Alive(self)) {
+			    return;
+		    }
+		    auto& state = *self->state;
+		    if (!error.empty()) {
+			    kyty::gtk::ShowError(GTK_WINDOW(self), _("The log could not be saved"), error,
+			                         state.cancellable.get());
+			    return;
+		    }
+		    if (!file) {
+			    return;
+		    }
+		    if (auto saved = kyty_log_model_save(state.log.get(), *file); !saved) {
+			    g_message("save log: %s", saved.error().message.c_str());
+			    kyty::gtk::ShowError(GTK_WINDOW(self), _("The log could not be saved"),
+			                         Format(_("Cannot write %s: %s"), file->c_str(),
+			                                g_strerror(saved.error().error_number)),
+			                         state.cancellable.get());
+			    return;
+		    }
+		    g_debug("save log: %u line(s) written to %s",
+		            g_list_model_get_n_items(G_LIST_MODEL(state.log.get())), file->c_str());
+	    },
+	    self->state->cancellable.get());
+}
+
+// ---- Quitting while a game runs (D34)
+
+gboolean OnQuitIdle(gpointer data) {
+	auto* self                 = KYTY_MAIN_WINDOW(data);
+	auto  done                 = std::move(self->state->quit_done);
+	self->state->quit_done     = nullptr;
+	self->state->quit_stopping = false;
+	if (done) {
+		done(); // may close and destroy the window
+	}
+	return G_SOURCE_REMOVE;
+}
+
+// The run state changed: the actions follow, and a quit that waited for the game goes on, from
+// the main loop (it may destroy the window, which owns the run controller that calls this).
+void OnRunChanged(KytyMainWindow* self) {
+	if (!Alive(self)) {
+		return;
+	}
+	UpdateActions(self);
+	auto& state = *self->state;
+	if (state.quit_stopping && !state.run->Running() && !state.quit_idle.Active()) {
+		state.quit_idle = kyty::gtk::SourceId(g_idle_add(&OnQuitIdle, self));
+	}
+}
+
+void StopForQuit(KytyMainWindow* self) {
+	auto& state = *self->state;
+	if (!state.run->Running()) {
+		state.quit_stopping = true;
+		OnRunChanged(self);
+		return;
+	}
+	state.quit_stopping = true;
+	state.run->Stop();
+}
+
+gboolean OnCloseRequest(GtkWindow* window, gpointer /*data*/) {
+	auto* self = KYTY_MAIN_WINDOW(window);
+	if (Alive(self) && self->state->run->Running()) {
+		kyty::gtk::MainWindowRequestQuit(self, true,
+		                                 [self]() { gtk_window_close(GTK_WINDOW(self)); });
+		return TRUE;
+	}
+	kyty_main_window_save_state(self);
+	return FALSE;
+}
+
 constexpr GActionEntry kAppActions[] = {
     {"refresh", OnRefresh, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"search", OnSearch, nullptr, nullptr, nullptr, {0, 0, 0}},
@@ -334,8 +469,8 @@ constexpr GActionEntry kAppActions[] = {
     {"add-game-folder", OnAddGameFolder, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"input-mapping", nullptr, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"trophy-overview", nullptr, nullptr, nullptr, nullptr, {0, 0, 0}},
-    {"toggle-log", nullptr, nullptr, "false", nullptr, {0, 0, 0}},
-    {"save-log", nullptr, nullptr, nullptr, nullptr, {0, 0, 0}},
+    {"toggle-log", nullptr, nullptr, "false", OnToggleLog, {0, 0, 0}},
+    {"save-log", OnSaveLog, nullptr, nullptr, nullptr, {0, 0, 0}},
 };
 constexpr GActionEntry kOfficialActions[] = {
     {"check-updates", nullptr, nullptr, nullptr, nullptr, {0, 0, 0}},
@@ -395,9 +530,13 @@ void InstallActions(KytyMainWindow* self, GtkApplication* application) {
 		g_simple_action_set_enabled(action.get(), FALSE);
 		g_action_map_add_action(G_ACTION_MAP(state.game_actions.get()), G_ACTION(action.get()));
 	}
-	state.signals.push_back(kyty::gtk::SignalScope::Connect(
-	    FindAction(G_ACTION_MAP(state.game_actions.get()), "edit-config"), "activate",
-	    G_CALLBACK(&OnEditConfig), self));
+	const auto connect = [&state, self](const char* name, GCallback callback) {
+		state.signals.push_back(kyty::gtk::SignalScope::Connect(
+		    FindAction(G_ACTION_MAP(state.game_actions.get()), name), "activate", callback, self));
+	};
+	connect("edit-config", G_CALLBACK(&OnEditConfig));
+	connect("run", G_CALLBACK(&OnRun));
+	connect("stop", G_CALLBACK(&OnStop));
 	gtk_widget_insert_action_group(GTK_WIDGET(self), "game",
 	                               G_ACTION_GROUP(state.game_actions.get()));
 }
@@ -471,11 +610,6 @@ void OnScanDetails(AdwBanner* /*banner*/, gpointer data) {
 	                     self->state->cancellable.get());
 }
 
-gboolean OnCloseRequest(GtkWindow* window, gpointer /*data*/) {
-	kyty_main_window_save_state(KYTY_MAIN_WINDOW(window));
-	return FALSE;
-}
-
 void BuildViews(KytyMainWindow* self) {
 	auto&                              state    = *self->state;
 	auto&                              context  = *state.context;
@@ -521,7 +655,13 @@ static void kyty_main_window_dispose(GObject* object) {
 		state->disposed = true;
 		g_cancellable_cancel(state->cancellable.get());
 		state->icon_width_save.Remove();
+		state->quit_idle.Remove();
+		state->quit_done = nullptr;
 		state->signals.clear();
+		// The run controller uses the library's games and the log model.
+		state->run.reset();
+		state->log_view.reset();
+		state->log.reset();
 		state->library.reset();
 		// The views call the model (the context's library) and must go first.
 		state->list_view.reset();
@@ -563,6 +703,8 @@ static void kyty_main_window_class_init(KytyMainWindowClass* klass) {
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, settings_banner);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, emulator_banner);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, scan_banner);
+	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, log_paned);
+	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, log_area);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, content_stack);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, library_overlay);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, background_art);
@@ -622,6 +764,23 @@ KytyMainWindow* kyty_main_window_new(kyty::gtk::LauncherContext& context,
 		Toast(self, heading, details);
 	};
 	state.library = std::make_unique<kyty::gtk::LibraryController>(context, std::move(callbacks));
+
+	// The log pane (D35), hidden until app.toggle-log shows it, and the run flow.
+	state.log      = kyty::gtk::GObjectPtr<KytyLogModel>::Adopt(kyty_log_model_new());
+	state.log_view = std::make_unique<kyty::gtk::LogView>(state.log.get());
+	gtk_box_append(GTK_BOX(self->log_area), state.log_view->Widget());
+	ShowLog(self, false);
+	kyty::gtk::RunController::Callbacks run_callbacks;
+	run_callbacks.changed = [self]() { OnRunChanged(self); };
+	run_callbacks.notify  = [self](const std::string& heading, const std::string& details) {
+		Toast(self, heading, details);
+	};
+	run_callbacks.error = [self](const std::string& heading, const std::string& body) {
+		kyty::gtk::ShowError(GTK_WINDOW(self), heading, body, self->state->cancellable.get());
+	};
+	state.run = std::make_unique<kyty::gtk::RunController>(context, state.log.get(),
+	                                                       std::move(run_callbacks));
+
 	state.library->Start();
 	UpdateActions(self);
 	g_debug("main window: %s view, icon width %d, size %dx%d%s",
@@ -685,6 +844,62 @@ LibraryController& MainWindowLibrary(KytyMainWindow* window) {
 
 GActionGroup* MainWindowGameActions(KytyMainWindow* window) {
 	return G_ACTION_GROUP(window->state->game_actions.get());
+}
+
+RunController& MainWindowRun(KytyMainWindow* window) {
+	return *window->state->run;
+}
+
+KytyLogModel* MainWindowLog(KytyMainWindow* window) {
+	return window->state->log.get();
+}
+
+LogView& MainWindowLogView(KytyMainWindow* window) {
+	return *window->state->log_view;
+}
+
+bool MainWindowGameRunning(KytyMainWindow* window) {
+	g_return_val_if_fail(KYTY_IS_MAIN_WINDOW(window), false);
+	return Alive(window) && window->state->run->Running();
+}
+
+void MainWindowRequestQuit(KytyMainWindow* window, bool ask, std::function<void()> done) {
+	g_return_if_fail(KYTY_IS_MAIN_WINDOW(window));
+	if (!Alive(window)) {
+		return;
+	}
+	auto& state = *window->state;
+	if (!state.run->Running() && !state.quit_stopping) {
+		done();
+		return;
+	}
+	state.quit_done = std::move(done);
+	if (!ask || state.quit_stopping) {
+		// SIGINT or SIGTERM, or a second request after the user agreed: no question (again).
+		StopForQuit(window);
+		return;
+	}
+	if (state.quit_asking) {
+		return; // the confirmation is open
+	}
+	state.quit_asking = true;
+	Confirm(
+	    GTK_WINDOW(window), _("Stop the running game and quit?"),
+	    _("The emulator is asked to close. If it is still running 5 seconds later, it is ended."),
+	    _("Stop and quit"), _("Cancel"), true,
+	    [window](bool accepted) {
+		    if (!Alive(window)) {
+			    return;
+		    }
+		    auto& asked       = *window->state;
+		    asked.quit_asking = false;
+		    if (accepted) {
+			    StopForQuit(window);
+		    } else if (!asked.quit_stopping) {
+			    asked.quit_done = nullptr;
+		    }
+	    },
+	    state.cancellable.get());
 }
 
 void SetMainWindowAccelerators(GtkApplication* application) {

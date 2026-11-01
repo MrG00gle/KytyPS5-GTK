@@ -66,10 +66,13 @@ KytyApplication* running_application = nullptr;
 // A quit signal arrived before startup.
 bool quit_requested = false;
 
+void Quit(GtkApplication* application, bool ask);
+
 gboolean OnQuitSignal(gpointer data) {
 	g_debug("received signal %d, quitting", GPOINTER_TO_INT(data));
 	if (running_application != nullptr) {
-		g_action_group_activate_action(G_ACTION_GROUP(running_application), "quit", nullptr);
+		// D34: a running game is stopped without asking.
+		Quit(GTK_APPLICATION(running_application), false);
 	} else {
 		quit_requested = true;
 	}
@@ -88,12 +91,25 @@ std::vector<GObjectPtr<KytyMainWindow>> MainWindows(GtkApplication* application)
 	return windows;
 }
 
-// Quitting does not close the windows, so the main window stores its size first (D32).
-void OnQuitAction(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
-	for (const auto& window: MainWindows(GTK_APPLICATION(data))) {
+// D34: a game that runs is stopped first, after a confirmation when ask (app.quit), and quitting
+// goes on after its exit. Quitting does not close the windows, so the main window stores its size
+// first (D32).
+void Quit(GtkApplication* application, bool ask) {
+	for (const auto& window: MainWindows(application)) {
+		if (MainWindowGameRunning(window.get())) {
+			MainWindowRequestQuit(window.get(), ask,
+			                      [application, ask]() { Quit(application, ask); });
+			return;
+		}
+	}
+	for (const auto& window: MainWindows(application)) {
 		kyty_main_window_save_state(window.get());
 	}
-	g_application_quit(G_APPLICATION(data));
+	g_application_quit(G_APPLICATION(application));
+}
+
+void OnQuitAction(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	Quit(GTK_APPLICATION(data), true);
 }
 
 void OnMainWindowMapped(GtkWidget* window, gpointer /*data*/) {

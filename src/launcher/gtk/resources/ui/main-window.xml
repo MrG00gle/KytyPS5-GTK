@@ -4,7 +4,8 @@
      entry, Global settings, Input mapping, Edit and Clear game config, Trophy overview, the game
      menu, and the primary menu), the banners (settings load error, Emulator not found, scan
      warnings), the library (the selected game's background art under a scrim, and the list and
-     grid views in views_stack, added by mainWindow.cpp) or the empty state, the footer, and the
+     grid views in views_stack, added by mainWindow.cpp) or the empty state, above the log pane
+     in log_paned (task 20.5; log_area, hidden until app.toggle-log shows it), the footer, and the
      toast overlay. Every button acts through an app.* or game.* action (D30), so its sensitivity
      follows the action. -->
 <interface domain="kyty-launcher">
@@ -181,66 +182,85 @@
               </object>
             </child>
             <property name="content">
-              <object class="GtkStack" id="content_stack">
-                <child>
-                  <object class="GtkStackPage">
-                    <property name="name">library</property>
-                    <property name="child">
-                      <object class="GtkOverlay" id="library_overlay">
-                        <style>
-                          <class name="game-library"/>
-                        </style>
+              <object class="GtkPaned" id="log_paned">
+                <property name="orientation">vertical</property>
+                <property name="resize-start-child">True</property>
+                <property name="resize-end-child">False</property>
+                <property name="shrink-start-child">False</property>
+                <property name="shrink-end-child">False</property>
+                <property name="start-child">
+                  <object class="GtkStack" id="content_stack">
+                    <child>
+                      <object class="GtkStackPage">
+                        <property name="name">library</property>
                         <property name="child">
-                          <object class="GtkPicture" id="background_art">
-                            <property name="content-fit">cover</property>
-                            <property name="can-shrink">True</property>
-                            <property name="can-target">False</property>
-                            <property name="visible">False</property>
-                            <property name="alternative-text" translatable="yes">Background art of the selected game</property>
-                          </object>
-                        </property>
-                        <child type="overlay">
-                          <object class="GtkBox" id="art_scrim">
-                            <property name="can-target">False</property>
-                            <property name="visible">False</property>
+                          <object class="GtkOverlay" id="library_overlay">
                             <style>
-                              <class name="game-art-scrim"/>
+                              <class name="game-library"/>
                             </style>
-                          </object>
-                        </child>
-                        <child type="overlay">
-                          <object class="GtkStack" id="views_stack">
-                            <property name="hexpand">True</property>
-                            <property name="vexpand">True</property>
-                          </object>
-                        </child>
-                      </object>
-                    </property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkStackPage">
-                    <property name="name">empty</property>
-                    <property name="child">
-                      <object class="AdwStatusPage" id="empty_page">
-                        <property name="icon-name">folder-open-symbolic</property>
-                        <property name="title" translatable="yes">No game folders</property>
-                        <property name="description" translatable="yes">Add the folders that hold your games to see them here.</property>
-                        <property name="child">
-                          <object class="GtkButton" id="add_folder_button">
-                            <property name="label" translatable="yes">Add game folder</property>
-                            <property name="action-name">app.add-game-folder</property>
-                            <property name="halign">center</property>
-                            <style>
-                              <class name="pill"/>
-                              <class name="suggested-action"/>
-                            </style>
+                            <property name="child">
+                              <object class="GtkPicture" id="background_art">
+                                <property name="content-fit">cover</property>
+                                <property name="can-shrink">True</property>
+                                <property name="can-target">False</property>
+                                <property name="visible">False</property>
+                                <property name="alternative-text" translatable="yes">Background art of the selected game</property>
+                              </object>
+                            </property>
+                            <child type="overlay">
+                              <object class="GtkBox" id="art_scrim">
+                                <property name="can-target">False</property>
+                                <property name="visible">False</property>
+                                <style>
+                                  <class name="game-art-scrim"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child type="overlay">
+                              <object class="GtkStack" id="views_stack">
+                                <property name="hexpand">True</property>
+                                <property name="vexpand">True</property>
+                              </object>
+                            </child>
                           </object>
                         </property>
                       </object>
-                    </property>
+                    </child>
+                    <child>
+                      <object class="GtkStackPage">
+                        <property name="name">empty</property>
+                        <property name="child">
+                          <object class="AdwStatusPage" id="empty_page">
+                            <property name="icon-name">folder-open-symbolic</property>
+                            <property name="title" translatable="yes">No game folders</property>
+                            <property name="description" translatable="yes">Add the folders that hold your games to see them here.</property>
+                            <property name="child">
+                              <object class="GtkButton" id="add_folder_button">
+                                <property name="label" translatable="yes">Add game folder</property>
+                                <property name="action-name">app.add-game-folder</property>
+                                <property name="halign">center</property>
+                                <style>
+                                  <class name="pill"/>
+                                  <class name="suggested-action"/>
+                                </style>
+                              </object>
+                            </property>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
                   </object>
-                </child>
+                </property>
+                <property name="end-child">
+                  <!-- The log pane (task 20.5): mainWindow.cpp adds the log view. -->
+                  <object class="GtkBox" id="log_area">
+                    <property name="orientation">vertical</property>
+                    <property name="visible">False</property>
+                    <style>
+                      <class name="log-pane"/>
+                    </style>
+                  </object>
+                </property>
               </object>
             </property>
             <child type="bottom">

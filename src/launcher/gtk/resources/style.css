@@ -66,6 +66,12 @@
 	padding: 4px 12px;
 }
 
+/* The log pane below the library (task 20.5): one compact monospace row per line. */
+.log-view > row {
+	padding: 1px 8px;
+	min-height: 0;
+}
+
 /* Settings window (task 21.1). */
 
 /* The percentage after a scale: GtkScale already sizes it for the widest value ("100%"); the gap

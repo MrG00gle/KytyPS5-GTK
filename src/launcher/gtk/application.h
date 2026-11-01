@@ -15,8 +15,9 @@
 // - activate: creates and presents the main window (task 20.3; mainWindow.h), which adds the other
 //   app.* actions, or presents the existing one; "main window presented" (g_debug) is logged when
 //   it is first mapped.
-// - app.quit stores the main window's size first; shutdown destroys the main window (and with it
-//   the windows it opened) before the context goes away.
+// - app.quit stores the main window's size first; while a game runs it asks "Stop the running game
+//   and quit?" and quits after the game exited (plan D34, MainWindowRequestQuit). shutdown destroys
+//   the main window (and with it the windows it opened) before the context goes away.
 
 #include "launcher/gtk/launcherContext.h"
 
@@ -37,8 +38,9 @@ namespace kyty::gtk {
 // application is finalized.
 LauncherContext* ApplicationContext(KytyApplication* application);
 
-// SIGINT and SIGTERM activate app.quit of the running KytyApplication, so the launcher ends with
-// status 0 (plan D16). main() installs them before anything else. They stay installed for the
+// SIGINT and SIGTERM quit the running KytyApplication as app.quit does, so the launcher ends with
+// status 0 (plan D16), except that a running game is stopped without asking first (plan D34).
+// main() installs them before anything else. They stay installed for the
 // whole process lifetime: a signal that arrives before startup quits right after it, and one that
 // arrives while the process is already ending is caught and changes nothing.
 void InstallQuitSignalHandlers();
