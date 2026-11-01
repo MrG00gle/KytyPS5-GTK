@@ -1,16 +1,21 @@
 # Files of the GTK launcher with translatable strings (kyty-launcher domain), one per line, sorted.
 src/launcher/gtk/application.cpp
+src/launcher/gtk/bindingCaptureDialog.cpp
 src/launcher/gtk/dialogRegistry.cpp
+src/launcher/gtk/dualsenseWidget.cpp
 src/launcher/gtk/gameListView.cpp
 src/launcher/gtk/gameObject.cpp
 src/launcher/gtk/gamePickerDialog.cpp
 src/launcher/gtk/gameViewSupport.cpp
+src/launcher/gtk/inputLabels.cpp
+src/launcher/gtk/inputMappingWindow.cpp
 src/launcher/gtk/libraryController.cpp
 src/launcher/gtk/logView.cpp
 src/launcher/gtk/main.cpp
 src/launcher/gtk/mainWindow.cpp
 src/launcher/gtk/resources/ui/game-menu.xml
 src/launcher/gtk/resources/ui/game-picker-dialog.xml
+src/launcher/gtk/resources/ui/input-mapping-window.xml
 src/launcher/gtk/resources/ui/main-window.xml
 src/launcher/gtk/resources/ui/settings-window.xml
 src/launcher/gtk/runController.cpp
@@ -18,3 +23,4 @@ src/launcher/gtk/services/deviceLists.cpp
 src/launcher/gtk/services/fileChooser.cpp
 src/launcher/gtk/services/soupHttpClient.cpp
 src/launcher/gtk/settingsWindow.cpp
+src/launcher/gtk/settingsWrite.cpp

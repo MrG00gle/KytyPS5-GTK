@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The binding capture dialog of the input mapping editor (task 21.2, plan D41): a header bar
+     whose close button cancels, and the capture area, where a key press, a mouse button press,
+     or a gamepad input becomes the binding. bindingCaptureDialog.cpp sets the title, the icon,
+     and the texts for the device. -->
+<interface domain="kyty-launcher">
+  <template class="KytyBindingCaptureDialog" parent="AdwWindow">
+    <property name="modal">True</property>
+    <property name="destroy-with-parent">True</property>
+    <property name="resizable">False</property>
+    <property name="default-width">440</property>
+    <property name="content">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar"/>
+        </child>
+        <property name="content">
+          <object class="GtkBox" id="capture_area">
+            <property name="orientation">vertical</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">18</property>
+            <property name="margin-bottom">30</property>
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <property name="vexpand">True</property>
+            <style>
+              <class name="binding-capture"/>
+            </style>
+            <child>
+              <object class="GtkImage" id="device_image">
+                <property name="pixel-size">48</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="prompt_label">
+                <property name="wrap">True</property>
+                <property name="justify">center</property>
+                <property name="max-width-chars">40</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="refusal_label">
+                <property name="visible">False</property>
+                <property name="wrap">True</property>
+                <property name="justify">center</property>
+                <property name="max-width-chars">40</property>
+                <style>
+                  <class name="error"/>
+                  <class name="heading"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>

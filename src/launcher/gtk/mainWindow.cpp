@@ -6,6 +6,7 @@
 #include "launcher/gtk/gameViewSupport.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
+#include "launcher/gtk/inputMappingWindow.h"
 #include "launcher/gtk/libraryController.h"
 #include "launcher/gtk/logModel.h"
 #include "launcher/gtk/logView.h"
@@ -89,7 +90,7 @@ namespace core = kyty::core;
 constexpr const char* kTemplateResource = "/io/github/MrG00gle/KytyPS5_GTK/ui/main-window.xml";
 
 // The app.* and game.* actions of later tasks (plan D30): registered now, enabled by their tasks.
-constexpr const char* kLaterAppActions[] = {"input-mapping", "trophy-overview", "check-updates",
+constexpr const char* kLaterAppActions[] = {"trophy-overview", "check-updates",
                                             "open-releases-page"};
 constexpr const char* kGameActions[]     = {"run",
                                             "stop",
@@ -226,6 +227,7 @@ void UpdateActions(KytyMainWindow* self) {
 	KytyGame*   game    = state.context->library.Selected();
 	GActionMap* actions = G_ACTION_MAP(state.game_actions.get());
 	SetEnabled(actions, "edit-config", game != nullptr && !kyty_game_get_running(game));
+	SetEnabled(actions, "input-mapping", game != nullptr && !kyty_game_get_running(game));
 	// 10.4, LFI-11: Run for no game while one runs (or an update installs), Stop only then.
 	SetEnabled(actions, "run",
 	           game != nullptr && state.context->run_state.CanRun(kyty_game_get_entry(game).path));
@@ -345,6 +347,36 @@ void OnEditConfig(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer d
 	g_signal_connect_object(window, "saved", G_CALLBACK(&OnGameSettingsSaved), self,
 	                        GConnectFlags(0));
 	gtk_window_present(GTK_WINDOW(window));
+}
+
+// ---- Input mapping (task 21.2): the global mapping from the header bar, a game's from its menu
+
+void PresentInputMapping(KytyMainWindow* self, KytyInputMappingWindow* window) {
+	g_signal_connect_object(window, "saved", G_CALLBACK(&OnGameSettingsSaved), self,
+	                        GConnectFlags(0));
+	gtk_window_present(GTK_WINDOW(window));
+}
+
+void OnInputMapping(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (Alive(self)) {
+		PresentInputMapping(
+		    self, kyty_input_mapping_window_new_global(*self->state->context, GTK_WINDOW(self)));
+	}
+}
+
+void OnGameInputMapping(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (!Alive(self)) {
+		return;
+	}
+	KytyGame* game = self->state->context->library.Selected();
+	if (game == nullptr || kyty_game_get_running(game)) {
+		return;
+	}
+	PresentInputMapping(self, kyty_input_mapping_window_new_for_game(*self->state->context,
+	                                                                 GTK_WINDOW(self),
+	                                                                 kyty_game_get_entry(game)));
 }
 
 // ---- Run, stop, and the log (task 20.5)
@@ -467,7 +499,7 @@ constexpr GActionEntry kAppActions[] = {
     {"toggle-grid", nullptr, nullptr, "false", OnToggleGrid, {0, 0, 0}},
     {"global-settings", OnGlobalSettings, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"add-game-folder", OnAddGameFolder, nullptr, nullptr, nullptr, {0, 0, 0}},
-    {"input-mapping", nullptr, nullptr, nullptr, nullptr, {0, 0, 0}},
+    {"input-mapping", OnInputMapping, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"trophy-overview", nullptr, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"toggle-log", nullptr, nullptr, "false", OnToggleLog, {0, 0, 0}},
     {"save-log", OnSaveLog, nullptr, nullptr, nullptr, {0, 0, 0}},
@@ -535,6 +567,7 @@ void InstallActions(KytyMainWindow* self, GtkApplication* application) {
 		    FindAction(G_ACTION_MAP(state.game_actions.get()), name), "activate", callback, self));
 	};
 	connect("edit-config", G_CALLBACK(&OnEditConfig));
+	connect("input-mapping", G_CALLBACK(&OnGameInputMapping));
 	connect("run", G_CALLBACK(&OnRun));
 	connect("stop", G_CALLBACK(&OnStop));
 	gtk_widget_insert_action_group(GTK_WIDGET(self), "game",

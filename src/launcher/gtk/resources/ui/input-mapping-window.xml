@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The input mapping editor (task 21.2, plan D41, LFI-24): the Gamepad and the Keyboard and mouse
+     tabs, the emulated touch pad settings shared by both, and the footer. inputMappingWindow.cpp
+     adds the binding groups (two columns per tab) and the DualSense diagram, and shows the game
+     header and "Use global mapping" when the editor edits one game's mapping. -->
+<interface domain="kyty-launcher">
+  <template class="KytyInputMappingWindow" parent="AdwWindow">
+    <property name="modal">True</property>
+    <property name="destroy-with-parent">True</property>
+    <property name="default-width">1120</property>
+    <property name="default-height">760</property>
+    <property name="width-request">360</property>
+    <property name="height-request">300</property>
+    <property name="content">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="AdwViewSwitcher">
+                <property name="stack">stack</property>
+                <property name="policy">wide</property>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child type="top">
+          <object class="GtkBox" id="game_info">
+            <property name="visible">False</property>
+            <property name="orientation">vertical</property>
+            <property name="spacing">2</property>
+            <property name="margin-top">12</property>
+            <property name="margin-start">18</property>
+            <property name="margin-end">18</property>
+            <child>
+              <object class="GtkLabel" id="game_title_label">
+                <property name="xalign">0</property>
+                <property name="ellipsize">end</property>
+                <style>
+                  <class name="title-4"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="game_note_label">
+                <property name="xalign">0</property>
+                <property name="wrap">True</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <property name="content">
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <child>
+              <object class="AdwViewStack" id="stack">
+                <property name="vexpand">True</property>
+                <child>
+                  <object class="AdwViewStackPage">
+                    <property name="name">gamepad</property>
+                    <property name="title" translatable="yes">Gamepad</property>
+                    <property name="icon-name">input-gaming-symbolic</property>
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="margin-top">12</property>
+                        <property name="margin-start">18</property>
+                        <property name="margin-end">18</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Choose which button on your gamepad triggers each PS5 control. Click a binding, then press the button or trigger you want to use.</property>
+                            <property name="xalign">0</property>
+                            <property name="wrap">True</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="controller_status">
+                            <property name="xalign">0</property>
+                            <property name="wrap">True</property>
+                            <style>
+                              <class name="heading"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="spacing">18</property>
+                            <property name="vexpand">True</property>
+                            <child>
+                              <object class="GtkScrolledWindow">
+                                <property name="hscrollbar-policy">never</property>
+                                <property name="hexpand">True</property>
+                                <property name="child">
+                                  <object class="GtkBox" id="pad_columns">
+                                    <property name="spacing">18</property>
+                                    <property name="homogeneous">True</property>
+                                    <property name="margin-end">6</property>
+                                    <property name="margin-bottom">12</property>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox" id="diagram_box">
+                                <property name="orientation">vertical</property>
+                                <property name="hexpand">True</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">The gyro emulation toggle activates tilt mode on gamepads without a gyroscope: the right stick then controls pitch and roll. It defaults to the View/Back button.</property>
+                            <property name="xalign">0</property>
+                            <property name="wrap">True</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwViewStackPage">
+                    <property name="name">keyboard</property>
+                    <property name="title" translatable="yes">Keyboard and mouse</property>
+                    <property name="icon-name">input-keyboard-symbolic</property>
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="margin-top">12</property>
+                        <property name="margin-start">18</property>
+                        <property name="margin-end">18</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Choose which keyboard key or mouse button triggers each PS5 control. Click a binding, then press the key or mouse button.</property>
+                            <property name="xalign">0</property>
+                            <property name="wrap">True</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkScrolledWindow">
+                            <property name="hscrollbar-policy">never</property>
+                            <property name="vexpand">True</property>
+                            <property name="child">
+                              <object class="GtkBox" id="keyboard_columns">
+                                <property name="spacing">18</property>
+                                <property name="homogeneous">True</property>
+                                <property name="margin-end">6</property>
+                                <property name="margin-bottom">12</property>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkListBox">
+                            <property name="selection-mode">none</property>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                            <child>
+                              <object class="AdwSpinRow" id="sensitivity_row">
+                                <property name="title" translatable="yes">Mouse sensitivity</property>
+                                <property name="subtitle" translatable="yes">F7 in-game toggles mouse movement on the right stick.</property>
+                                <property name="digits">1</property>
+                                <property name="adjustment">
+                                  <object class="GtkAdjustment">
+                                    <property name="lower">0.1</property>
+                                    <property name="upper">5</property>
+                                    <property name="value">1</property>
+                                    <property name="step-increment">0.1</property>
+                                    <property name="page-increment">1</property>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+                <property name="margin-top">12</property>
+                <property name="margin-bottom">12</property>
+                <property name="margin-start">18</property>
+                <property name="margin-end">18</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Emulated touch pad (shared by both tabs)</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">_Particle skin</property>
+                        <property name="use-underline">True</property>
+                        <property name="mnemonic-widget">skin_dropdown</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkDropDown" id="skin_dropdown"/>
+                    </child>
+                    <child>
+                      <object class="GtkCheckButton" id="cursor_check">
+                        <property name="label" translatable="yes">Show _hand cursor and trail</property>
+                        <property name="use-underline">True</property>
+                        <property name="tooltip-text" translatable="yes">When off, the emulated touch pad still works but the hand image and drawing trail are not shown.</property>
+                        <property name="margin-start">12</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Toggle with the touch pad mode key (F6 by default); draw with left mouse / Cross.</property>
+                    <property name="xalign">0</property>
+                    <property name="wrap">True</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+        <child type="bottom">
+          <object class="GtkActionBar">
+            <child type="start">
+              <object class="GtkButton" id="defaults_button">
+                <property name="label" translatable="yes">Restore tab defaults</property>
+                <property name="tooltip-text" translatable="yes">Restore the defaults of the current tab</property>
+              </object>
+            </child>
+            <child type="start">
+              <object class="GtkButton" id="global_button">
+                <property name="visible">False</property>
+                <property name="label" translatable="yes">Use global mapping</property>
+              </object>
+            </child>
+            <child type="center">
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Tip: select a binding and press Delete to unmap it.</property>
+                <property name="ellipsize">end</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="save_button">
+                <property name="label" translatable="yes">Save</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton">
+                <property name="label" translatable="yes">Cancel</property>
+                <property name="action-name">window.close</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </property>
+  </template>
+</interface>

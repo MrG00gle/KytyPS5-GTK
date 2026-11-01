@@ -5,8 +5,9 @@
 // resources/ui/main-window.xml:
 // - the header bar: Run, Stop, Refresh (F5), the grid toggle (Ctrl+G) with the icon width slider
 //   (128-320 in steps of 16, shown in the grid view), the search entry (Ctrl+F focuses it, Escape
-//   clears it), Global settings (Ctrl+comma), Input mapping, Edit game config (Ctrl+E), Clear game
-//   config, Trophy overview, the game menu (resources/ui/game-menu.xml), and the primary menu;
+//   clears it), Global settings (Ctrl+comma), Input mapping (the global mapping), Edit game config
+//   (Ctrl+E), Clear game config, Trophy overview, the game menu (resources/ui/game-menu.xml, with
+//   the game's own input mapping), and the primary menu;
 // - the banners: the Settings_Store could not be loaded (HC-17: its path and reason, nothing is
 //   saved until "Allow saving" and a confirmation, core::ConfirmOverwrite), "Emulator not found at
 //   <path>" (LFI-40), and "<n> folder(s) could not be read" with a Details alert that names every
@@ -35,16 +36,16 @@
 //
 // Actions (D30). The window registers the app.* actions on its application (without one, in a
 // group of its own named "app", where quit closes the window), and inserts the game.* group (the
-// selected game). Actions of later tasks exist but stay disabled: app.input-mapping,
-// app.trophy-overview, app.check-updates (Official builds), app.open-releases-page (Other builds),
-// game.open-folder, game.trophies, game.cheats, game.additional-content, game.compress,
-// game.remove-save-data, game.clear-config, game.input-mapping, game.export-settings,
-// game.import-settings. Enabled: app.refresh, app.search, app.toggle-grid (stateful),
-// app.global-settings, app.add-game-folder, app.toggle-log (stateful), app.save-log,
-// game.edit-config (a selected game that is not running), game.run (a selected game while
-// core::RunState::CanRun, so no game while one runs or an update installs, 10.4), and game.stop
-// (while core::RunState::CanStop). Delete, Enter, Shift+F10, and the Menu key are the views' own
-// keys (D31).
+// selected game). Actions of later tasks exist but stay disabled: app.trophy-overview,
+// app.check-updates (Official builds), app.open-releases-page (Other builds), game.open-folder,
+// game.trophies, game.cheats, game.additional-content, game.compress, game.remove-save-data,
+// game.clear-config, game.export-settings, game.import-settings. Enabled: app.refresh,
+// app.search, app.toggle-grid (stateful), app.global-settings, app.add-game-folder,
+// app.input-mapping (the global input mapping editor, inputMappingWindow.h), app.toggle-log
+// (stateful), app.save-log, game.edit-config and game.input-mapping (a selected game that is not
+// running), game.run (a selected game while core::RunState::CanRun, so no game while one runs or
+// an update installs, 10.4), and game.stop (while core::RunState::CanStop). Delete, Enter,
+// Shift+F10, and the Menu key are the views' own keys (D31).
 
 #include "launcher/gtk/launcherContext.h"
 #include "launcher/gtk/logModel.h"

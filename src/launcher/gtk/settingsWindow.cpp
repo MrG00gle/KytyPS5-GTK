@@ -17,10 +17,10 @@
 #include "launcher/gtk/services/desktopLauncher.h"
 #include "launcher/gtk/services/deviceLists.h"
 #include "launcher/gtk/services/fileChooser.h"
+#include "launcher/gtk/settingsWrite.h"
 #include "updater/core/updatePolicy.h"
 
 #include <algorithm>
-#include <cerrno>
 #include <cmath>
 #include <cstdarg>
 #include <cstddef>
@@ -33,7 +33,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -569,30 +568,6 @@ std::string ImportErrorText(const core::ImportError& error) {
 			return Format(_("The file contains no game config for %s."), title);
 	}
 	return error.message;
-}
-
-// The nearest existing ancestor directory entry of file that is not a directory: what makes a
-// save fail with ENOTDIR. The parent of file when none is found.
-fs::path NotADirectoryAncestor(const fs::path& file) {
-	for (fs::path dir = file.parent_path(); !dir.empty(); dir = dir.parent_path()) {
-		std::error_code ec;
-		const auto      status = fs::status(dir, ec);
-		if (!ec && fs::exists(status)) {
-			if (!fs::is_directory(status)) {
-				return dir;
-			}
-			break;
-		}
-		if (dir == dir.parent_path()) {
-			break;
-		}
-	}
-	return file.parent_path();
-}
-
-std::string NotADirectoryText(const fs::path& file) {
-	return Format(_("%s is not a directory, so the settings file cannot be created there."),
-	              NotADirectoryAncestor(file).c_str());
 }
 
 // ---- Values
@@ -1339,57 +1314,19 @@ void BuildAboutPage(KytySettingsWindow* self) {
 
 // ---- Writing the Settings_Store (Y2, HC-16, Requirement 12.8)
 
-std::string RefusalText(const core::SettingsStoreFile& store) {
-	const core::IoError& error = *store.load_error;
-	if (error.error_number == ENOTDIR) {
-		return NotADirectoryText(store.path) + "\n\n" +
-		       _("Move or rename it, then choose Overwrite to save the settings.");
-	}
-	return Format(_("%s exists but could not be loaded:\n%s\n\nOverwrite replaces it with these "
-	                "settings."),
-	              store.path.c_str(), error.message.c_str());
-}
-
-std::string SaveErrorText(const core::IoError& error) {
-	if (error.error_number == ENOTDIR) {
-		return NotADirectoryText(error.path);
-	}
-	return Format(_("The settings file %s was not changed:\n%s"), error.path.c_str(),
-	              error.message.c_str());
-}
-
-// Writes next as the Settings_Store. On success the context's settings become next, "saved" is
-// emitted, and done runs. A store that could not be loaded is replaced only after the user chose
-// Overwrite; any other failure is shown with the path and the reason, and nothing changes.
+// Writes next as the Settings_Store (settingsWrite.h). On success the context's settings become
+// next, "saved" is emitted, and done runs. A store that could not be loaded is replaced only after
+// the user chose Overwrite; any other failure is shown with the path and the reason, and nothing
+// changes.
 void WriteStore(KytySettingsWindow* self, core::LauncherSettings next, std::function<void()> done) {
-	auto& state   = *self->state;
-	auto& store   = state.context->settings;
-	auto  written = kyty::gtk::WriteSettingsStore(*state.context, next);
-	if (written) {
-		store.loaded.settings = std::move(next);
-		g_signal_emit(self, g_saved_signal, 0);
-		if (done) {
-			done();
-		}
-		return;
-	}
-	if (store.load_error && !store.overwrite_confirmed) {
-		kyty::gtk::Confirm(
-		    GTK_WINDOW(self), _("The settings file could not be loaded"), RefusalText(store),
-		    _("Overwrite"), _("Cancel"), true,
-		    [self, next, done](bool accepted) {
-			    if (!accepted) {
-				    return;
-			    }
-			    core::ConfirmOverwrite(self->state->context->settings);
-			    WriteStore(self, next, done);
-		    },
-		    state.cancellable.get());
-		return;
-	}
-	g_message("cannot save %s: %s", written.error().path.c_str(), written.error().message.c_str());
-	kyty::gtk::ShowError(GTK_WINDOW(self), _("The settings could not be saved"),
-	                     SaveErrorText(written.error()), state.cancellable.get());
+	auto& state = *self->state;
+	kyty::gtk::SaveSettingsInteractively(GTK_WINDOW(self), *state.context, std::move(next),
+	                                     state.cancellable.get(), [self, done]() {
+		                                     g_signal_emit(self, g_saved_signal, 0);
+		                                     if (done) {
+			                                     done();
+		                                     }
+	                                     });
 }
 
 // ---- Geometry (LFI-47)

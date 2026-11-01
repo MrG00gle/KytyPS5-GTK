@@ -79,3 +79,20 @@
 scale.percent-scale > value {
 	margin-left: 16px;
 }
+
+/* Input mapping editor (task 21.2). A gamepad binding whose input is pressed on the connected
+ * controller is filled with the accent color (the Qt launcher's highlight); the binding whose
+ * capture dialog is open is outlined. */
+button.binding.binding-pressed {
+	background-color: @accent_bg_color;
+	color: @accent_fg_color;
+	font-weight: bold;
+}
+
+button.binding.binding-selected {
+	box-shadow: inset 0 0 0 2px @accent_color;
+}
+
+.binding-capture {
+	min-height: 120px;
+}

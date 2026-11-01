@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- The per-game menu (task 20.2; LFI-12, plan D30): the context menu of the list and grid views,
-     in the Qt launcher's order. The game.* actions belong to the main window, which enables each
-     one for the selected game; Cheats is hidden while game.cheats is disabled (only title IDs that
-     core::IsCheatTitleId accepts offer cheats, as in Qt). -->
+     in the Qt launcher's order, plus the game's own input mapping (task 21.2, LFI-24). The game.*
+     actions belong to the main window, which enables each one for the selected game; Cheats is
+     hidden while game.cheats is disabled (only title IDs that core::IsCheatTitleId accepts offer
+     cheats, as in Qt). -->
 <interface domain="kyty-launcher">
   <menu id="game-menu">
     <section>
@@ -44,6 +45,10 @@
       <item>
         <attribute name="label" translatable="yes">Clear game config</attribute>
         <attribute name="action">game.clear-config</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Edit game input mapping…</attribute>
+        <attribute name="action">game.input-mapping</attribute>
       </item>
     </section>
   </menu>

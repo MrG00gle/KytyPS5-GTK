@@ -1,14 +1,20 @@
 #include "launcher/gtk/dialogRegistry.h"
 
+#include "launcher/core/inputMapping.h"
 #include "launcher/gtk/alerts.h"
+#include "launcher/gtk/bindingCaptureDialog.h"
 #include "launcher/gtk/gamePickerDialog.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
+#include "launcher/gtk/inputLabels.h"
+#include "launcher/gtk/inputMappingWindow.h"
 #include "launcher/gtk/mainWindow.h"
 #include "launcher/gtk/settingsWindow.h"
 
 #include <algorithm>
 #include <iterator>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace kyty::gtk {
@@ -84,6 +90,26 @@ DialogHandle OpenGamePickerDialog(LauncherContext& context, GtkWindow* parent,
 	                                _("Export"), [](const core::GameEntry& /*entry*/) {})));
 }
 
+// The global input mapping editor, or the game's with DialogArgs::entry.
+DialogHandle OpenInputMappingWindow(LauncherContext& context, GtkWindow* parent,
+                                    const DialogArgs& args) {
+	return Presented(GTK_WINDOW(
+	    args.entry != nullptr ? kyty_input_mapping_window_new_for_game(context, parent, *args.entry)
+	                          : kyty_input_mapping_window_new_global(context, parent)));
+}
+
+// A keyboard and mouse capture for the Cross binding, with a callback that does nothing (only the
+// UI tests and the screenshot harness open it through the registry).
+DialogHandle OpenBindingCaptureDialog(LauncherContext& context, GtkWindow* parent,
+                                      const DialogArgs& /*args*/) {
+	const core::InputControl* cross = core::FindInputControl("Cross");
+	g_return_val_if_fail(cross != nullptr, DialogHandle {});
+	return Presented(GTK_WINDOW(
+	    kyty_binding_capture_dialog_new(context, parent, core::InputDevice::KeyboardMouse,
+	                                    InputControlTitle(*cross, core::InputDevice::KeyboardMouse),
+	                                    [](const std::optional<std::string>& /*input*/) {})));
+}
+
 // The main window without an application (its app.* actions are then the window's own); a
 // toplevel of its own, so parent is not used. It starts the library work on context.
 DialogHandle OpenMainWindow(LauncherContext& context, GtkWindow* /*parent*/,
@@ -115,6 +141,8 @@ constexpr DialogType kDialogTypes[] = {
     {"game-settings-window", OpenGameSettingsWindow, CloseWindow},
     {"game-picker-dialog", OpenGamePickerDialog, CloseWindow},
     {"main-window", OpenMainWindow, CloseWindow},
+    {"input-mapping-window", OpenInputMappingWindow, CloseWindow},
+    {"binding-capture-dialog", OpenBindingCaptureDialog, CloseWindow},
 };
 
 } // namespace
