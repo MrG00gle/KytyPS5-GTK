@@ -72,10 +72,20 @@
 	padding: 0 4px;
 }
 
-/* The log pane below the library (task 20.5): one compact monospace row per line. */
+/* The log pane below the library (task 20.5): one compact monospace row per line, under a bar
+ * with the pane's name and Save log (task 21.7). */
 .log-view > row {
 	padding: 1px 8px;
 	min-height: 0;
+}
+
+.log-bar {
+	padding: 2px 8px;
+}
+
+.log-bar button {
+	min-height: 0;
+	padding: 2px 8px;
 }
 
 /* Settings window (task 21.1). */

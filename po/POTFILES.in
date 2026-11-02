@@ -6,6 +6,7 @@ src/launcher/gtk/cheatsWindow.cpp
 src/launcher/gtk/compressionDialog.cpp
 src/launcher/gtk/dialogRegistry.cpp
 src/launcher/gtk/dualsenseWidget.cpp
+src/launcher/gtk/gameActions.cpp
 src/launcher/gtk/gameListView.cpp
 src/launcher/gtk/gameObject.cpp
 src/launcher/gtk/gamePickerDialog.cpp

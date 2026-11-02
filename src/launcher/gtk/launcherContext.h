@@ -11,6 +11,7 @@
 #include "launcher/core/environment.h"
 #include "launcher/core/httpClient.h"
 #include "launcher/core/runState.h"
+#include "launcher/core/saveData.h"
 #include "launcher/core/scheduler.h"
 #include "launcher/core/settingsStore.h"
 #include "launcher/gtk/gameListModel.h"
@@ -79,6 +80,9 @@ struct LauncherContext {
 	std::filesystem::path launcher_directory;
 	std::filesystem::path working_directory;
 	std::string           release_tag;
+	// What deletes the save data of a game (task 21.7, core::RemoveSaveData): the host's
+	// std::filesystem::remove; the harness and the UI tests inject failures through it.
+	core::PathRemover* path_remover = &core::HostPathRemover();
 	// --local: the compatibility database is ./compatibility_db.json, with editable entries.
 	bool local = false;
 

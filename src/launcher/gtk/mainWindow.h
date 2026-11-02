@@ -6,8 +6,8 @@
 // - the header bar: Run, Stop, Refresh (F5), the grid toggle (Ctrl+G) with the icon width slider
 //   (128-320 in steps of 16, shown in the grid view), the search entry (Ctrl+F focuses it, Escape
 //   clears it), Global settings (Ctrl+comma), Input mapping (the global mapping), Edit game config
-//   (Ctrl+E), Clear game config, Trophy overview, the game menu (resources/ui/game-menu.xml, with
-//   the game's own input mapping), and the primary menu;
+//   (Ctrl+E), Clear game config, Trophy overview, the game menu (resources/ui/game-menu.xml, the
+//   views' context menu, LFI-12), and the primary menu;
 // - the banners: the Settings_Store could not be loaded (HC-17: its path and reason, nothing is
 //   saved until "Allow saving" and a confirmation, core::ConfirmOverwrite), "Emulator not found at
 //   <path>" (LFI-40), "<n> folder(s) could not be read" with a Details alert that names every
@@ -18,9 +18,9 @@
 //   translucent scrim; with no Game_Folder, the empty state with "Add game folder" (LFI-36), which
 //   opens the global settings on their Folders page;
 // - the log pane (task 20.5; logView.h over a KytyLogModel, logModel.h) in a GtkPaned below the
-//   library, hidden until app.toggle-log (Ctrl+L) shows it; app.save-log (Ctrl+S) writes its rows
-//   to a file chosen through FileChooser::SaveFile (10.8; an error names the file and the reason
-//   and changes nothing, 10.13);
+//   library, hidden until app.toggle-log (Ctrl+L) shows it; app.save-log (Ctrl+S, the pane's
+//   "Save log…" button, LFI-44) writes its rows to a file chosen through FileChooser::SaveFile
+//   (10.8; an error names the file and the reason and changes nothing, 10.13);
 // - the footer: the Settings_Store path, the Emulator path, the Emulator version (LFI-32), and the
 //   update link of the build's mode (LFI-33: "Check for updates" in Official builds, "Releases
 //   page" in Other builds, none in Flatpak builds);
@@ -39,21 +39,24 @@
 //
 // Actions (D30). The window registers the app.* actions on its application (without one, in a
 // group of its own named "app", where quit closes the window), and inserts the game.* group (the
-// selected game). Actions of later tasks exist but stay disabled: game.open-folder,
-// game.remove-save-data, game.clear-config, game.export-settings, game.import-settings. Enabled:
-// app.check-updates (Official builds only: a user-activated update check, off while a check or an
-// installation runs), app.open-releases-page (Other builds only: the releases page), both through
-// the window's UpdateUi (updateUi.h, task 21.6), which also does the update work at startup;
-// app.refresh, app.search, app.toggle-grid (stateful), app.global-settings, app.add-game-folder,
-// app.input-mapping (the global input mapping editor, inputMappingWindow.h), app.trophy-overview
-// (trophyOverviewWindow.h), app.toggle-log (stateful), app.save-log, game.edit-config and
-// game.input-mapping (a selected game that is not running), game.trophies and
-// game.additional-content (a selected game: trophyWindow.h, additionalContentWindow.h),
-// game.compress (a selected directory game: compressionDialog.h, whose archive-created rescans the
-// Game_Folders), game.cheats (a selected game whose title ID core::IsCheatTitleId accepts:
-// cheatsWindow.h), game.run (a selected game while core::RunState::CanRun, so no game while one
-// runs or an update installs, 10.4), and game.stop (while core::RunState::CanStop). Delete, Enter,
-// Shift+F10, and the Menu key are the views' own keys (D31).
+// selected game), each enabled where it applies: app.check-updates (Official builds only: a
+// user-activated update check, off while a check or an installation runs), app.open-releases-page
+// (Other builds only: the releases page), both through the window's UpdateUi (updateUi.h, task
+// 21.6), which also does the update work at startup; app.refresh, app.search, app.toggle-grid
+// (stateful), app.global-settings, app.add-game-folder, app.input-mapping (the global input
+// mapping editor, inputMappingWindow.h), app.trophy-overview (trophyOverviewWindow.h),
+// app.toggle-log (stateful), app.save-log, game.edit-config, game.input-mapping, and
+// game.import-settings (a selected game that is not running), game.clear-config (a selected game
+// with custom settings that is not running), game.export-settings (a selected game with a title
+// ID), game.open-folder (a selected game), game.trophies and game.additional-content (a selected
+// game: trophyWindow.h, additionalContentWindow.h), game.compress (a selected directory game that
+// is not running, 11.18: compressionDialog.h, whose archive-created rescans the Game_Folders),
+// game.remove-save-data (a selected game that is not running, 11.18), game.cheats (a selected game
+// whose title ID core::IsCheatTitleId accepts: cheatsWindow.h), game.run (a selected game while
+// core::RunState::CanRun, so no game while one runs or an update installs, 10.4), and game.stop
+// (while core::RunState::CanStop). The folder, game config, and save data actions are
+// gameActions.h's (task 21.7). Delete, Enter, Shift+F10, and the Menu key are the views' own keys
+// (D31).
 
 #include "launcher/gtk/launcherContext.h"
 #include "launcher/gtk/logModel.h"

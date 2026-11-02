@@ -1,12 +1,15 @@
 #include "launcher/gtk/dialogRegistry.h"
 
+#include "launcher/core/dataPaths.h"
 #include "launcher/core/inputMapping.h"
+#include "launcher/core/saveData.h"
 #include "launcher/core/trophyModel.h"
 #include "launcher/gtk/additionalContentWindow.h"
 #include "launcher/gtk/alerts.h"
 #include "launcher/gtk/bindingCaptureDialog.h"
 #include "launcher/gtk/cheatsWindow.h"
 #include "launcher/gtk/compressionDialog.h"
+#include "launcher/gtk/gameActions.h"
 #include "launcher/gtk/gamePickerDialog.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
@@ -22,13 +25,17 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <iterator>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace kyty::gtk {
 namespace {
+
+namespace fs = std::filesystem;
 
 // The alert types show a representative text: only the UI tests and the screenshot harness open
 // them through the registry; the launcher's own confirmations and errors call alerts.h directly.
@@ -203,6 +210,64 @@ DialogHandle OpenUpdateResultAlert(LauncherContext& /*context*/, GtkWindow* pare
 	return handle;
 }
 
+// The alerts of the per-game actions (task 21.7, gameActions.h) for DialogArgs::entry (required),
+// with callbacks that do nothing (only the UI tests and the screenshot harness open them through
+// the registry; the main window's actions open the real ones): the Clear game config and Remove
+// save data confirmations (the latter with the game's save data directory, whether it exists or
+// not), the list of paths that could not be removed (sample failures below that directory), and
+// the confirmation for a Game_Settings_File exported for another title.
+fs::path SampleSaveDataDirectory(const LauncherContext& context, const core::GameEntry& entry) {
+	return core::SaveDataPath(context.paths.data_dir, entry.title_id)
+	    .value_or(core::SaveDataDirectory(context.paths.data_dir));
+}
+
+DialogHandle OpenClearConfigAlert(LauncherContext& /*context*/, GtkWindow* parent,
+                                  const DialogArgs& args) {
+	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
+	DialogHandle handle;
+	handle.cancellable = g_cancellable_new();
+	handle.window =
+	    ConfirmClearGameConfig(parent, *args.entry, [](bool /*accepted*/) {}, handle.cancellable);
+	return handle;
+}
+
+DialogHandle OpenRemoveSaveDataAlert(LauncherContext& context, GtkWindow* parent,
+                                     const DialogArgs& args) {
+	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
+	DialogHandle handle;
+	handle.cancellable = g_cancellable_new();
+	handle.window      = ConfirmRemoveSaveData(
+	    parent, *args.entry, {SampleSaveDataDirectory(context, *args.entry)},
+	    [](bool /*accepted*/) {}, handle.cancellable);
+	return handle;
+}
+
+DialogHandle OpenSaveDataFailuresAlert(LauncherContext& context, GtkWindow* parent,
+                                       const DialogArgs& args) {
+	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
+	const fs::path directory = SampleSaveDataDirectory(context, *args.entry);
+	const fs::path sce_sys   = directory / "1" / "sce_sys";
+	const std::vector<core::RemovalFailure> failures = {
+	    {sce_sys / "param.sfo", std::make_error_code(std::errc::permission_denied)},
+	    {sce_sys, std::make_error_code(std::errc::directory_not_empty)},
+	    {directory / "1", std::make_error_code(std::errc::directory_not_empty)},
+	    {directory, std::make_error_code(std::errc::directory_not_empty)}};
+	DialogHandle handle;
+	handle.cancellable = g_cancellable_new();
+	handle.window      = ShowSaveDataFailures(parent, *args.entry, failures, handle.cancellable);
+	return handle;
+}
+
+DialogHandle OpenImportSettingsAlert(LauncherContext& /*context*/, GtkWindow* parent,
+                                     const DialogArgs& args) {
+	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
+	DialogHandle handle;
+	handle.cancellable = g_cancellable_new();
+	handle.window      = ConfirmForeignGameConfig(
+	    parent, *args.entry, "PPSA09999", [](bool /*accepted*/) {}, handle.cancellable);
+	return handle;
+}
+
 // The main window without an application (its app.* actions are then the window's own); a
 // toplevel of its own, so parent is not used. It starts the library work on context.
 DialogHandle OpenMainWindow(LauncherContext& context, GtkWindow* /*parent*/,
@@ -245,6 +310,10 @@ constexpr DialogType kDialogTypes[] = {
     {"update-offer-alert", OpenUpdateOfferAlert, CloseAlert},
     {"update-progress-window", OpenUpdateProgressWindow, CloseWindow},
     {"update-result-alert", OpenUpdateResultAlert, CloseAlert},
+    {"clear-config-alert", OpenClearConfigAlert, CloseAlert},
+    {"remove-save-data-alert", OpenRemoveSaveDataAlert, CloseAlert},
+    {"save-data-failures-alert", OpenSaveDataFailuresAlert, CloseAlert},
+    {"import-settings-alert", OpenImportSettingsAlert, CloseAlert},
 };
 
 } // namespace

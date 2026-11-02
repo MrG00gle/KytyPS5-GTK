@@ -5,6 +5,7 @@
 #include "launcher/gtk/alerts.h"
 #include "launcher/gtk/cheatsWindow.h"
 #include "launcher/gtk/compressionDialog.h"
+#include "launcher/gtk/gameActions.h"
 #include "launcher/gtk/gameGridView.h"
 #include "launcher/gtk/gameListView.h"
 #include "launcher/gtk/gameViewSupport.h"
@@ -100,7 +101,7 @@ namespace core = kyty::core;
 
 constexpr const char* kTemplateResource = "/io/github/MrG00gle/KytyPS5_GTK/ui/main-window.xml";
 
-// The game.* actions (plan D30): registered disabled, enabled by UpdateActions once implemented.
+// The game.* actions (plan D30): registered disabled, enabled by UpdateActions for the selection.
 constexpr const char* kGameActions[] = {"run",
                                         "stop",
                                         "open-folder",
@@ -235,22 +236,36 @@ void UpdateActions(KytyMainWindow* self) {
 	auto&       state   = *self->state;
 	KytyGame*   game    = state.context->library.Selected();
 	GActionMap* actions = G_ACTION_MAP(state.game_actions.get());
+	const auto& run     = state.context->run_state;
 	SetEnabled(actions, "edit-config", game != nullptr && !kyty_game_get_running(game));
 	SetEnabled(actions, "input-mapping", game != nullptr && !kyty_game_get_running(game));
+	// Task 21.7: Clear game config only for a game with custom settings that does not run (as
+	// Qt, 9.3); Import settings changes the custom settings like the editor, Export settings needs
+	// a title ID; the folder opens for any selected game.
+	SetEnabled(actions, "clear-config",
+	           game != nullptr && !kyty_game_get_running(game) &&
+	               core::HasCustomSettings(state.context->settings.loaded.settings,
+	                                       kyty_game_get_entry(game)));
+	SetEnabled(actions, "import-settings", game != nullptr && !kyty_game_get_running(game));
+	SetEnabled(actions, "export-settings",
+	           game != nullptr && kyty::gtk::CanExportGameConfig(kyty_game_get_entry(game)));
+	SetEnabled(actions, "open-folder", game != nullptr);
 	// Tasks 21.3, 21.5: trophies and add-ons for any selected game; compression for a directory
-	// entry (task 21.7 adds the running entry's rule, 11.18).
+	// entry. Task 21.7, 11.18: neither compression nor save data removal for the running entry.
 	SetEnabled(actions, "trophies", game != nullptr);
 	SetEnabled(actions, "additional-content", game != nullptr);
 	SetEnabled(actions, "compress",
 	           game != nullptr &&
-	               kyty_game_get_entry(game).kind == core::GameEntry::Kind::Directory);
+	               kyty_game_get_entry(game).kind == core::GameEntry::Kind::Directory &&
+	               run.CanCompress(kyty_game_get_entry(game).path));
+	SetEnabled(actions, "remove-save-data",
+	           game != nullptr && run.CanRemoveSaveData(kyty_game_get_entry(game).path));
 	// Task 21.4, 11.4: cheats only for PPSA title IDs (the game menu hides the item otherwise).
 	SetEnabled(actions, "cheats",
 	           game != nullptr && core::IsCheatTitleId(kyty_game_get_entry(game).title_id));
 	// 10.4, LFI-11: Run for no game while one runs (or an update installs), Stop only then.
-	SetEnabled(actions, "run",
-	           game != nullptr && state.context->run_state.CanRun(kyty_game_get_entry(game).path));
-	SetEnabled(actions, "stop", state.context->run_state.CanStop());
+	SetEnabled(actions, "run", game != nullptr && run.CanRun(kyty_game_get_entry(game).path));
+	SetEnabled(actions, "stop", run.CanStop());
 	// Task 21.6 (Official builds): no second check while a check or an installation runs.
 	SetEnabled(state.app_actions, "check-updates", state.update && state.update->CanCheck());
 }
@@ -439,7 +454,8 @@ void OnArchiveCreated(GtkWindow* /*dialog*/, gpointer data) {
 void OnCompress(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
 	auto*     self = KYTY_MAIN_WINDOW(data);
 	KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
-	if (game == nullptr || kyty_game_get_entry(game).kind != core::GameEntry::Kind::Directory) {
+	if (game == nullptr || kyty_game_get_entry(game).kind != core::GameEntry::Kind::Directory ||
+	    !self->state->context->run_state.CanCompress(kyty_game_get_entry(game).path)) {
 		return;
 	}
 	KytyCompressionDialog* dialog =
@@ -459,6 +475,70 @@ void OnCheats(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data)
 	}
 	gtk_window_present(GTK_WINDOW(kyty_cheats_window_new(*self->state->context, GTK_WINDOW(self),
 	                                                     kyty_game_get_entry(game))));
+}
+
+// ---- The folder, the game config, and the save data of the selected game (task 21.7,
+// gameActions.h)
+
+// The custom settings of a game changed (cleared or imported): Clear game config follows, and the
+// settings banner when the user allowed overwriting the store on the way.
+void OnGameConfigChanged(KytyMainWindow* self) {
+	if (Alive(self)) {
+		UpdateSettingsBanner(self);
+		UpdateActions(self);
+	}
+}
+
+void OnOpenFolder(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	    game != nullptr) {
+		kyty::gtk::OpenGameFolder(*self->state->context, GTK_WINDOW(self),
+		                          kyty_game_get_entry(game), self->state->cancellable.get());
+	}
+}
+
+void OnClearConfig(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto*     self = KYTY_MAIN_WINDOW(data);
+	KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	if (game == nullptr || kyty_game_get_running(game)) {
+		return;
+	}
+	kyty::gtk::ClearGameConfig(*self->state->context, GTK_WINDOW(self), kyty_game_get_entry(game),
+	                           self->state->cancellable.get(),
+	                           [self]() { OnGameConfigChanged(self); });
+}
+
+void OnRemoveSaveData(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto*     self = KYTY_MAIN_WINDOW(data);
+	KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	if (game == nullptr ||
+	    !self->state->context->run_state.CanRemoveSaveData(kyty_game_get_entry(game).path)) {
+		return;
+	}
+	kyty::gtk::RemoveGameSaveData(*self->state->context, GTK_WINDOW(self),
+	                              kyty_game_get_entry(game), self->state->cancellable.get());
+}
+
+void OnExportSettings(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto*     self = KYTY_MAIN_WINDOW(data);
+	KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	if (game == nullptr || !kyty::gtk::CanExportGameConfig(kyty_game_get_entry(game))) {
+		return;
+	}
+	kyty::gtk::ExportGameConfig(*self->state->context, GTK_WINDOW(self), kyty_game_get_entry(game),
+	                            self->state->cancellable.get());
+}
+
+void OnImportSettings(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
+	auto*     self = KYTY_MAIN_WINDOW(data);
+	KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	if (game == nullptr || kyty_game_get_running(game)) {
+		return;
+	}
+	kyty::gtk::ImportGameConfig(*self->state->context, GTK_WINDOW(self), kyty_game_get_entry(game),
+	                            self->state->cancellable.get(),
+	                            [self]() { OnGameConfigChanged(self); });
 }
 
 // ---- Updates (task 21.6): the check and the releases page by the build's mode (updateUi.h)
@@ -695,6 +775,11 @@ void InstallActions(KytyMainWindow* self, GtkApplication* application) {
 	connect("cheats", G_CALLBACK(&OnCheats));
 	connect("run", G_CALLBACK(&OnRun));
 	connect("stop", G_CALLBACK(&OnStop));
+	connect("open-folder", G_CALLBACK(&OnOpenFolder));
+	connect("clear-config", G_CALLBACK(&OnClearConfig));
+	connect("remove-save-data", G_CALLBACK(&OnRemoveSaveData));
+	connect("export-settings", G_CALLBACK(&OnExportSettings));
+	connect("import-settings", G_CALLBACK(&OnImportSettings));
 	gtk_widget_insert_action_group(GTK_WIDGET(self), "game",
 	                               G_ACTION_GROUP(state.game_actions.get()));
 }

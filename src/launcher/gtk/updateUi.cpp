@@ -10,9 +10,14 @@
 #include "updater/core/updatePolicy.h"
 #include "updater/core/workspaceCleanup.h"
 
+#include <charconv>
 #include <cstdarg>
+#include <initializer_list>
+#include <optional>
+#include <system_error>
 #include <unistd.h>
 #include <utility>
+#include <vector>
 
 namespace kyty::gtk {
 namespace {
@@ -94,7 +99,82 @@ const FixedMessage kFixedMessages[] = {
     {updater::kDownloadDigestMessage,
      N_("The update failed its SHA-256 verification. Please try again.")},
     {updater::kDownloadAbortedMessage, N_("The download was cancelled.")},
+    // updater/core/updateSession.cpp writes these sentences without exporting them
+    // (kMetadataTooLargeMessage, DescribeMetadataFailure, DescribeDownloadFailure).
+    {"The update response is larger than 2 MiB.", N_("The update response is larger than 2 MiB.")},
+    {"The update check timed out.", N_("The update check timed out.")},
+    {"The update check was cancelled.", N_("The update check was cancelled.")},
+    {"The download timed out.", N_("The download timed out.")},
 };
+
+// The numbers of message when it is parts[0], a number, parts[1], ..., a number, parts.back()
+// (each number in decimal digits); otherwise nothing.
+std::vector<uint64_t> NumbersIn(std::string_view                        message,
+                                std::initializer_list<std::string_view> parts) {
+	std::vector<uint64_t> numbers;
+	bool                  first = true;
+	for (const auto part: parts) {
+		if (!std::exchange(first, false)) {
+			uint64_t   value     = 0;
+			const auto end       = message.data() + message.size();
+			const auto [next, e] = std::from_chars(message.data(), end, value);
+			if (e != std::errc {}) {
+				return {};
+			}
+			numbers.push_back(value);
+			message.remove_prefix(static_cast<size_t>(next - message.data()));
+		}
+		if (!message.starts_with(part)) {
+			return {};
+		}
+		message.remove_prefix(part.size());
+	}
+	return message.empty() ? numbers : std::vector<uint64_t> {};
+}
+
+// The updater's sentences with a number (updater/core/updateSession.cpp DescribeMetadataFailure
+// and DescribeDownloadFailure, updater/core/downloadVerifier.cpp Finish) as translated texts.
+std::optional<std::string> NumberedMessageText(std::string_view message) {
+	using Count = unsigned long long;
+	if (const auto n = NumbersIn(message, {"The update check failed with HTTP status ", "."});
+	    n.size() == 1) {
+		// TRANSLATORS: %llu is an HTTP status code, for example 404.
+		return Format(_("The update check failed with HTTP status %llu."),
+		              static_cast<Count>(n[0]));
+	}
+	if (const auto n = NumbersIn(message, {"The download failed with HTTP status ", "."});
+	    n.size() == 1) {
+		// TRANSLATORS: %llu is an HTTP status code, for example 404.
+		return Format(_("The download failed with HTTP status %llu."), static_cast<Count>(n[0]));
+	}
+	if (const auto n = NumbersIn(message, {"The update check received no data for ", " seconds."});
+	    n.size() == 1) {
+		return Format(NGettext("The update check received no data for %llu second.",
+		                       "The update check received no data for %llu seconds.",
+		                       static_cast<unsigned long>(n[0])),
+		              static_cast<Count>(n[0]));
+	}
+	if (const auto n = NumbersIn(message, {"The download received no data for ", " seconds."});
+	    n.size() == 1) {
+		return Format(NGettext("The download received no data for %llu second.",
+		                       "The download received no data for %llu seconds.",
+		                       static_cast<unsigned long>(n[0])),
+		              static_cast<Count>(n[0]));
+	}
+	if (const auto n =
+	        NumbersIn(message, {"The downloaded file is smaller than the release asset (", " of ",
+	                            " bytes)."});
+	    n.size() == 2) {
+		// TRANSLATORS: the bytes received so far and the size of the update package.
+		return Format(NGettext("The downloaded file is smaller than the release asset (%llu of "
+		                       "%llu byte).",
+		                       "The downloaded file is smaller than the release asset (%llu of "
+		                       "%llu bytes).",
+		                       static_cast<unsigned long>(n[1])),
+		              static_cast<Count>(n[0]), static_cast<Count>(n[1]));
+	}
+	return std::nullopt;
+}
 
 // Every update alert has the window title of the Qt launcher's update message boxes.
 GtkWindow* Titled(GtkWindow* window) {
@@ -150,6 +230,9 @@ std::string UpdateMessageText(std::string_view message) {
 		if (message == fixed.core) {
 			return _(fixed.text);
 		}
+	}
+	if (auto numbered = NumberedMessageText(message)) {
+		return std::move(*numbered);
 	}
 	// "Could not verify the currently installed release. <reason>"
 	const std::string unverified = std::string(updater::kInstalledReleaseUnverifiedMessage) + " ";

@@ -57,8 +57,9 @@ updater::UpdateSessionConfig UpdateSessionConfigFor(const LauncherContext& conte
 // The page of the release tag: updater::kReleasesPage + "/tag/" + updater::PercentEncode(tag).
 std::string ReleasePageUrl(std::string_view tag);
 
-// A session message (updater::SessionOutcome::message) as shown: a fixed message of the updater as
-// a translated text, anything else as it is, with invalid UTF-8 replaced (plan D46).
+// A session message (updater::SessionOutcome::message) as shown: a fixed message of the updater,
+// or one of its sentences with a number (an HTTP status, seconds, bytes), as a translated text,
+// anything else as it is, with invalid UTF-8 replaced (plan D46).
 std::string UpdateMessageText(std::string_view message);
 
 // The body of the previous-result message (HC-35): the message without surrounding white space,

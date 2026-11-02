@@ -1,15 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- The per-game menu (task 20.2; LFI-12, plan D30): the context menu of the list and grid views,
-     in the Qt launcher's order, plus the game's own input mapping (task 21.2, LFI-24). The game.*
-     actions belong to the main window, which enables each one for the selected game; Cheats is
-     hidden while game.cheats is disabled (only title IDs that core::IsCheatTitleId accepts offer
-     cheats, as in Qt). -->
+<!-- The per-game menu (tasks 20.2, 21.7; LFI-12, plan D30): the context menu of the list and grid
+     views and the header bar's game menu, in the Qt launcher's order, plus Stop (LFI-43), the
+     game's own input mapping (task 21.2, LFI-24), and the per-game export and import of its
+     settings (LFI-45). The game.* actions belong to the main window, which enables each one for
+     the selected game; Cheats is hidden while game.cheats is disabled (only title IDs that
+     core::IsCheatTitleId accepts offer cheats, as in Qt). -->
 <interface domain="kyty-launcher">
   <menu id="game-menu">
     <section>
       <item>
         <attribute name="label" translatable="yes" context="game menu">Run</attribute>
         <attribute name="action">game.run</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes" context="game menu">Stop</attribute>
+        <attribute name="action">game.stop</attribute>
       </item>
       <item>
         <attribute name="label" translatable="yes">Open game folder</attribute>
@@ -49,6 +54,16 @@
       <item>
         <attribute name="label" translatable="yes">Edit game input mapping…</attribute>
         <attribute name="action">game.input-mapping</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Export settings…</attribute>
+        <attribute name="action">game.export-settings</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Import settings…</attribute>
+        <attribute name="action">game.import-settings</attribute>
       </item>
     </section>
   </menu>

@@ -32,10 +32,13 @@
 // Game configs import), so that the library can follow (rescan after a Game_Folder change, custom
 // settings markers).
 
+#include "launcher/core/gameConfiguration.h"
 #include "launcher/core/gameMetadata.h"
+#include "launcher/core/gameSettingsFile.h"
 #include "launcher/gtk/launcherContext.h"
 
 #include <adwaita.h>
+#include <string>
 
 G_BEGIN_DECLS
 
@@ -57,3 +60,13 @@ KytySettingsWindow* kyty_settings_window_new_for_game(kyty::gtk::LauncherContext
 // Shows the page named name: "general", "network", "debug", and in the global editor "folders",
 // "controller", "updates" (not in Flatpak builds), "about".
 void kyty_settings_window_show_page(KytySettingsWindow* window, const char* name);
+
+namespace kyty::gtk {
+
+// The editor's texts, also for the per-game import of the main window (task 21.7, gameActions.h):
+// an invalid setting as "<label> (<key>): <rule>" (9.4), and a Game_Settings_File import error
+// with the setting and the title it is about, or why the file was rejected (9.10, HC-19).
+std::string SettingsFieldErrorText(const core::ValidationError& error);
+std::string GameSettingsImportErrorText(const core::ImportError& error);
+
+} // namespace kyty::gtk

@@ -565,6 +565,10 @@ std::string ImportErrorText(const core::ImportError& error) {
 			return Format(_("The setting %s in the game config of %s has an invalid value. %s"),
 			              field.c_str(), title, FieldRule(error.field, error.message).c_str());
 		case core::ImportErrorKind::NoMatchingMember:
+			// Only the per-game import (task 21.7) selects a member for one game.
+			if (error.title.empty()) {
+				return _("The file has no game config for this game, which has no title ID.");
+			}
 			return Format(_("The file contains no game config for %s."), title);
 	}
 	return error.message;
@@ -1777,3 +1781,15 @@ void kyty_settings_window_show_page(KytySettingsWindow* window, const char* name
 	g_return_if_fail(KYTY_IS_SETTINGS_WINDOW(window));
 	adw_view_stack_set_visible_child_name(window->stack, name);
 }
+
+namespace kyty::gtk {
+
+std::string SettingsFieldErrorText(const core::ValidationError& error) {
+	return FieldErrorText(error);
+}
+
+std::string GameSettingsImportErrorText(const core::ImportError& error) {
+	return ImportErrorText(error);
+}
+
+} // namespace kyty::gtk
