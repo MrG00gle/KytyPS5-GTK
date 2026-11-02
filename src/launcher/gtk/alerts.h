@@ -19,8 +19,9 @@ namespace kyty::gtk {
 // main loop with true for the accept button and false otherwise, unless cancellable is cancelled
 // first (the alert closes then, and callback never runs). With a cancellable, destroying parent
 // counts as cancelling: the alert closes and callback never runs, also when nobody cancels
-// cancellable (the alert has its own cancellable, chained to it). Returns the alert's window (the
-// new toplevel), or nullptr when it could not be found.
+// cancellable (the alert has its own cancellable, chained to it). When cancellable is already
+// cancelled, nothing is created, callback never runs, and the result is nullptr. Returns the
+// alert's window (the new toplevel), or nullptr when it could not be found.
 GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view body,
                    std::string_view accept_label, std::string_view cancel_label, bool destructive,
                    std::function<void(bool accepted)> callback,
@@ -30,14 +31,17 @@ GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view
 // task 21.6). Escape and closing the alert choose the button at cancel_index; default_index is the
 // default button. callback runs once from the main loop with the index of the chosen button,
 // unless cancellable is cancelled first; with a cancellable, destroying parent counts as
-// cancelling (as for Confirm). Returns the alert's window, or nullptr when it could not be found.
+// cancelling (as for Confirm). When cancellable is already cancelled, nothing is created, callback
+// never runs, and the result is nullptr. Returns the alert's window, or nullptr when it could not
+// be found.
 GtkWindow* Choose(GtkWindow* parent, std::string_view heading, std::string_view body,
                   const std::vector<std::string>& labels, int cancel_index, int default_index,
                   std::function<void(int index)> callback, GCancellable* cancellable = nullptr);
 
 // A modal alert with heading, body, and GTK's own Close button. Cancelling cancellable closes it;
-// with a cancellable, destroying parent closes it too (as for Confirm). Returns the alert's
-// window, or nullptr when it could not be found.
+// with a cancellable, destroying parent closes it too (as for Confirm). When cancellable is
+// already cancelled, nothing is created and the result is nullptr. Returns the alert's window, or
+// nullptr when it could not be found.
 GtkWindow* ShowError(GtkWindow* parent, std::string_view heading, std::string_view body,
                      GCancellable* cancellable = nullptr);
 

@@ -336,8 +336,11 @@ void LibraryController::RunDetails(GTask* task, gpointer /*source*/, gpointer ta
 		delivered += items;
 		batch->last  = last;
 		batch->count = delivered;
-		g_main_context_invoke_full(nullptr, G_PRIORITY_DEFAULT_IDLE, &ApplyBatch, batch,
-		                           [](gpointer data) { delete static_cast<Batch*>(data); });
+		// An idle source of the default main context: ApplyBatch runs on the thread that iterates
+		// the context, the main thread, also when no thread owns the context at this moment (an
+		// invoke of the context would then run it here, in the worker).
+		g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, &ApplyBatch, batch,
+		                [](gpointer data) { delete static_cast<Batch*>(data); });
 		batch     = last ? nullptr : new_batch();
 		last_post = g_get_monotonic_time();
 	};

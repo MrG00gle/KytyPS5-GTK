@@ -216,7 +216,11 @@ KYTY_PROPERTY(30, "Cheat document round trip") {
 		}
 		const auto fixed =
 		    kyty::core::ParseCheatDocument(kyty::core::SerializeCheatDocument(*again), "p30.json");
-		RC_ASSERT(fixed.has_value() && fixed->json == again->json);
+		// RC_ASSERT does not short-circuit &&: the value is checked before it is read.
+		RC_ASSERT(fixed.has_value());
+		if (fixed.has_value()) {
+			RC_ASSERT(fixed->json == again->json);
+		}
 		RC_TAG(toggled ? "toggled" : "unchanged");
 		RC_TAG(names.empty() ? "no cheats" : "cheats");
 	});

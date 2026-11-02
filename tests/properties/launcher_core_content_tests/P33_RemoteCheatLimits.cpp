@@ -298,7 +298,11 @@ KYTY_PROPERTY(33, "Remote cheat fetch limits and matching") {
 		}
 
 		const auto after = kyty::core::ReadFileLimited(local, kyty::core::kMaxCheatFileBytes);
-		RC_ASSERT(after.has_value() && *after == local_bytes);
+		// RC_ASSERT does not short-circuit &&: the value is checked before it is read.
+		RC_ASSERT(after.has_value());
+		if (after.has_value()) {
+			RC_ASSERT(*after == local_bytes);
+		}
 		RC_ASSERT(http.ActiveCount() == 0u);
 	});
 }

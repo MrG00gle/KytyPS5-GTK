@@ -58,6 +58,12 @@ GtkWidget* FindLastButton(GtkWidget* root, std::string_view label) {
 	return found;
 }
 
+// The caller's cancellable is cancelled before the alert opens (its owner is going away): the
+// helpers then create nothing and never call back, so no alert outlives its parent.
+bool AlreadyCancelled(GCancellable* cancellable) {
+	return cancellable != nullptr && g_cancellable_is_cancelled(cancellable) != FALSE;
+}
+
 GObjectPtr<GtkAlertDialog> NewAlert(std::string_view heading, std::string_view body) {
 	auto alert =
 	    GObjectPtr<GtkAlertDialog>::Adopt(gtk_alert_dialog_new("%s", std::string(heading).c_str()));
@@ -178,6 +184,9 @@ void OnErrorClosed(GObject* source, GAsyncResult* result, gpointer data) {
 GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view body,
                    std::string_view accept_label, std::string_view cancel_label, bool destructive,
                    std::function<void(bool accepted)> callback, GCancellable* cancellable) {
+	if (AlreadyCancelled(cancellable)) {
+		return nullptr;
+	}
 	auto              alert       = NewAlert(heading, body);
 	const std::string cancel_text = std::string(cancel_label);
 	const std::string accept_text = std::string(accept_label);
@@ -216,6 +225,9 @@ GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view
 GtkWindow* Choose(GtkWindow* parent, std::string_view heading, std::string_view body,
                   const std::vector<std::string>& labels, int cancel_index, int default_index,
                   std::function<void(int index)> callback, GCancellable* cancellable) {
+	if (AlreadyCancelled(cancellable)) {
+		return nullptr;
+	}
 	auto                     alert = NewAlert(heading, body);
 	std::vector<const char*> buttons;
 	for (const auto& label: labels) {
@@ -242,6 +254,9 @@ GtkWindow* Choose(GtkWindow* parent, std::string_view heading, std::string_view 
 
 GtkWindow* ShowError(GtkWindow* parent, std::string_view heading, std::string_view body,
                      GCancellable* cancellable) {
+	if (AlreadyCancelled(cancellable)) {
+		return nullptr;
+	}
 	auto alert           = NewAlert(heading, body);
 	auto call            = std::make_unique<ErrorCall>();
 	call->link           = LinkFor(parent, cancellable);

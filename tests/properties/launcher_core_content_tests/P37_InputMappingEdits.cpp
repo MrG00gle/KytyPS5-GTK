@@ -135,7 +135,11 @@ void CheckEdit(const ContentGen::MappingEdit& edit, bool applied, const InputMap
 	switch (edit.kind) {
 		case Kind::Assign: {
 			const auto found = bindings.find(edit.control);
-			RC_ASSERT(found != bindings.end() && found->second == edit.input);
+			// RC_ASSERT does not short-circuit &&: the iterator is checked before it is read.
+			RC_ASSERT(found != bindings.end());
+			if (found != bindings.end()) {
+				RC_ASSERT(found->second == edit.input);
+			}
 			for (const auto& [control, input]: bindings) {
 				if (control != edit.control) {
 					RC_ASSERT(kyty::core::CompareCaseInsensitive(input, edit.input) != 0);

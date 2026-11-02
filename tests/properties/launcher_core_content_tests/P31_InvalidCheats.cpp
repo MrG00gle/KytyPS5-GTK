@@ -150,7 +150,11 @@ KYTY_PROPERTY(31, "Invalid cheat documents are rejected") {
 		RC_ASSERT(local.readable && local.bytes == draw.bytes);
 		RC_ASSERT(local.message.starts_with(path.string() + ": "));
 		const auto after = kyty::core::ReadFileLimited(path, kyty::core::kMaxCheatFileBytes);
-		RC_ASSERT(after.has_value() && *after == draw.bytes);
+		// RC_ASSERT does not short-circuit &&: the value is checked before it is read.
+		RC_ASSERT(after.has_value());
+		if (after.has_value()) {
+			RC_ASSERT(*after == draw.bytes);
+		}
 
 		// A downloaded remote file.
 		KytyTests::FakeScheduler                   scheduler;

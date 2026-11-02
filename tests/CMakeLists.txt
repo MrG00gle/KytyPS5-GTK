@@ -580,9 +580,23 @@ set(kyty_launcher_gtk_optional "")
 if(NOT KYTY_BUILD_LAUNCHER)
 	set(kyty_launcher_gtk_optional OPTIONAL)
 endif()
+# The fakes of the GTK launcher's services and the LauncherContext services built from them, for
+# the display-free GTK tests and the UI tests (support/gtk/, outside the support/*.cpp glob above).
+# Without kyty_launcher_gtk there is nothing to fake: the sources are then exempt from the "not
+# compiled into a registered test executable" check, as the skipped test directories are.
+file(GLOB kyty_gtk_test_support_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/support/gtk/*.cpp")
+if(TARGET kyty_launcher_gtk)
+	add_library(kyty_gtk_test_support STATIC EXCLUDE_FROM_ALL ${kyty_gtk_test_support_sources})
+	target_link_libraries(kyty_gtk_test_support PUBLIC kyty_launcher_gtk kyty_test_support)
+	target_compile_options(kyty_gtk_test_support PRIVATE -frtti)
+else()
+	set_property(GLOBAL APPEND PROPERTY KYTY_TESTING_OPTIONAL_SKIPPED_SOURCES ${kyty_gtk_test_support_sources})
+endif()
+# SDL_AUDIO_DRIVER=dummy: a title sound that a test plays goes to SDL's dummy audio device.
 kyty_add_test_directory(tests/launcher_gtk ${kyty_launcher_gtk_optional}
-	LINK kyty_launcher_gtk kyty_test_support
+	LINK kyty_launcher_gtk kyty_test_support kyty_gtk_test_support
 	ENVIRONMENT GSETTINGS_BACKEND=memory GIO_USE_VFS=local GIO_USE_PROXY_RESOLVER=dummy
+	            SDL_AUDIO_DRIVER=dummy
 	ENVIRONMENT_MODIFICATION ${kyty_no_display} DBUS_SESSION_BUS_ADDRESS=unset:)
 
 # Build classification (task 17.6, Requirement 13.2): kyty_classify_build() in script mode over every
