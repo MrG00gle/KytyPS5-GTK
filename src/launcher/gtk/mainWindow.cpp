@@ -68,6 +68,7 @@ struct MainWindowState {
 struct _KytyMainWindow {
 	AdwApplicationWindow parent_instance;
 	AdwToastOverlay*     toast_overlay;
+	GtkWidget*           grid_button;
 	GtkScale*            icon_width_scale;
 	GtkSearchEntry*      search_entry;
 	GtkMenuButton*       game_menu_button;
@@ -227,9 +228,21 @@ void UpdateScanBanner(KytyMainWindow* self, const std::vector<core::ScanWarning>
 	adw_banner_set_revealed(self->scan_banner, warnings.empty() ? FALSE : TRUE);
 }
 
+// D20: the grid toggle and the icon width slider only with the library, not on the empty state
+// (app.toggle-grid stays enabled there and switches the stored view); the slider only in the grid
+// view.
+void UpdateViewControls(KytyMainWindow* self) {
+	const bool library =
+	    g_strcmp0(gtk_stack_get_visible_child_name(self->content_stack), "library") == 0;
+	const bool grid = g_strcmp0(gtk_stack_get_visible_child_name(self->views_stack), "grid") == 0;
+	gtk_widget_set_visible(self->grid_button, library ? TRUE : FALSE);
+	gtk_widget_set_visible(GTK_WIDGET(self->icon_width_scale), library && grid ? TRUE : FALSE);
+}
+
 void UpdateContent(KytyMainWindow* self) {
 	const bool empty = self->state->context->settings.loaded.settings.game_folders.empty();
 	gtk_stack_set_visible_child_name(self->content_stack, empty ? "empty" : "library");
+	UpdateViewControls(self);
 }
 
 void UpdateActions(KytyMainWindow* self) {
@@ -283,7 +296,7 @@ void ShowArt(KytyMainWindow* self, GdkTexture* art) {
 
 void ShowView(KytyMainWindow* self, bool grid) {
 	gtk_stack_set_visible_child_name(self->views_stack, grid ? "grid" : "list");
-	gtk_widget_set_visible(GTK_WIDGET(self->icon_width_scale), grid ? TRUE : FALSE);
+	UpdateViewControls(self);
 }
 
 // ---- Settings windows
@@ -347,6 +360,79 @@ void OnToggleGrid(GSimpleAction* action, GVariant* value, gpointer data) {
 		next.grid_view = grid;
 		SaveAutomatically(self, std::move(next));
 	}
+}
+
+// D18 (LFI-06 without a pointer): the primary menu's "Sort by" submenu. app.sort-column (state:
+// the column's name) and app.sort-descending (boolean state) set the library's sort, which the
+// list view's headers show; a header click changes the sort, and SyncSortActions the two states.
+struct SortColumnName {
+	const char*  name;
+	core::Column column;
+};
+
+constexpr SortColumnName kSortColumns[] = {
+    {"title", core::Column::Title},         {"serial", core::Column::TitleId},
+    {"version", core::Column::GameVersion}, {"firmware", core::Column::FirmwareVersion},
+    {"size", core::Column::Size},           {"path", core::Column::Path},
+    {"status", core::Column::Status},       {"comment", core::Column::Comment},
+};
+
+const char* SortColumnNameOf(core::Column column) {
+	for (const auto& entry: kSortColumns) {
+		if (entry.column == column) {
+			return entry.name;
+		}
+	}
+	return kSortColumns[0].name;
+}
+
+// The sort changed (a header click, the menu, or the model): the menu's radio and check items
+// follow (g_simple_action_set_state ignores an equal state).
+void SyncSortActions(KytyMainWindow* self) {
+	if (!Alive(self) || self->state->app_actions == nullptr) {
+		return;
+	}
+	const auto& library = self->state->context->library;
+	if (GSimpleAction* column = FindAction(self->state->app_actions, "sort-column");
+	    column != nullptr) {
+		g_simple_action_set_state(column,
+		                          g_variant_new_string(SortColumnNameOf(library.SortColumn())));
+	}
+	if (GSimpleAction* descending = FindAction(self->state->app_actions, "sort-descending");
+	    descending != nullptr) {
+		g_simple_action_set_state(descending,
+		                          g_variant_new_boolean(library.SortDescending() ? TRUE : FALSE));
+	}
+}
+
+void OnSortColumn(GSimpleAction* action, GVariant* value, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (!Alive(self)) {
+		return;
+	}
+	const char* name = g_variant_get_string(value, nullptr);
+	for (const auto& entry: kSortColumns) {
+		if (g_strcmp0(entry.name, name) == 0) {
+			g_simple_action_set_state(action, value);
+			auto& library = self->state->context->library;
+			library.SetSort(entry.column, library.SortDescending());
+			return;
+		}
+	}
+}
+
+void OnSortDescending(GSimpleAction* action, GVariant* value, gpointer data) {
+	auto* self = KYTY_MAIN_WINDOW(data);
+	if (!Alive(self)) {
+		return;
+	}
+	g_simple_action_set_state(action, value);
+	auto& library = self->state->context->library;
+	library.SetSort(library.SortColumn(), g_variant_get_boolean(value) != FALSE);
+}
+
+void OnLibrarySortChanged(GtkSorter* /*sorter*/, GtkSorterChange /*change*/, gpointer data) {
+	SyncSortActions(KYTY_MAIN_WINDOW(data));
 }
 
 void OnGlobalSettings(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
@@ -701,6 +787,8 @@ constexpr GActionEntry kAppActions[] = {
     {"refresh", OnRefresh, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"search", OnSearch, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"toggle-grid", nullptr, nullptr, "false", OnToggleGrid, {0, 0, 0}},
+    {"sort-column", nullptr, "s", "'title'", OnSortColumn, {0, 0, 0}},
+    {"sort-descending", nullptr, nullptr, "false", OnSortDescending, {0, 0, 0}},
     {"global-settings", OnGlobalSettings, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"add-game-folder", OnAddGameFolder, nullptr, nullptr, nullptr, {0, 0, 0}},
     {"input-mapping", OnInputMapping, nullptr, nullptr, nullptr, {0, 0, 0}},
@@ -754,6 +842,9 @@ void InstallActions(KytyMainWindow* self, GtkApplication* application) {
 		g_simple_action_set_state(
 		    grid, g_variant_new_boolean(state.context->settings.loaded.settings.grid_view));
 	}
+	SyncSortActions(self);
+	state.signals.push_back(kyty::gtk::SignalScope::Connect(
+	    state.context->library.Sorter(), "changed", G_CALLBACK(&OnLibrarySortChanged), self));
 
 	state.game_actions =
 	    kyty::gtk::GObjectPtr<GSimpleActionGroup>::Adopt(g_simple_action_group_new());
@@ -941,6 +1032,7 @@ static void kyty_main_window_class_init(KytyMainWindowClass* klass) {
 	object_class->finalize = kyty_main_window_finalize;
 	gtk_widget_class_set_template_from_resource(widget_class, kTemplateResource);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, toast_overlay);
+	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, grid_button);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, icon_width_scale);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, search_entry);
 	gtk_widget_class_bind_template_child(widget_class, KytyMainWindow, game_menu_button);

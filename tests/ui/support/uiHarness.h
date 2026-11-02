@@ -30,6 +30,15 @@ public:
 	CaseRegistrar(const char* name, CaseFn run);
 };
 
+// Sets the fake portal's color-scheme (0 no preference, 1 prefer dark, 2 prefer light) through
+// TestPortal.SetColorScheme before the case's gtk_init and adw_init, so that the case starts in a
+// desktop with that preference (a static object next to the case:
+//   static const KytyUi::InitialColorScheme kDark("theme_initial_dark", 1);).
+class InitialColorScheme {
+public:
+	InitialColorScheme(const char* case_name, guint32 value);
+};
+
 // Fails the running case: prints "<case>: FAILED: <what>" to stderr. The case goes on.
 void Fail(std::string_view what);
 

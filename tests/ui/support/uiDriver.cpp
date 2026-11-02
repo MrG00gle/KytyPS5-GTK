@@ -2,7 +2,11 @@
 
 #include "ui/support/uiHarness.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <iterator>
 #include <string>
 
 namespace KytyUi {
@@ -80,14 +84,33 @@ bool IsLocalShortcutController(GtkEventController* controller) {
 	           GTK_SHORTCUT_SCOPE_LOCAL;
 }
 
-// The shortcut controllers of global or managed scope below root.
-std::vector<GObjectPtr<GtkEventController>> ManagedControllers(GtkWidget* root) {
+// The first GtkShortcutManager (a window or a popover) at or above widget.
+GtkWidget* ShortcutManagerOf(GtkWidget* widget) {
+	while (widget != nullptr && !G_TYPE_CHECK_INSTANCE_TYPE(widget, GTK_TYPE_SHORTCUT_MANAGER)) {
+		widget = gtk_widget_get_parent(widget);
+	}
+	return widget;
+}
+
+// The shortcut controllers below root that GTK runs for a key whose propagation chain is chain:
+// those of global scope (the root's), and those of managed scope whose shortcut manager is in the
+// chain. A popover is a shortcut manager of its own, so the managed shortcuts of its items (a menu
+// item's accelerator) run only while the key goes to the popover.
+std::vector<GObjectPtr<GtkEventController>>
+ManagedControllers(GtkWidget* root, const std::vector<GtkWidget*>& chain) {
 	std::vector<GObjectPtr<GtkEventController>> managed;
 	for (GtkWidget* widget: FindAll(root, [](GtkWidget*) { return true; })) {
 		for (auto& controller: Controllers(widget)) {
-			if (GTK_IS_SHORTCUT_CONTROLLER(controller.get()) &&
-			    !IsLocalShortcutController(controller.get()) &&
-			    !IsShortcutManagerController(controller.get())) {
+			if (!GTK_IS_SHORTCUT_CONTROLLER(controller.get()) ||
+			    IsLocalShortcutController(controller.get()) ||
+			    IsShortcutManagerController(controller.get())) {
+				continue;
+			}
+			const bool global =
+			    gtk_shortcut_controller_get_scope(GTK_SHORTCUT_CONTROLLER(controller.get())) ==
+			    GTK_SHORTCUT_SCOPE_GLOBAL;
+			GtkWidget* manager = ShortcutManagerOf(widget);
+			if (global || std::find(chain.begin(), chain.end(), manager) != chain.end()) {
 				managed.push_back(controller);
 			}
 		}
@@ -286,12 +309,125 @@ std::optional<std::string> AccessibleProperty(GtkWidget* widget, GtkAccessiblePr
 	return std::string(actual.View());
 }
 
+std::vector<GtkWidget*> LabelledBy(GtkWidget* widget) {
+	std::vector<GtkWidget*> found;
+	if (gtk_test_accessible_has_relation(GTK_ACCESSIBLE(widget),
+	                                     GTK_ACCESSIBLE_RELATION_LABELLED_BY) == FALSE) {
+		return found;
+	}
+	// check_relation returns the actual value as text unless it equals the one passed (a widget
+	// is never labelled by itself alone). Since GTK 4.14 the value is a NULL-terminated list.
+	const GCharPtr    actual(gtk_test_accessible_check_relation(
+	    GTK_ACCESSIBLE(widget), GTK_ACCESSIBLE_RELATION_LABELLED_BY, widget, nullptr));
+	const std::string text(actual.View());
+	GtkWidget*        root = GTK_WIDGET(gtk_widget_get_root(widget));
+	if (root == nullptr) {
+		root = widget;
+	}
+	const auto tree = FindAll(root, [](GtkWidget*) { return true; });
+	for (std::size_t at = text.find("<0x"); at != std::string::npos;
+	     at             = text.find("<0x", at + 3)) {
+		const auto address =
+		    static_cast<std::uintptr_t>(std::strtoull(text.c_str() + at + 3, nullptr, 16));
+		for (GtkWidget* candidate: tree) {
+			if (reinterpret_cast<std::uintptr_t>(candidate) == address) {
+				found.push_back(candidate);
+				break;
+			}
+		}
+	}
+	return found;
+}
+
 std::string AccessibleName(GtkWidget* widget) {
 	if (auto label = AccessibleProperty(widget, GTK_ACCESSIBLE_PROPERTY_LABEL);
 	    label && !label->empty()) {
 		return *label;
 	}
+	std::string labels;
+	for (GtkWidget* label: LabelledBy(widget)) {
+		std::string text = WidgetText(label);
+		if (text.empty()) {
+			text = AccessibleProperty(label, GTK_ACCESSIBLE_PROPERTY_LABEL).value_or("");
+		}
+		if (!text.empty()) {
+			labels += (labels.empty() ? "" : " ") + text;
+		}
+	}
+	if (!labels.empty()) {
+		return labels;
+	}
 	return WidgetText(widget);
+}
+
+std::vector<GtkWidget*> InteractiveControls(GtkWidget* root) {
+	static constexpr GtkAccessibleRole kControls[] = {
+	    GTK_ACCESSIBLE_ROLE_BUTTON,         GTK_ACCESSIBLE_ROLE_TOGGLE_BUTTON,
+	    GTK_ACCESSIBLE_ROLE_CHECKBOX,       GTK_ACCESSIBLE_ROLE_RADIO,
+	    GTK_ACCESSIBLE_ROLE_SWITCH,         GTK_ACCESSIBLE_ROLE_COMBO_BOX,
+	    GTK_ACCESSIBLE_ROLE_TEXT_BOX,       GTK_ACCESSIBLE_ROLE_SEARCH_BOX,
+	    GTK_ACCESSIBLE_ROLE_SPIN_BUTTON,    GTK_ACCESSIBLE_ROLE_SLIDER,
+	    GTK_ACCESSIBLE_ROLE_LINK,           GTK_ACCESSIBLE_ROLE_TAB,
+	    GTK_ACCESSIBLE_ROLE_MENU_ITEM,      GTK_ACCESSIBLE_ROLE_MENU_ITEM_CHECKBOX,
+	    GTK_ACCESSIBLE_ROLE_MENU_ITEM_RADIO};
+	static constexpr GtkAccessibleRole kItems[] = {
+	    GTK_ACCESSIBLE_ROLE_LIST_ITEM, GTK_ACCESSIBLE_ROLE_ROW, GTK_ACCESSIBLE_ROLE_GRID_CELL};
+	std::vector<GtkWidget*>                     controls;
+	const std::function<void(GtkWidget*, bool)> walk = [&](GtkWidget* widget, bool reachable) {
+		if (gtk_widget_get_mapped(widget) == FALSE) {
+			return;
+		}
+		// Nothing below a widget that cannot take the focus takes it.
+		reachable                    = reachable && gtk_widget_get_can_focus(widget) != FALSE;
+		const GtkAccessibleRole role = gtk_accessible_get_accessible_role(GTK_ACCESSIBLE(widget));
+		const bool              control =
+		    std::find(std::begin(kControls), std::end(kControls), role) != std::end(kControls);
+		const bool item = std::find(std::begin(kItems), std::end(kItems), role) != std::end(kItems);
+		if (control || (item && reachable && gtk_widget_get_focusable(widget) != FALSE)) {
+			controls.push_back(widget);
+		}
+		for (GtkWidget* child = gtk_widget_get_first_child(widget); child != nullptr;
+		     child            = gtk_widget_get_next_sibling(child)) {
+			walk(child, reachable);
+		}
+	};
+	if (root != nullptr) {
+		walk(root, true);
+	}
+	return controls;
+}
+
+std::string ControlName(GtkWidget* control) {
+	std::string name   = AccessibleName(control);
+	GtkWidget*  parent = gtk_widget_get_parent(control);
+	if (name.empty() && parent != nullptr && GTK_IS_BUTTON(control) &&
+	    (GTK_IS_MENU_BUTTON(parent) || GTK_IS_DROP_DOWN(parent) ||
+	     GTK_IS_COLOR_DIALOG_BUTTON(parent) || GTK_IS_FONT_DIALOG_BUTTON(parent))) {
+		name = AccessibleName(parent);
+	}
+	return name;
+}
+
+std::string WidgetPath(GtkWidget* widget) {
+	std::string path;
+	for (GtkWidget* at = widget; at != nullptr; at = gtk_widget_get_parent(at)) {
+		std::string segment = G_OBJECT_TYPE_NAME(at);
+		const char* id      = gtk_buildable_get_buildable_id(GTK_BUILDABLE(at));
+		if (id != nullptr && !g_str_has_prefix(id, "___object_")) {
+			segment += std::string("#") + id;
+		}
+		path = path.empty() ? segment : segment + " > " + path;
+	}
+	return path;
+}
+
+std::string RoleName(GtkWidget* widget) {
+	auto*             klass = static_cast<GEnumClass*>(g_type_class_ref(GTK_TYPE_ACCESSIBLE_ROLE));
+	const GEnumValue* value =
+	    g_enum_get_value(klass, gtk_accessible_get_accessible_role(GTK_ACCESSIBLE(widget)));
+	std::string name = value != nullptr ? value->value_nick : "unknown";
+	g_type_class_unref(klass);
+	return name;
 }
 
 std::string AtContextType(GtkWidget* widget) {
@@ -326,6 +462,14 @@ bool KeyPress(GtkWidget* target, guint keyval, GdkModifierType modifiers) {
 	if (GTK_IS_WINDOW(target) && gtk_window_get_focus(GTK_WINDOW(target)) != nullptr) {
 		target = gtk_window_get_focus(GTK_WINDOW(target));
 	}
+	return KeyPressOn(target, keyval, modifiers);
+}
+
+bool KeyPressOn(GtkWidget* target, guint keyval, GdkModifierType modifiers) {
+	// gtk_main_do_event makes a window that gets a key event show the focus.
+	if (GtkRoot* root = gtk_widget_get_root(target); GTK_IS_WINDOW(root)) {
+		gtk_window_set_focus_visible(GTK_WINDOW(root), TRUE);
+	}
 	Key key;
 	key.keyval    = keyval;
 	key.modifiers = modifiers;
@@ -343,7 +487,7 @@ bool KeyPress(GtkWidget* target, guint keyval, GdkModifierType modifiers) {
 	for (GtkWidget* widget = target; widget != nullptr; widget = gtk_widget_get_parent(widget)) {
 		chain.insert(chain.begin(), widget);
 	}
-	const auto managed = ManagedControllers(chain.front());
+	const auto managed = ManagedControllers(chain.front(), chain);
 	const auto runs    = [&key](const GObjectPtr<GtkEventController>& controller,
 	                            GtkPropagationPhase                   phase) {
 		return gtk_event_controller_get_propagation_phase(controller.get()) == phase &&

@@ -2,9 +2,15 @@
 
 #include "launcher/core/archiveJob.h"
 #include "launcher/core/cancelToken.h"
+#include "launcher/core/cheatCatalog.h"
+#include "launcher/core/cheats.h"
+#include "launcher/core/trophyModel.h"
 #include "launcher/gtk/gobjectPtr.h"
+#include "support/contentGenerators.h"
+#include "ui/support/uiDriver.h"
 #include "ui/support/uiHarness.h"
 
+#include <adwaita.h>
 #include <cstdio>
 #include <fstream>
 #include <gtk/gtk.h>
@@ -13,7 +19,8 @@
 
 namespace KytyUi {
 
-namespace fs = std::filesystem;
+namespace fs  = std::filesystem;
+namespace gen = KytyTests::ContentGen;
 using kyty::gtk::GObjectPtr;
 
 namespace {
@@ -38,6 +45,28 @@ bool WriteGame(const fs::path& directory, std::string_view title, std::string_vi
 // "Ünïcöde" in UTF-8.
 std::string Unicode() {
 	return std::string("\xc3\x9c") + "n" + "\xc3\xaf" + "c" + "\xc3\xb6" + "de";
+}
+
+gen::TrophySpec Trophy(int id, char grade, const char* name, const char* detail, bool hidden) {
+	gen::TrophySpec spec;
+	spec.id     = id;
+	spec.grade  = grade;
+	spec.hidden = hidden;
+	spec.name   = name;
+	spec.detail = detail;
+	return spec;
+}
+
+// A control of type whose ControlName starts with prefix and ends with suffix.
+std::function<bool(GtkWidget*)> NamedControl(GType type, std::string prefix,
+                                             std::string suffix = "") {
+	return [type, prefix = std::move(prefix), suffix = std::move(suffix)](GtkWidget* widget) {
+		if (G_TYPE_CHECK_INSTANCE_TYPE(widget, type) == FALSE) {
+			return false;
+		}
+		const std::string name = ControlName(widget);
+		return name.starts_with(prefix) && name.ends_with(suffix);
+	};
 }
 
 } // namespace
@@ -134,6 +163,80 @@ int WriteSyntheticGames(const fs::path& folder, int count, bool with_icons) {
 		}
 	}
 	return count;
+}
+
+bool WriteGameContent(const fs::path& games, const fs::path& data_dir, const fs::path& addons,
+                      int user_id) {
+	gen::TrophyPackageSpec package;
+	package.title    = "Alpha Game Trophies";
+	package.trophies = {Trophy(1, 'G', "Gold Rush", "Collect 1,000 coins.", false),
+	                    Trophy(2, 'S', "Silver Lining", "Survive the storm.", false),
+	                    Trophy(3, 'B', "Secret Ending", "Reach the secret ending.", true)};
+	kyty::core::TrophyUnlocks unlocks;
+	unlocks.unlocked = {1};
+	auto cheats =
+	    gen::RemoteCheatSpec("PPSA01001", "01.000", "eboot.bin", {"Infinite Health", "Max Coins"});
+	cheats.mods[1].push_back({"enabled", "false"});
+	const fs::path add_on = addons / "alpha-soundtrack" / "sce_sys";
+	return WriteFile(games / "Alpha Game" / "sce_sys" / "trophy2" / "trophy00.ucp",
+	                 gen::TrophyPackageBytes(package)) &&
+	       Check(gen::WriteUnlocks(data_dir, "PPSA01001", user_id, 0, unlocks),
+	             "write the unlock file of Alpha Game's trophies") &&
+	       WriteFile(add_on / "param.json",
+	                 gen::AddOnParamJson(gen::AddOnContentId("PPSA01001", "ALPHASOUNDTRACK1"),
+	                                     "Alpha Soundtrack")) &&
+	       WritePng(add_on / "icon0.png", 128, 128, 5) &&
+	       WriteFile(kyty::core::CheatFilePath(data_dir, "PPSA01001"),
+	                 gen::CheatDocumentText(cheats));
+}
+
+std::vector<std::pair<std::string, std::string>> CheatIndexes() {
+	const auto line = [](std::string_view title_id, std::string_view version, std::string_view rest,
+	                     std::string_view format, std::string_view title) {
+		return gen::CheatIndexLine(gen::CheatFileName(title_id, version, rest, format), title) +
+		       "\n";
+	};
+	return {{kyty::core::CheatIndexUrl("json"),
+	         line("PPSA01001", "01.000", "alpha", "json", "Alpha Game") +
+	             line("PPSA01001", "01.020", "alpha", "json", "Alpha Game") +
+	             line("PPSA01002", "01.020", "beta", "json", "Beta Quest")},
+	        {kyty::core::CheatIndexUrl("mc4"),
+	         line("PPSA01001", "01.000", "alpha", "mc4", "Alpha Game")},
+	        {kyty::core::CheatIndexUrl("shn"),
+	         line("PPSA01001", "01.000", "alpha", "shn", "Alpha Game")}};
+}
+
+std::vector<ContentControl> GameContentControls(std::string_view id) {
+	if (id == "trophy-window") {
+		// One readable package: one page.
+		const std::string page = "package-0";
+		return {{page, "the row of the earned trophy",
+		         NamedControl(GTK_TYPE_LIST_BOX_ROW, "Gold Rush, ", ", earned")},
+		        {page, "the row of a trophy not earned",
+		         NamedControl(GTK_TYPE_LIST_BOX_ROW, "Silver Lining, ", ", not earned")},
+		        {page, "the row of the hidden trophy",
+		         NamedControl(GTK_TYPE_LIST_BOX_ROW, "Hidden trophy, ")},
+		        {page, "the Reveal button of the hidden trophy", [](GtkWidget* widget) {
+			         return GTK_IS_BUTTON(widget) &&
+			                gtk_widget_get_ancestor(widget, GTK_TYPE_LIST_BOX_ROW) != nullptr;
+		         }}};
+	}
+	if (id == "trophy-overview-window") {
+		return {{"", "the row of Alpha Game", NamedControl(GTK_TYPE_LIST_BOX_ROW, "Alpha Game, ")}};
+	}
+	if (id == "additional-content-window") {
+		return {
+		    {"", "the row of the add-on", NamedControl(ADW_TYPE_ACTION_ROW, "Alpha Soundtrack")}};
+	}
+	if (id == "cheats-window") {
+		return {
+		    {"local", "the row of a cheat", NamedControl(ADW_TYPE_ACTION_ROW, "Infinite Health")},
+		    {"local", "the check box of a cheat",
+		     NamedControl(GTK_TYPE_CHECK_BUTTON, "Infinite Health")},
+		    {"remote", "the row of a remote cheat file",
+		     NamedControl(GTK_TYPE_LIST_BOX_ROW, "", ", PPSA01001_01.000_alpha.json")}};
+	}
+	return {};
 }
 
 } // namespace KytyUi

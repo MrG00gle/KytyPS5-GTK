@@ -1,6 +1,7 @@
 #include "ui/support/uiContext.h"
 
 #include "launcher/core/compatibility.h"
+#include "launcher/core/gameConfiguration.h"
 #include "launcher/core/settingsStore.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "support/helperPaths.h"
@@ -11,6 +12,7 @@
 #include <adwaita.h>
 #include <string>
 #include <system_error>
+#include <utility>
 
 namespace KytyUi {
 
@@ -122,6 +124,28 @@ fs::path UiContext::SettingsFile() const {
 
 fs::path UiContext::WriteFixtureGames() {
 	return WriteFixtures(Root() / "fixtures");
+}
+
+bool UiContext::WriteGameContent(const fs::path& games) {
+	if (!Check(!m_context, "the game content is written before the context reads Kyty.ini")) {
+		return false;
+	}
+	const fs::path addons = Root() / "addons";
+	auto           store  = kyty::core::OpenSettingsStore(SettingsFile());
+	auto           next   = store.loaded.settings;
+	next.addons_dir       = addons.string();
+	const auto written    = kyty::core::SaveSettingsStore(store, next);
+	if (!Check(static_cast<bool>(written), "write " + SettingsFile().string() +
+	                                           (written ? "" : ": " + written.error().message))) {
+		return false;
+	}
+	for (auto& [url, body]: CheatIndexes()) {
+		KytyTests::LoopbackResponse response;
+		response.body         = std::move(body);
+		response.content_type = "text/plain";
+		m_server->Script(url, std::move(response));
+	}
+	return KytyUi::WriteGameContent(games, AppDirectory(), addons, kyty::core::kDefaultUserId);
 }
 
 bool UiContext::StoreGameFolders(const std::vector<fs::path>& folders) {

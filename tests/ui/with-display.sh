@@ -8,7 +8,9 @@
 #   is activated (no xdg-desktop-portal, no GVfs, no accessibility bus launcher).
 # - With --portal, the fake org.freedesktop.portal.Desktop (tests/ui/portal/FakePortal.cpp); the
 #   command starts after the portal printed its ready line.
-# - weston --backend=headless (wayland) or Xvfb (x11) at 1280x800.
+# - weston --backend=headless (wayland) or Xvfb (x11) at 1280x800. weston gets a fake seat
+#   (--fake-seat): nothing can type on it, but the shell gives a new window the keyboard focus,
+#   so windows become active as on a desktop (GTK's focus handling depends on it).
 # - The command runs in the foreground with SIGINT and SIGTERM at their default actions, with
 #   WAYLAND_DISPLAY or DISPLAY, GDK_BACKEND, GSETTINGS_BACKEND=memory, GIO_USE_VFS=local,
 #   GIO_USE_VOLUME_MONITOR=unix, GIO_USE_PROXY_RESOLVER=dummy, GTK_A11Y=test (GTK's test
@@ -140,8 +142,8 @@ fi
 
 if [ "$backend" = wayland ]; then
 	socket=kyty-ui-$$
-	"$weston_exe" --backend=headless --socket="$socket" --width=1280 --height=800 --idle-time=0 \
-		> "$root/weston.log" 2>&1 < /dev/null &
+	"$weston_exe" --backend=headless --fake-seat --socket="$socket" --width=1280 --height=800 \
+		--idle-time=0 > "$root/weston.log" 2>&1 < /dev/null &
 	pids+=("$!")
 	wait_until "$!" test -S "$XDG_RUNTIME_DIR/$socket" || fail "weston ($weston_exe)" "$root/weston.log"
 	export GDK_BACKEND=wayland WAYLAND_DISPLAY="$socket"

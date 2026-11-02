@@ -4,10 +4,12 @@
 // LFI-01-LFI-14, LFI-32, LFI-33, LFI-36, LFI-40, LFI-47; HC-17), an AdwApplicationWindow from
 // resources/ui/main-window.xml:
 // - the header bar: Run, Stop, Refresh (F5), the grid toggle (Ctrl+G) with the icon width slider
-//   (128-320 in steps of 16, shown in the grid view), the search entry (Ctrl+F focuses it, Escape
-//   clears it), Global settings (Ctrl+comma), Input mapping (the global mapping), Edit game config
-//   (Ctrl+E), Clear game config, Trophy overview, the game menu (resources/ui/game-menu.xml, the
-//   views' context menu, LFI-12), and the primary menu;
+//   (128-320 in steps of 16, shown in the grid view; both hidden on the empty state, phase 7 D20),
+//   the search entry (Ctrl+F focuses it, Escape clears it), Global settings (Ctrl+comma), Input
+//   mapping (the global mapping), Edit game config (Ctrl+E), Clear game config, Trophy overview,
+//   the game menu (resources/ui/game-menu.xml, the views' context menu, LFI-12), and the primary
+//   menu (F10), whose "Sort by" submenu sorts by every list view column in either direction
+//   without a pointer (LFI-06, phase 7 D18);
 // - the banners: the Settings_Store could not be loaded (HC-17: its path and reason, nothing is
 //   saved until "Allow saving" and a confirmation, core::ConfirmOverwrite), "Emulator not found at
 //   <path>" (LFI-40), "<n> folder(s) could not be read" with a Details alert that names every
@@ -43,7 +45,10 @@
 // user-activated update check, off while a check or an installation runs), app.open-releases-page
 // (Other builds only: the releases page), both through the window's UpdateUi (updateUi.h, task
 // 21.6), which also does the update work at startup; app.refresh, app.search, app.toggle-grid
-// (stateful), app.global-settings, app.add-game-folder, app.input-mapping (the global input
+// (stateful), app.sort-column and app.sort-descending (stateful: the column's name, "title",
+// "serial", "version", "firmware", "size", "path", "status", or "comment", and the direction; they
+// follow the library's sort, so a header click changes them too), app.global-settings,
+// app.add-game-folder, app.input-mapping (the global input
 // mapping editor, inputMappingWindow.h), app.trophy-overview (trophyOverviewWindow.h),
 // app.toggle-log (stateful), app.save-log, game.edit-config, game.input-mapping, and
 // game.import-settings (a selected game that is not running), game.clear-config (a selected game

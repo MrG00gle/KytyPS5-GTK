@@ -31,12 +31,13 @@ struct ExpectedLog {
 // The harness state. The log writer may run on any thread (GTask workers log too), so everything
 // it touches is under the mutex. Never destroyed: GLib may log while the process exits.
 struct HarnessState {
-	std::mutex                    mutex;
-	std::map<std::string, CaseFn> cases;
-	std::string                   current  = kProgram;
-	int                           failures = 0;
-	std::vector<ExpectedLog>      expected;
-	std::filesystem::path         capture_directory;
+	std::mutex                     mutex;
+	std::map<std::string, CaseFn>  cases;
+	std::map<std::string, guint32> initial_color_schemes;
+	std::string                    current  = kProgram;
+	int                            failures = 0;
+	std::vector<ExpectedLog>       expected;
+	std::filesystem::path          capture_directory;
 };
 
 HarnessState& State() {
@@ -128,6 +129,10 @@ CaseRegistrar::CaseRegistrar(const char* name, CaseFn run) {
 		std::fprintf(stderr, "%s: the case %s is defined twice\n", kProgram, name);
 		std::abort();
 	}
+}
+
+InitialColorScheme::InitialColorScheme(const char* case_name, guint32 value) {
+	State().initial_color_schemes[case_name] = value;
 }
 
 void Fail(std::string_view what) {
@@ -222,6 +227,13 @@ int main(int argc, char** argv) {
 		state.current = name;
 	}
 
+	// The desktop's preference before GTK and libadwaita read it (InitialColorScheme).
+	if (const auto scheme = state.initial_color_schemes.find(name);
+	    scheme != state.initial_color_schemes.end()) {
+		std::printf("%s: the portal's color-scheme is %u before gtk_init\n", name.c_str(),
+		            scheme->second);
+		KytyUi::SetPortalColorScheme(scheme->second);
+	}
 	std::setlocale(LC_ALL, "");
 	if (gtk_init_check() == FALSE) {
 		std::fprintf(stderr,

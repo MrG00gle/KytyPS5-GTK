@@ -55,11 +55,32 @@ std::string AllText(GtkWidget* root);
 
 // An accessible property as GTK's test API reports it, or nullopt when the widget has none.
 std::optional<std::string> AccessibleProperty(GtkWidget* widget, GtkAccessibleProperty property);
-// The accessible name by the rule of plan D9 for the cases here: a non-empty LABEL property, else
-// the widget's own visible text (WidgetText). LABELLED_BY relations are U3's.
+// The widgets of the widget's LABELLED_BY relation that are in its window's widget tree, in
+// relation order (GTK's test API prints the relation as "<type><0x<address>>..."; the addresses
+// are matched against the tree, never dereferenced).
+std::vector<GtkWidget*> LabelledBy(GtkWidget* widget);
+// The accessible name by the rule of plan D9: a non-empty LABEL property, else the texts of the
+// LABELLED_BY widgets (their own text or LABEL, joined by spaces), else the widget's own visible
+// text (WidgetText).
 std::string AccessibleName(GtkWidget* widget);
 // The type name of the widget's accessibility context ("GtkTestATContext" under GTK_A11Y=test).
 std::string AtContextType(GtkWidget* widget);
+
+// The interactive controls below root (Requirement 6.10's list: buttons, toggle buttons, check
+// buttons, radio buttons, switches, combo boxes and drop-downs, text and search entries, sliders,
+// spin buttons, links, tabs, menu items, and list, row, or grid items), by their accessible role,
+// in widget-tree order, mapped ones only; list, row, and grid items only when they can take the
+// focus (focusable, and no ancestor with can-focus off: not the cells of a column view row, not its
+// header row, not the selected value that an AdwComboRow shows).
+std::vector<GtkWidget*> InteractiveControls(GtkWidget* root);
+// AccessibleName(control), or, for the internal button of a GtkMenuButton, GtkDropDown,
+// GtkColorDialogButton, or GtkFontDialogButton (GTK's own part of a composite control), the
+// composite's accessible name.
+std::string ControlName(GtkWidget* control);
+// "<type>[#<buildable id>] > ..." from the root down to widget, for failure messages.
+std::string WidgetPath(GtkWidget* widget);
+// The accessible role's nick ("button", "toggle-button", ...).
+std::string RoleName(GtkWidget* widget);
 
 // ---- Input (plan D10)
 
@@ -76,10 +97,19 @@ GtkWidget* MoveFocus(GtkWindow* window, GtkDirectionType direction);
 // shortcut whose trigger equals gtk_keyval_trigger_new(keyval, modifiers)
 // (gtk_shortcut_trigger_compare; alternative triggers match either side) with
 // gtk_shortcut_action_activate; a GtkEventControllerKey gets key-pressed. Shortcut controllers of
-// global or managed scope anywhere in the window run in the root's phases. When nothing handled the
+// global scope anywhere in the window, and of managed scope whose shortcut manager (the window, or
+// a popover the key goes through, as for a menu item's accelerator) is on the key's path, run in
+// the root's phases. When nothing handled the
 // key and the window belongs to a GtkApplication, the application's accelerators for the key
 // (gtk_application_get_actions_for_accel) activate their action. True when something handled it.
+// As GTK's gtk_main_do_event does for every key event, the window first shows the focus
+// (gtk_window_set_focus_visible).
 bool KeyPress(GtkWidget* target, guint keyval, GdkModifierType modifiers = GdkModifierType(0));
+// KeyPress with target as the key's target even when it is a window with a focus widget. For a key
+// whose binding is on an ancestor of a GtkText (an entry's Escape, a window's Escape): GtkText's
+// own key handling hides the pointer, which needs a pointer device, and the headless sessions have
+// none.
+bool KeyPressOn(GtkWidget* target, guint keyval, GdkModifierType modifiers = GdkModifierType(0));
 
 // Opens the menu button's popover with autohide off and waits until it is mapped.
 GtkPopover* OpenPopover(GtkMenuButton* button);

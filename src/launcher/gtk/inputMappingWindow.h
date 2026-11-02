@@ -14,7 +14,8 @@
 //   sensitivity (0.1-5.0).
 // - Below both: the emulated touch pad's particle skin and hand cursor.
 // A click on a binding, or Enter while it has the focus, opens the binding capture dialog
-// (bindingCaptureDialog.h; core::Assign); Delete on a focused binding unmaps it (core::Unmap).
+// (bindingCaptureDialog.h; core::Assign); Delete while the binding's row or its button has the
+// focus unmaps it (core::Unmap; a shortcut of the row, phase 7 D19).
 // Restore tab defaults resets the shown tab (core::RestoreDefaults). Save puts the model into the
 // settings (core::SaveMapping) and writes the Settings_Store (settingsWrite.h): an entry that is
 // not Name=Value refuses the save, and the editor lists the invalid entries of

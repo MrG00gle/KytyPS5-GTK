@@ -289,16 +289,13 @@ void OnBindingClicked(GtkButton* button, gpointer data) {
 	}
 }
 
-// Delete on a focused binding unmaps it (LFI-24: replaces the Qt launcher's right-click).
-gboolean OnBindingKey(GtkEventControllerKey* controller, guint keyval, guint /*keycode*/,
-                      GdkModifierType /*state*/, gpointer      data) {
-	auto* self = KYTY_INPUT_MAPPING_WINDOW(data);
-	if (!Alive(self) || (keyval != GDK_KEY_Delete && keyval != GDK_KEY_KP_Delete)) {
-		return FALSE;
-	}
-	const auto index =
-	    BindingIndex(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller)));
-	if (!index) {
+// Delete on a binding unmaps it (LFI-24: replaces the Qt launcher's right-click). The shortcut is
+// the row's (phase 7 D19), so it works whether the row or its button has the focus; the button
+// keeps Enter and Space for the capture.
+gboolean OnBindingDelete(GtkWidget* row, GVariant* /*arguments*/, gpointer data) {
+	auto*      self  = KYTY_INPUT_MAPPING_WINDOW(data);
+	const auto index = BindingIndex(row);
+	if (!Alive(self) || !index) {
 		return FALSE;
 	}
 	const InputBinding& binding = self->state->bindings[*index];
@@ -492,12 +489,21 @@ void BuildTab(KytyInputMappingWindow* self, core::InputDevice device, GtkBox* pa
 			// Stored plus one, so that no index is a null pointer.
 			g_object_set_data(G_OBJECT(button), kBindingIndexKey,
 			                  GSIZE_TO_POINTER(state.bindings.size() + 1));
+			g_object_set_data(G_OBJECT(row), kBindingIndexKey,
+			                  GSIZE_TO_POINTER(state.bindings.size() + 1));
 			state.signals.push_back(
 			    SignalScope::Connect(button, "clicked", G_CALLBACK(&OnBindingClicked), self));
-			GtkEventController* keys = gtk_event_controller_key_new();
-			state.signals.push_back(
-			    SignalScope::Connect(keys, "key-pressed", G_CALLBACK(&OnBindingKey), self));
-			gtk_widget_add_controller(button, keys);
+			// Delete on the row or on its button (the row is the button's ancestor).
+			GtkEventController* keys = gtk_shortcut_controller_new();
+			gtk_shortcut_controller_set_scope(GTK_SHORTCUT_CONTROLLER(keys),
+			                                  GTK_SHORTCUT_SCOPE_LOCAL);
+			gtk_shortcut_controller_add_shortcut(
+			    GTK_SHORTCUT_CONTROLLER(keys),
+			    gtk_shortcut_new(gtk_alternative_trigger_new(
+			                         gtk_keyval_trigger_new(GDK_KEY_Delete, GdkModifierType(0)),
+			                         gtk_keyval_trigger_new(GDK_KEY_KP_Delete, GdkModifierType(0))),
+			                     gtk_callback_action_new(&OnBindingDelete, self, nullptr)));
+			gtk_widget_add_controller(row, keys);
 			state.bindings.push_back({&control, device, row, button});
 			count++;
 		}

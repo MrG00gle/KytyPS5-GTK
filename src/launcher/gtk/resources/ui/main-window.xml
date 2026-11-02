@@ -2,8 +2,9 @@
 <!-- The main window (task 20.3; plan D30-D33; LFI-01-LFI-14, LFI-32, LFI-36, LFI-40, LFI-47):
      the header bar (Run, Stop, Refresh, the grid toggle and the icon width slider, the search
      entry, Global settings, Input mapping, Edit and Clear game config, Trophy overview, the game
-     menu, and the primary menu), the banners (settings load error, Emulator not found, scan
-     warnings, an available update), the library (the selected game's background art under a scrim, and the list and
+     menu, and the primary menu with its "Sort by" submenu, plan D18; mainWindow.cpp hides the grid
+     toggle and the slider on the empty state, D20), the banners (settings load error, Emulator
+     not found, scan warnings, an available update), the library (the selected game's background art under a scrim, and the list and
      grid views in views_stack, added by mainWindow.cpp) or the empty state, above the log pane
      in log_paned (task 20.5; log_area, hidden until app.toggle-log shows it), the footer (with the
      update link of task 21.6), and the toast overlay. Every button acts through an app.* or game.* action (D30), so its sensitivity
@@ -388,6 +389,58 @@
         <attribute name="label" translatable="yes">Grid view</attribute>
         <attribute name="action">app.toggle-grid</attribute>
       </item>
+      <!-- LFI-06 without a pointer (plan D18): the list view's columns, as its headers sort. -->
+      <submenu>
+        <attribute name="label" translatable="yes">Sort by</attribute>
+        <section>
+          <item>
+            <attribute name="label" translatable="yes">Game</attribute>
+            <attribute name="action">app.sort-column</attribute>
+            <attribute name="target">title</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Serial</attribute>
+            <attribute name="action">app.sort-column</attribute>
+            <attribute name="target">serial</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Game Version</attribute>
+            <attribute name="action">app.sort-column</attribute>
+            <attribute name="target">version</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Firmware Version</attribute>
+            <attribute name="action">app.sort-column</attribute>
+            <attribute name="target">firmware</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Size</attribute>
+            <attribute name="action">app.sort-column</attribute>
+            <attribute name="target">size</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Path</attribute>
+            <attribute name="action">app.sort-column</attribute>
+            <attribute name="target">path</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Status</attribute>
+            <attribute name="action">app.sort-column</attribute>
+            <attribute name="target">status</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Comments</attribute>
+            <attribute name="action">app.sort-column</attribute>
+            <attribute name="target">comment</attribute>
+          </item>
+        </section>
+        <section>
+          <item>
+            <attribute name="label" translatable="yes">Descending</attribute>
+            <attribute name="action">app.sort-descending</attribute>
+          </item>
+        </section>
+      </submenu>
       <item>
         <attribute name="label" translatable="yes">Show log</attribute>
         <attribute name="action">app.toggle-log</attribute>

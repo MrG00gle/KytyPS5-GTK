@@ -56,6 +56,11 @@ public:
 
 	// The fixture games (uiFixtures.h) under Root()/fixtures; returns their folder.
 	std::filesystem::path WriteFixtureGames();
+	// The content of Alpha Game for the content windows (uiFixtures.h WriteGameContent) below
+	// games (WriteFixtureGames()) and AppDirectory() (the Data_Directory), for the default user ID;
+	// Root()/addons as the add-ons folder in Kyty.ini; and the cheat indexes (CheatIndexes()) on
+	// the server. Call it before Context(), which reads Kyty.ini once. False after a Fail.
+	bool WriteGameContent(const std::filesystem::path& games);
 	// Writes Kyty.ini with these Game_Folders (core::SaveSettingsStore).
 	bool StoreGameFolders(const std::vector<std::filesystem::path>& folders);
 	// Every later download of the Compatibility_Database gets body.
