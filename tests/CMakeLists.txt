@@ -599,6 +599,20 @@ kyty_add_test_directory(tests/launcher_gtk ${kyty_launcher_gtk_optional}
 	            SDL_AUDIO_DRIVER=dummy
 	ENVIRONMENT_MODIFICATION ${kyty_no_display} DBUS_SESSION_BUS_ADDRESS=unset:)
 
+# UI tests of the GTK launcher (task 22.1; phase 7 plan D6-D8): launcher_ui_tests runs one case per
+# test, for Wayland and for X11, inside ui/with-display.sh (a private session bus, the fake portal
+# ui_fake_portal, and weston or Xvfb; 77 only when a server executable is missing). The portal
+# uses no launcher code; it links kyty_launcher_gtk for GIO and the GTK API floor. OPTIONAL only
+# when KYTY_BUILD_LAUNCHER is OFF, as for tests/launcher_gtk.
+kyty_add_ui_tests(tests/ui ${kyty_launcher_gtk_optional}
+	EXECUTABLE launcher_ui_tests
+	PORTAL ui_fake_portal
+	PORTAL_LINK kyty_launcher_gtk
+	WRAPPER "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh"
+	BACKENDS wayland x11
+	TIMEOUT 120
+	LINK kyty_launcher_gtk kyty_test_support kyty_gtk_test_support)
+
 # Build classification (task 17.6, Requirement 13.2): kyty_classify_build() in script mode over every
 # combination of its inputs.
 kyty_add_test(NAME build_classification

@@ -41,6 +41,10 @@ public:
 		// Tests only: also allow http:// URLs (and redirects to them) whose host is 127.0.0.1, ::1,
 		// or localhost, so that a loopback SoupServer can answer. The launcher never sets it.
 		bool allow_loopback_http = false;
+		// Tests only (phase 7 plan D12): the certificate authorities the session trusts instead of
+		// the system's, so that an https request can reach a loopback SoupServer with a test
+		// certificate. The session keeps its own reference. The launcher never sets it.
+		GTlsDatabase* tls_database = nullptr;
 	};
 
 	static constexpr int         kMaxRedirects = 10;

@@ -47,6 +47,11 @@ struct KytyApplicationState {
 	std::unique_ptr<LauncherContext>      context;
 	std::unique_ptr<EmulatorVersionProbe> version_probe;
 	bool                                  local = false;
+	// kyty_application_new_for_testing (plan D13): the test's services instead of services, and
+	// the launcher directory and update mode when set.
+	std::optional<Services>              test_services;
+	std::filesystem::path                test_launcher_directory;
+	std::optional<updater::UpdateUiMode> test_update_mode;
 };
 
 } // namespace kyty::gtk
@@ -192,13 +197,22 @@ static void kyty_application_startup(GApplication* application) {
 		g_message("cannot read the working directory: %s", ec.message().c_str());
 		working_directory = "/";
 	}
-	state->services = std::make_unique<kyty::gtk::ApplicationServices>();
-	state->context =
-	    kyty::gtk::CreateLauncherContext({.working_directory  = working_directory,
-	                                      .launcher_directory = kyty::gtk::LauncherDirectory(),
-	                                      .update_mode = kyty::updater::CurrentUpdateUiMode(),
-	                                      .local       = state->local},
-	                                     state->services->Get());
+	// The UI tests' hooks (plan D13) replace the real services, the launcher directory, and the
+	// update mode; the launcher sets none of them.
+	if (!state->test_services) {
+		state->services = std::make_unique<kyty::gtk::ApplicationServices>();
+	}
+	const auto launcher_directory = state->test_launcher_directory.empty()
+	                                    ? kyty::gtk::LauncherDirectory()
+	                                    : state->test_launcher_directory;
+	const auto update_mode =
+	    state->test_update_mode ? *state->test_update_mode : kyty::updater::CurrentUpdateUiMode();
+	state->context = kyty::gtk::CreateLauncherContext(
+	    {.working_directory  = working_directory,
+	     .launcher_directory = launcher_directory,
+	     .update_mode        = update_mode,
+	     .local              = state->local},
+	    state->test_services ? *state->test_services : state->services->Get());
 
 	gtk_window_set_default_icon_name(kyty::gtk::kApplicationId);
 	kyty::gtk::AddIconResourcePath();
@@ -276,4 +290,15 @@ KytyApplication* kyty_application_new(void) {
 	return KYTY_APPLICATION(g_object_new(KYTY_TYPE_APPLICATION, "application-id",
 	                                     kyty::gtk::kApplicationId, "flags",
 	                                     G_APPLICATION_NON_UNIQUE, nullptr));
+}
+
+KytyApplication* kyty_application_new_for_testing(const kyty::gtk::ApplicationTestHooks& hooks) {
+	KytyApplication* application = kyty_application_new();
+	auto*            state       = application->state;
+	if (hooks.services != nullptr) {
+		state->test_services.emplace(*hooks.services);
+	}
+	state->test_launcher_directory = hooks.launcher_directory;
+	state->test_update_mode        = hooks.update_mode;
+	return application;
 }

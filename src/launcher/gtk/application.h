@@ -18,10 +18,15 @@
 // - app.quit stores the main window's size first; while a game runs it asks "Stop the running game
 //   and quit?" and quits after the game exited (plan D34, MainWindowRequestQuit). shutdown destroys
 //   the main window (and with it the windows it opened) before the context goes away.
+// - kyty_application_new_for_testing (phase 7 plan D13): the same application for the UI tests,
+//   with their fake services, launcher directory, and update mode.
 
 #include "launcher/gtk/launcherContext.h"
+#include "updater/core/updatePolicy.h"
 
 #include <adwaita.h>
+#include <filesystem>
+#include <optional>
 
 G_BEGIN_DECLS
 
@@ -45,4 +50,19 @@ LauncherContext* ApplicationContext(KytyApplication* application);
 // arrives while the process is already ending is caught and changes nothing.
 void InstallQuitSignalHandlers();
 
+// What the UI tests replace in a KytyApplication (phase 7 plan D13). An empty member keeps what
+// the launcher uses: the real services (ApplicationServices), LauncherDirectory(), and
+// updater::CurrentUpdateUiMode().
+struct ApplicationTestHooks {
+	// Copied by kyty_application_new_for_testing; the services it names must outlive the
+	// application.
+	const Services*                      services = nullptr;
+	std::filesystem::path                launcher_directory;
+	std::optional<updater::UpdateUiMode> update_mode;
+};
+
 } // namespace kyty::gtk
+
+// A KytyApplication as kyty_application_new() makes it, with the hooks applied at startup. Tests
+// only; the launcher never calls it.
+KytyApplication* kyty_application_new_for_testing(const kyty::gtk::ApplicationTestHooks& hooks);

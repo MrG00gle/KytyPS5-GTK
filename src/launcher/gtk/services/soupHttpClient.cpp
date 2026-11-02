@@ -175,7 +175,13 @@ SoupHttpClient::RequestRef SoupHttpClient::Take(gpointer data) {
 SoupHttpClient::SoupHttpClient(): SoupHttpClient(Options {}) {}
 
 SoupHttpClient::SoupHttpClient(Options options)
-    : m_options(options), m_session(GObjectPtr<SoupSession>::Adopt(soup_session_new())) {}
+    : m_options(options), m_session(GObjectPtr<SoupSession>::Adopt(soup_session_new())) {
+	if (m_options.tls_database != nullptr) {
+		soup_session_set_tls_database(m_session.get(), m_options.tls_database);
+		// The session holds the database; the client keeps no pointer of its own.
+		m_options.tls_database = nullptr;
+	}
+}
 
 SoupHttpClient::~SoupHttpClient() {
 	for (auto& [id, request]: m_requests) {

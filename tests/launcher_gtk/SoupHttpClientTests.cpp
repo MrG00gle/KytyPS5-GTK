@@ -10,6 +10,10 @@
 // another loopback port is followed under HttpsOnly and refused under SameOrigin, a relative
 // same-origin redirect is followed, and a redirect loop stops after 10 redirects; the request
 // headers are sent and no User-Agent of the client's own. One GMainLoop context serves both.
+// https (phase 7 plan D12, p6-u3-5): a loopback SoupServer with the test certificate of
+// tests/fixtures/tls/ answers a client that trusts the test authority (Options::tls_database)
+// without allow_loopback_http; the system's authorities refuse that certificate (Network, nothing
+// reaches the server); a redirect from https to http is refused.
 
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/services/soupHttpClient.h"
@@ -97,12 +101,18 @@ struct Stream {
 
 class Server {
 public:
-	Server() {
+	// With certificate, the server speaks https only.
+	explicit Server(GTlsCertificate* certificate = nullptr)
+	    : m_scheme(certificate != nullptr ? "https" : "http") {
 		m_server = GObjectPtr<SoupServer>::Adopt(soup_server_new(nullptr, nullptr));
 		soup_server_add_handler(m_server.get(), nullptr, &OnRequest, this, nullptr);
+		auto options = SOUP_SERVER_LISTEN_IPV4_ONLY;
+		if (certificate != nullptr) {
+			soup_server_set_tls_certificate(m_server.get(), certificate);
+			options = static_cast<SoupServerListenOptions>(options | SOUP_SERVER_LISTEN_HTTPS);
+		}
 		GErrorPtr error;
-		Check(soup_server_listen_local(m_server.get(), 0, SOUP_SERVER_LISTEN_IPV4_ONLY,
-		                               error.Out()) != FALSE,
+		Check(soup_server_listen_local(m_server.get(), 0, options, error.Out()) != FALSE,
 		      "the loopback server listens: " + std::string(error.Message()));
 		GSList* uris = soup_server_get_uris(m_server.get());
 		Check(uris != nullptr, "the server has a URI");
@@ -123,7 +133,7 @@ public:
 
 	[[nodiscard]] int         Port() const { return m_port; }
 	[[nodiscard]] std::string Url(const std::string& path) const {
-		return "http://127.0.0.1:" + std::to_string(m_port) + path;
+		return m_scheme + "://127.0.0.1:" + std::to_string(m_port) + path;
 	}
 
 	// Where /redirect-other sends the client.
@@ -253,6 +263,7 @@ private:
 		stream->timer.Remove();
 	}
 
+	std::string                          m_scheme;
 	GObjectPtr<SoupServer>               m_server;
 	int                                  m_port = 0;
 	std::string                          m_redirect_target;
@@ -595,6 +606,49 @@ void TestHeaders(Server& server) {
 	      "the client adds no User-Agent of its own");
 }
 
+std::string FixturePath(const char* name) {
+	return std::string(KYTY_TEST_SOURCE_DIR) + "/tests/fixtures/tls/" + name;
+}
+
+// https against a loopback server with the test certificate (p6-u3-5): the https branch of the
+// client, its certificate check, and the https-only redirect rule, without allow_loopback_http.
+void TestTls(Server& plain) {
+	GErrorPtr  error;
+	const auto certificate = GObjectPtr<GTlsCertificate>::Adopt(
+	    g_tls_certificate_new_from_files(FixturePath("server-cert.pem").c_str(),
+	                                     FixturePath("server-key.pem").c_str(), error.Out()));
+	Check(static_cast<bool>(certificate),
+	      "the test server certificate loads: " + std::string(error.Message()));
+	const auto authority = GObjectPtr<GTlsDatabase>::Adopt(
+	    g_tls_file_database_new(FixturePath("ca-cert.pem").c_str(), error.Out()));
+	Check(static_cast<bool>(authority),
+	      "the test authority loads: " + std::string(error.Message()));
+	Server secure(certificate.get());
+
+	SoupHttpClient trusting(SoupHttpClient::Options {.tls_database = authority.get()});
+	const auto     trusted = Run(trusting, Request(secure.Url("/ok")));
+	Check(trusted.result.failure == HttpFailure::None && trusted.result.status == 200 &&
+	          trusted.body == "hello" && secure.Hits("/ok") == 1,
+	      "a client that trusts the test authority fetches https from the loopback server");
+
+	SoupHttpClient production;
+	const auto     refused = Run(production, Request(secure.Url("/ok")));
+	Check(refused.result.failure == HttpFailure::Network && refused.result.status == 0 &&
+	          !refused.result.message.empty() && refused.chunks == 0,
+	      "the system's authorities refuse the test certificate: Network, with a message");
+	Check(secure.Hits("/ok") == 1, "nothing reaches the server without a trusted certificate");
+
+	secure.SetRedirectTarget(plain.Url("/ok"));
+	const int  plain_hits = plain.Hits("/ok");
+	const auto downgrade  = Run(trusting, Request(secure.Url("/redirect-other")));
+	Check(downgrade.result.failure == HttpFailure::Network && downgrade.result.status == 302 &&
+	          downgrade.result.message ==
+	              "Refused the redirect to " + plain.Url("/ok") + ": only https URLs are allowed",
+	      "a redirect from https to http is refused and named");
+	Check(plain.Hits("/ok") == plain_hits,
+	      "the http target of the refused redirect is never asked");
+}
+
 } // namespace
 
 int main() {
@@ -609,6 +663,7 @@ int main() {
 	TestCancellation(server);
 	TestRedirects(server);
 	TestHeaders(server);
+	TestTls(server);
 	std::printf("SoupHttpClientTests: all tests passed\n");
 	return 0;
 }

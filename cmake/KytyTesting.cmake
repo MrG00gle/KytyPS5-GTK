@@ -30,6 +30,20 @@
 #       CONFIGURE_DEPENDS), and one test <group>_p<NN> with the property label per file, which runs
 #       "<group> <NN>". Skips with a status message when the group has no sources or a LINK item is
 #       not a target yet.
+#   kyty_add_ui_tests(<dir> [OPTIONAL] EXECUTABLE <prefix>_tests PORTAL <target> WRAPPER <script>
+#                     BACKENDS <wayland|x11>... [TIMEOUT <s>] [PORTAL_LINK <item>...] LINK <target>...)
+#       UI tests (Requirements 16.6, 17.5, 17.10): one executable EXECUTABLE from <dir>/*Tests.cpp and
+#       <dir>/support/*.cpp linked with LINK, and one executable PORTAL from <dir>/portal/*.cpp
+#       linked with PORTAL_LINK (default: LINK). The cases are the lines that start with
+#       KYTY_UI_CASE(<name>) in <dir>/*Tests.cpp (<name>: lowercase letters, digits, and "_", starting
+#       with a letter; a malformed or duplicate name stops the configure). Their sorted list goes to
+#       ${CMAKE_BINARY_DIR}/tests/<prefix>_cases.txt. Each case gets one test <prefix>_<case>_<backend>
+#       per backend, with the ui label, SKIP_RETURN_CODE 77, and TIMEOUT (default 120), which runs
+#       "bash WRAPPER --portal <PORTAL> <backend> -- <EXECUTABLE> --case <case>"; the unlabeled test
+#       <prefix>_case_list (tests/cmake/UiCaseListTest.cmake) checks that "<EXECUTABLE> --list" names
+#       exactly the listed cases, so a case cannot exist without its tests. Skips with a status
+#       message when <dir> has no *Tests.cpp or a LINK or PORTAL_LINK item is not a target yet;
+#       OPTIONAL as for kyty_add_test_directory (every .cpp below <dir> is then exempt).
 #
 # End-of-configure checks fail the configure step, listing every violation at once, when a test has no
 # TIMEOUT or one outside 1-600, a gpu or ui test has no SKIP_RETURN_CODE, a test was not registered
@@ -275,6 +289,116 @@ function(kyty_add_property_group group)
 		kyty_add_test(NAME ${group}_p${kyty_number} COMMAND $<TARGET_FILE:${group}> ${kyty_number}
 			LABELS property ${kyty_test_arguments})
 	endforeach()
+endfunction()
+
+function(kyty_add_ui_tests dir)
+	cmake_parse_arguments(PARSE_ARGV 1 kyty "OPTIONAL" "EXECUTABLE;PORTAL;WRAPPER;TIMEOUT"
+		"BACKENDS;PORTAL_LINK;LINK")
+	set(kyty_context "kyty_add_ui_tests(${dir})")
+	if(kyty_UNPARSED_ARGUMENTS)
+		message(FATAL_ERROR "${kyty_context}: unexpected arguments: ${kyty_UNPARSED_ARGUMENTS}")
+	endif()
+	foreach(kyty_required IN ITEMS EXECUTABLE PORTAL WRAPPER BACKENDS LINK)
+		if(NOT kyty_${kyty_required})
+			message(FATAL_ERROR "${kyty_context}: ${kyty_required} is required")
+		endif()
+	endforeach()
+	if(NOT kyty_EXECUTABLE MATCHES "^([a-z][a-z0-9_]*)_tests$")
+		message(FATAL_ERROR "${kyty_context}: EXECUTABLE ${kyty_EXECUTABLE} does not end with _tests")
+	endif()
+	set(kyty_prefix "${CMAKE_MATCH_1}")
+	foreach(kyty_backend IN LISTS kyty_BACKENDS)
+		if(NOT kyty_backend MATCHES "^(wayland|x11)$")
+			message(FATAL_ERROR "${kyty_context}: unknown backend ${kyty_backend} (known: wayland, x11)")
+		endif()
+	endforeach()
+	if(NOT DEFINED kyty_TIMEOUT)
+		set(kyty_TIMEOUT ${KYTY_TEST_DEFAULT_TIMEOUT})
+	endif()
+	if(NOT DEFINED kyty_PORTAL_LINK)
+		set(kyty_PORTAL_LINK ${kyty_LINK})
+	endif()
+	get_filename_component(kyty_wrapper "${kyty_WRAPPER}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+	if(NOT EXISTS "${kyty_wrapper}")
+		message(FATAL_ERROR "${kyty_context}: WRAPPER ${kyty_wrapper} does not exist")
+	endif()
+
+	get_filename_component(kyty_dir "${dir}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+	file(RELATIVE_PATH kyty_dir_text "${CMAKE_SOURCE_DIR}" "${kyty_dir}")
+	file(GLOB kyty_case_sources CONFIGURE_DEPENDS "${kyty_dir}/*Tests.cpp")
+	file(GLOB kyty_support_sources CONFIGURE_DEPENDS "${kyty_dir}/support/*.cpp")
+	file(GLOB kyty_portal_sources CONFIGURE_DEPENDS "${kyty_dir}/portal/*.cpp")
+	if(NOT kyty_case_sources)
+		message(STATUS "KytyTesting: skipping ${kyty_dir_text}: no *Tests.cpp sources")
+		return()
+	endif()
+	if(NOT kyty_portal_sources)
+		message(FATAL_ERROR "${kyty_context}: no ${kyty_dir_text}/portal/*.cpp sources for ${kyty_PORTAL}")
+	endif()
+	foreach(kyty_item IN LISTS kyty_LINK kyty_PORTAL_LINK)
+		if(NOT TARGET ${kyty_item})
+			if(kyty_OPTIONAL)
+				file(GLOB_RECURSE kyty_skipped_sources CONFIGURE_DEPENDS "${kyty_dir}/*.cpp")
+				set_property(GLOBAL APPEND PROPERTY KYTY_TESTING_OPTIONAL_SKIPPED_SOURCES ${kyty_skipped_sources})
+				message(STATUS "KytyTesting: skipping ${kyty_dir_text}: link target ${kyty_item} does not exist (optional)")
+			else()
+				message(STATUS "KytyTesting: skipping ${kyty_dir_text}: link target ${kyty_item} does not exist yet")
+			endif()
+			return()
+		endif()
+	endforeach()
+	find_program(KYTY_UI_TESTS_BASH bash REQUIRED)
+
+	# The cases, from the KYTY_UI_CASE(<name>) lines.
+	list(SORT kyty_case_sources)
+	set(kyty_cases "")
+	foreach(kyty_source IN LISTS kyty_case_sources)
+		file(RELATIVE_PATH kyty_source_text "${CMAKE_SOURCE_DIR}" "${kyty_source}")
+		file(STRINGS "${kyty_source}" kyty_case_lines REGEX "^KYTY_UI_CASE")
+		foreach(kyty_line IN LISTS kyty_case_lines)
+			if(NOT kyty_line MATCHES "^KYTY_UI_CASE\\(([a-z][a-z0-9_]*)\\)")
+				message(FATAL_ERROR "${kyty_context}: ${kyty_source_text}: malformed case line '${kyty_line}' "
+					"(expected KYTY_UI_CASE(<name>) with a name of lowercase letters, digits, and _)")
+			endif()
+			if(CMAKE_MATCH_1 IN_LIST kyty_cases)
+				message(FATAL_ERROR "${kyty_context}: ${kyty_source_text}: duplicate case ${CMAKE_MATCH_1}")
+			endif()
+			list(APPEND kyty_cases "${CMAKE_MATCH_1}")
+		endforeach()
+	endforeach()
+	list(SORT kyty_cases)
+	list(JOIN kyty_cases "\n" kyty_cases_text)
+	if(kyty_cases)
+		string(APPEND kyty_cases_text "\n")
+	endif()
+	set(kyty_cases_file "${CMAKE_BINARY_DIR}/tests/${kyty_prefix}_cases.txt")
+	file(CONFIGURE OUTPUT "${kyty_cases_file}" CONTENT "${kyty_cases_text}" @ONLY)
+
+	kyty_add_test_executable(${kyty_EXECUTABLE} SOURCES ${kyty_case_sources} ${kyty_support_sources}
+		LINK ${kyty_LINK})
+	kyty_add_test_executable(${kyty_PORTAL} SOURCES ${kyty_portal_sources} LINK ${kyty_PORTAL_LINK})
+	foreach(kyty_case IN LISTS kyty_cases)
+		foreach(kyty_backend IN LISTS kyty_BACKENDS)
+			kyty_add_test(NAME ${kyty_prefix}_${kyty_case}_${kyty_backend}
+				COMMAND "${KYTY_UI_TESTS_BASH}" "${kyty_wrapper}" --portal $<TARGET_FILE:${kyty_PORTAL}>
+				        ${kyty_backend} -- $<TARGET_FILE:${kyty_EXECUTABLE}> --case ${kyty_case}
+				LABELS ui
+				SKIP_RETURN_CODE 77
+				TIMEOUT ${kyty_TIMEOUT})
+		endforeach()
+	endforeach()
+	# --list needs no display.
+	kyty_add_test(NAME ${kyty_prefix}_case_list
+		COMMAND "${CMAKE_COMMAND}" "-DEXE=$<TARGET_FILE:${kyty_EXECUTABLE}>" "-DCASES=${kyty_cases_file}"
+		        -P "${CMAKE_SOURCE_DIR}/tests/cmake/UiCaseListTest.cmake"
+		TIMEOUT 60
+		ENVIRONMENT_MODIFICATION WAYLAND_DISPLAY=unset: DISPLAY=unset:)
+	list(LENGTH kyty_cases kyty_case_count)
+	list(LENGTH kyty_BACKENDS kyty_backend_count)
+	math(EXPR kyty_ui_test_count "${kyty_case_count} * ${kyty_backend_count}")
+	list(JOIN kyty_BACKENDS ", " kyty_backends_text)
+	message(STATUS "KytyTesting: ${kyty_dir_text}: ${kyty_case_count} UI cases, ${kyty_ui_test_count} ui tests "
+		"(${kyty_backends_text})")
 endfunction()
 
 # Appends a violation for every test of the current directory with a bad TIMEOUT or a gpu or ui label
