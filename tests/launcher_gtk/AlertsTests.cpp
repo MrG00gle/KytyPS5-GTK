@@ -1,6 +1,7 @@
-// Example tests of the alert helpers (src/launcher/gtk/alerts.h; phase 7 plan D4): with a
-// cancellable that is already cancelled, Confirm, Choose, and ShowError create nothing, return
-// nullptr, and never call back, so no alert outlives the window or dialog that is going away. They
+// Example tests of the alert helpers (src/launcher/gtk/alerts.h; phase 7 plan D4, D22): with a
+// cancellable that is already cancelled, Confirm, Choose, ShowError, and ShowErrorList create
+// nothing, return nullptr, and never call back, so no alert outlives the window or dialog that is
+// going away. They
 // return before GTK creates anything, so the test needs no display and never calls gtk_init. (The
 // same case on a display is a UI test.)
 
@@ -50,6 +51,12 @@ void TestAlreadyCancelled() {
 	GtkWindow* error = kyty::gtk::ShowError(nullptr, "The settings could not be saved",
 	                                        "No space left on device.", cancellable.get());
 	Check(error == nullptr, "ShowError returns nullptr for a cancelled cancellable");
+
+	const std::vector<std::string> items = {"/data/_SaveData/PPSA01001/1: Permission denied",
+	                                        "/data/_SaveData/PPSA01001: Directory not empty"};
+	GtkWindow* list = kyty::gtk::ShowErrorList(nullptr, "Some save data could not be removed",
+	                                           "Could not remove:", items, cancellable.get());
+	Check(list == nullptr, "ShowErrorList returns nullptr for a cancelled cancellable");
 
 	Check(ToplevelCount() == 0, "no alert window was created");
 	Check(g_signal_has_handler_pending(cancellable.get(),

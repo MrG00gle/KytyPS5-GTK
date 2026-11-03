@@ -1,7 +1,9 @@
 #include "launcher/gtk/alerts.h"
 
 #include "launcher/gtk/gobjectPtr.h"
+#include "launcher/gtk/i18n.h"
 
+#include <adwaita.h>
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -179,6 +181,58 @@ void OnErrorClosed(GObject* source, GAsyncResult* result, gpointer data) {
 	    gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), result, error.Out()));
 }
 
+// ---- ShowErrorList (phase 7 plan D22)
+
+constexpr int kErrorListWidth     = 480; // the default width and the minimum
+constexpr int kErrorListMaxHeight = 320; // of the list; beyond it the list scrolls
+
+// The connection of an error list window to the caller's cancellable, deleted when the window is
+// destroyed (by its Close button, Escape, its parent, or the cancellable).
+struct ErrorListLink {
+	SignalScope cancelled;
+	SignalScope destroyed;
+};
+
+void OnErrorListCancelled(GCancellable* /*cancellable*/, gpointer window) {
+	gtk_window_destroy(GTK_WINDOW(window));
+}
+
+void OnErrorListDestroyed(GtkWidget* /*window*/, gpointer data) {
+	delete static_cast<ErrorListLink*>(data);
+}
+
+GtkWidget* NewWrappingLabel(const std::string& text, float xalign) {
+	GtkWidget* label = gtk_label_new(text.c_str());
+	gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+	gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+	gtk_label_set_xalign(GTK_LABEL(label), xalign);
+	return label;
+}
+
+// The list of items: one row each, with selectable text (to copy a path); the rows themselves take
+// no focus and do nothing when activated.
+GtkWidget* NewItemList(const std::vector<std::string>& items, const std::string& name) {
+	GtkWidget* list = gtk_list_box_new();
+	gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);
+	gtk_widget_add_css_class(list, "boxed-list");
+	gtk_accessible_update_property(GTK_ACCESSIBLE(list), GTK_ACCESSIBLE_PROPERTY_LABEL,
+	                               name.c_str(), -1);
+	for (const auto& item: items) {
+		GtkWidget* label = NewWrappingLabel(item, 0.0F);
+		gtk_label_set_selectable(GTK_LABEL(label), TRUE);
+		gtk_widget_set_margin_start(label, 12);
+		gtk_widget_set_margin_end(label, 12);
+		gtk_widget_set_margin_top(label, 8);
+		gtk_widget_set_margin_bottom(label, 8);
+		GtkWidget* row = gtk_list_box_row_new();
+		gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), label);
+		gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+		gtk_widget_set_focusable(row, FALSE);
+		gtk_list_box_append(GTK_LIST_BOX(list), row);
+	}
+	return list;
+}
+
 } // namespace
 
 GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view body,
@@ -267,6 +321,75 @@ GtkWindow* ShowError(GtkWindow* parent, std::string_view heading, std::string_vi
 	if (own != nullptr) {
 		AlertLink::Attach(window);
 	}
+	return window;
+}
+
+GtkWindow* ShowErrorList(GtkWindow* parent, std::string_view heading, std::string_view body,
+                         const std::vector<std::string>& items, GCancellable* cancellable) {
+	if (AlreadyCancelled(cancellable)) {
+		return nullptr;
+	}
+	const std::string title(heading);
+	const std::string text(body);
+	auto*             window = GTK_WINDOW(adw_window_new());
+	gtk_window_set_title(window, title.c_str());
+	gtk_window_set_modal(window, TRUE);
+	gtk_window_set_transient_for(window, parent);
+	gtk_window_set_destroy_with_parent(window, TRUE);
+	gtk_window_set_default_size(window, kErrorListWidth, -1);
+	gtk_widget_set_size_request(GTK_WIDGET(window), kErrorListWidth, -1);
+
+	GtkWidget* header = adw_header_bar_new();
+	adw_header_bar_set_show_title(ADW_HEADER_BAR(header), FALSE);
+	GtkWidget* heading_label = NewWrappingLabel(title, 0.5F);
+	gtk_label_set_justify(GTK_LABEL(heading_label), GTK_JUSTIFY_CENTER);
+	gtk_widget_add_css_class(heading_label, "title-2");
+	GtkWidget* body_label = NewWrappingLabel(text, 0.0F);
+
+	GtkWidget* scrolled = gtk_scrolled_window_new();
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER,
+	                               GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scrolled), TRUE);
+	gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scrolled), kErrorListMaxHeight);
+	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), NewItemList(items, text));
+	gtk_widget_set_vexpand(scrolled, TRUE);
+
+	GtkWidget* close = gtk_button_new_with_mnemonic(_("_Close"));
+	gtk_actionable_set_action_name(GTK_ACTIONABLE(close), "window.close");
+	gtk_widget_set_halign(close, GTK_ALIGN_CENTER);
+	gtk_widget_add_css_class(close, "pill");
+
+	GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+	gtk_widget_set_margin_start(box, 24);
+	gtk_widget_set_margin_end(box, 24);
+	gtk_widget_set_margin_bottom(box, 24);
+	gtk_box_append(GTK_BOX(box), heading_label);
+	gtk_box_append(GTK_BOX(box), body_label);
+	gtk_box_append(GTK_BOX(box), scrolled);
+	gtk_box_append(GTK_BOX(box), close);
+	GtkWidget* toolbar = adw_toolbar_view_new();
+	adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
+	adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), box);
+	adw_window_set_content(ADW_WINDOW(window), toolbar);
+	gtk_window_set_default_widget(window, close);
+	gtk_widget_grab_focus(close);
+
+	// Escape closes it, as it closes the GtkAlertDialogs.
+	GtkEventController* keys = gtk_shortcut_controller_new();
+	gtk_shortcut_controller_add_shortcut(
+	    GTK_SHORTCUT_CONTROLLER(keys),
+	    gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_Escape, GdkModifierType(0)),
+	                     gtk_named_action_new("window.close")));
+	gtk_widget_add_controller(GTK_WIDGET(window), keys);
+
+	if (cancellable != nullptr) {
+		auto* link      = new ErrorListLink;
+		link->cancelled = SignalScope::Connect(cancellable, "cancelled",
+		                                       G_CALLBACK(OnErrorListCancelled), window);
+		link->destroyed =
+		    SignalScope::Connect(window, "destroy", G_CALLBACK(OnErrorListDestroyed), link);
+	}
+	gtk_window_present(window);
 	return window;
 }
 

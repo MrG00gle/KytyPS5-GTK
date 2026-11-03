@@ -1,5 +1,6 @@
 #include "launcher/gtk/updateProgressWindow.h"
 
+#include "launcher/gtk/byteSize.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
 
@@ -34,11 +35,6 @@ std::string Format(const char* format, ...) {
 	va_start(arguments, format);
 	const GCharPtr text(g_strdup_vprintf(format, arguments));
 	va_end(arguments);
-	return std::string(text.View());
-}
-
-std::string SizeText(uint64_t bytes) {
-	const GCharPtr text(g_format_size(bytes));
 	return std::string(text.View());
 }
 
@@ -117,9 +113,9 @@ void kyty_update_progress_window_set_downloaded(KytyUpdateProgressWindow* self, 
 	const double fraction =
 	    total > 0 ? std::min(1.0, static_cast<double>(received) / static_cast<double>(total)) : 0.0;
 	gtk_progress_bar_set_fraction(self->progress_bar, fraction);
-	// TRANSLATORS: the bytes downloaded so far, then the size of the package ("1.2 MB of 50.0 MB").
-	const std::string text =
-	    Format(_("%s of %s"), SizeText(received).c_str(), SizeText(total).c_str());
+	// TRANSLATORS: the bytes downloaded so far, then the package size ("1.2 MiB of 50.0 MiB").
+	const std::string text = Format(_("%s of %s"), kyty::gtk::FormatByteSize(received).c_str(),
+	                                kyty::gtk::FormatByteSize(total).c_str());
 	gtk_progress_bar_set_text(self->progress_bar, text.c_str());
 	gtk_stack_set_visible_child_name(self->progress_stack, "download");
 }

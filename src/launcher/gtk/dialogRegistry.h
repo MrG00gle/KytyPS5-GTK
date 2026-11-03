@@ -4,7 +4,8 @@
 // plan D17), with an open and a close function each. The UI tests and the visual harness open
 // every type through it; each unit registers the types it adds. Every registered window is a
 // GtkWindow (AdwWindow, transient for the parent); the alert types are GtkAlertDialogs, whose
-// handle carries the GCancellable that their close function cancels.
+// handle carries the GCancellable that their close function cancels, and the save data failure
+// list (an AdwWindow of alerts.h ShowErrorList, closed with its Close button).
 
 #include "launcher/core/gameMetadata.h"
 #include "launcher/gtk/launcherContext.h"

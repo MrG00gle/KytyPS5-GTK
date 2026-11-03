@@ -1,6 +1,7 @@
 #include "launcher/gtk/gameListView.h"
 
 #include "launcher/core/text.h"
+#include "launcher/gtk/byteSize.h"
 #include "launcher/gtk/gameViewSupport.h"
 #include "launcher/gtk/i18n.h"
 
@@ -53,8 +54,7 @@ std::string SizeText(std::optional<uint64_t> bytes) {
 	if (!bytes) {
 		return kDash;
 	}
-	const GCharPtr text(g_format_size_full(*bytes, G_FORMAT_SIZE_IEC_UNITS));
-	return std::string(text.View());
+	return FormatByteSize(*bytes);
 }
 
 std::string OrDash(const std::string& value) {

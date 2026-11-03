@@ -170,6 +170,14 @@ const std::filesystem::path& CaptureDirectory() {
 	return State().capture_directory;
 }
 
+std::vector<std::string> CaseNames() {
+	std::vector<std::string> names;
+	for (const auto& [name, run]: State().cases) {
+		names.push_back(name);
+	}
+	return names;
+}
+
 } // namespace KytyUi
 
 int main(int argc, char** argv) {

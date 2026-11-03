@@ -242,20 +242,47 @@ DialogHandle OpenRemoveSaveDataAlert(LauncherContext& context, GtkWindow* parent
 	return handle;
 }
 
+// 40 failures (phase 7 plan D22: the list scrolls): 36 save files of one slot, then the
+// directories above them.
 DialogHandle OpenSaveDataFailuresAlert(LauncherContext& context, GtkWindow* parent,
                                        const DialogArgs& args) {
 	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
-	const fs::path directory = SampleSaveDataDirectory(context, *args.entry);
-	const fs::path sce_sys   = directory / "1" / "sce_sys";
-	const std::vector<core::RemovalFailure> failures = {
-	    {sce_sys / "param.sfo", std::make_error_code(std::errc::permission_denied)},
-	    {sce_sys, std::make_error_code(std::errc::directory_not_empty)},
-	    {directory / "1", std::make_error_code(std::errc::directory_not_empty)},
-	    {directory, std::make_error_code(std::errc::directory_not_empty)}};
+	const fs::path                    directory = SampleSaveDataDirectory(context, *args.entry);
+	const fs::path                    slot      = directory / "1";
+	std::vector<core::RemovalFailure> failures;
+	for (int i = 1; i <= 36; i++) {
+		failures.push_back({slot / ("savedata" + std::to_string(i) + ".bin"),
+		                    std::make_error_code(std::errc::permission_denied)});
+	}
+	failures.push_back(
+	    {slot / "sce_sys" / "param.sfo", std::make_error_code(std::errc::permission_denied)});
+	failures.push_back({slot / "sce_sys", std::make_error_code(std::errc::directory_not_empty)});
+	failures.push_back({slot, std::make_error_code(std::errc::directory_not_empty)});
+	failures.push_back({directory, std::make_error_code(std::errc::directory_not_empty)});
 	DialogHandle handle;
 	handle.cancellable = g_cancellable_new();
 	handle.window      = ShowSaveDataFailures(parent, *args.entry, failures, handle.cancellable);
 	return handle;
+}
+
+// The failure list is an AdwWindow (alerts.h ShowErrorList): closed with its Close button, the
+// default widget, unless it is gone already; then its cancellable is released.
+void CloseErrorList(DialogHandle& handle) {
+	if (handle.window != nullptr) {
+		GListModel* toplevels = gtk_window_get_toplevels();
+		for (guint i = 0; i < g_list_model_get_n_items(toplevels); i++) {
+			auto window = GObjectPtr<GtkWindow>::Adopt(
+			    static_cast<GtkWindow*>(g_list_model_get_item(toplevels, i)));
+			if (window.get() == handle.window) {
+				if (GtkWidget* close = gtk_window_get_default_widget(handle.window);
+				    close != nullptr) {
+					gtk_widget_activate(close);
+				}
+				break;
+			}
+		}
+	}
+	CloseAlert(handle);
 }
 
 DialogHandle OpenImportSettingsAlert(LauncherContext& /*context*/, GtkWindow* parent,
@@ -312,7 +339,7 @@ constexpr DialogType kDialogTypes[] = {
     {"update-result-alert", OpenUpdateResultAlert, CloseAlert},
     {"clear-config-alert", OpenClearConfigAlert, CloseAlert},
     {"remove-save-data-alert", OpenRemoveSaveDataAlert, CloseAlert},
-    {"save-data-failures-alert", OpenSaveDataFailuresAlert, CloseAlert},
+    {"save-data-failures-alert", OpenSaveDataFailuresAlert, CloseErrorList},
     {"import-settings-alert", OpenImportSettingsAlert, CloseAlert},
 };
 

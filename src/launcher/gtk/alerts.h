@@ -2,8 +2,9 @@
 
 // GtkAlertDialog helpers (task 19.6; plan D18). Every confirmation of the launcher (clear a
 // configuration, remove save data, replace cheats, delete the original folder, import settings,
-// overwrite Kyty.ini, quit while a game runs) goes through Confirm; errors through ShowError.
-// Texts are translated by the caller; dynamic parts (paths, reasons) go verbatim into the body.
+// overwrite Kyty.ini, quit while a game runs) goes through Confirm; errors through ShowError, and
+// errors with a list that may be long through ShowErrorList. Texts are translated by the caller;
+// dynamic parts (paths, reasons) go verbatim into the body.
 
 #include <functional>
 #include <gtk/gtk.h>
@@ -44,5 +45,15 @@ GtkWindow* Choose(GtkWindow* parent, std::string_view heading, std::string_view 
 // nullptr when it could not be found.
 GtkWindow* ShowError(GtkWindow* parent, std::string_view heading, std::string_view body,
                      GCancellable* cancellable = nullptr);
+
+// An error with a list of any length (the save data that could not be removed; phase 7 plan D22,
+// W3): a modal AdwWindow transient for parent (may be nullptr; destroyed with it), titled heading,
+// with heading, the wrapped body, and items one per row (wrapping, selectable text) in a
+// scrolled boxed list that grows to at most 320 pixels and then scrolls, and a Close button, the
+// default widget; Escape closes it too. Cancelling cancellable closes it. When cancellable is
+// already cancelled, nothing is created and the result is nullptr. Returns the window (presented).
+GtkWindow* ShowErrorList(GtkWindow* parent, std::string_view heading, std::string_view body,
+                         const std::vector<std::string>& items,
+                         GCancellable*                   cancellable = nullptr);
 
 } // namespace kyty::gtk

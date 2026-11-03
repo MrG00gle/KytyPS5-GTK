@@ -19,6 +19,7 @@
 #include <glib.h>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace KytyUi {
 
@@ -58,6 +59,9 @@ void ExpectLog(std::string_view domain, GLogLevelFlags level, std::string_view p
 
 // Where Capture() writes; empty without --capture-dir and KYTY_UI_CAPTURE_DIR.
 [[nodiscard]] const std::filesystem::path& CaptureDirectory();
+
+// The names of every registered case, sorted (what --list prints).
+[[nodiscard]] std::vector<std::string> CaseNames();
 
 } // namespace KytyUi
 

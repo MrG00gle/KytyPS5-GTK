@@ -16,6 +16,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace kyty::gtk {
 
@@ -318,15 +319,15 @@ GtkWindow* ConfirmRemoveSaveData(GtkWindow* parent, const core::GameEntry& entry
 GtkWindow* ShowSaveDataFailures(GtkWindow* parent, const core::GameEntry& entry,
                                 const std::vector<core::RemovalFailure>& failures,
                                 GCancellable*                            cancellable) {
-	std::string lines;
+	std::vector<std::string> lines;
 	for (const auto& failure: failures) {
 		// TRANSLATORS: a path that could not be deleted, then the reason.
-		lines += (lines.empty() ? "" : "\n") +
-		         Format(_("%s: %s"), failure.path.c_str(), failure.error.message().c_str());
+		lines.push_back(Format(_("%s: %s"), failure.path.c_str(), failure.error.message().c_str()));
 	}
-	return ShowError(
+	// A scrolled list (phase 7 plan D22): a long list stays on the screen.
+	return ShowErrorList(
 	    parent, Format(_("Some save data of %s could not be removed"), GameName(entry).c_str()),
-	    Format(_("Could not remove:\n%s"), lines.c_str()), cancellable);
+	    _("Could not remove:"), lines, cancellable);
 }
 
 GtkWindow* ConfirmForeignGameConfig(GtkWindow* parent, const core::GameEntry& entry,

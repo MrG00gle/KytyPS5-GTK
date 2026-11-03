@@ -69,7 +69,8 @@ GtkWindow* ConfirmRemoveSaveData(GtkWindow* parent, const core::GameEntry& entry
                                  const std::vector<std::filesystem::path>& directories,
                                  std::function<void(bool accepted)>        done,
                                  GCancellable*                             cancellable);
-// Every path that could not be deleted, with its reason (11.13).
+// Every path that could not be deleted, with its reason (11.13), in a scrolled list (alerts.h
+// ShowErrorList).
 GtkWindow* ShowSaveDataFailures(GtkWindow* parent, const core::GameEntry& entry,
                                 const std::vector<core::RemovalFailure>& failures,
                                 GCancellable*                            cancellable);

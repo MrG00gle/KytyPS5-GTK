@@ -1,5 +1,6 @@
 # Files of the GTK launcher with translatable strings (kyty-launcher domain), one per line, sorted.
 src/launcher/gtk/additionalContentWindow.cpp
+src/launcher/gtk/alerts.cpp
 src/launcher/gtk/application.cpp
 src/launcher/gtk/bindingCaptureDialog.cpp
 src/launcher/gtk/cheatsWindow.cpp
