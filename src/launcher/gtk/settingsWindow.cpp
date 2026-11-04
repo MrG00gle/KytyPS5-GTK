@@ -1617,6 +1617,52 @@ void AddGameConfigActions(KytySettingsWindow* self) {
 	                               G_ACTION_GROUP(state.actions.get()));
 }
 
+// ---- Page keys (LFI-19)
+
+// Ctrl+Page_Up (step -1) and Ctrl+Page_Down (step 1): the previous or the next visible page, as in
+// GTK's tab widgets. The first and the last page stay where they are (the view switcher does not
+// wrap around either); the key is used up there too, so that it never reaches a focused spin row,
+// which would jump to its minimum or maximum.
+gboolean OnPageKey(GtkWidget* widget, GVariant* arguments, gpointer /*data*/) {
+	auto*         self = KYTY_SETTINGS_WINDOW(widget);
+	const int32_t step = g_variant_get_int32(arguments);
+	auto pages = GObjectPtr<GtkSelectionModel>::Adopt(adw_view_stack_get_pages(self->stack));
+	std::vector<GtkWidget*> visible;
+	for (guint i = 0; i < g_list_model_get_n_items(G_LIST_MODEL(pages.get())); i++) {
+		auto page = GObjectPtr<AdwViewStackPage>::Adopt(
+		    static_cast<AdwViewStackPage*>(g_list_model_get_item(G_LIST_MODEL(pages.get()), i)));
+		if (adw_view_stack_page_get_visible(page.get()) != FALSE) {
+			visible.push_back(adw_view_stack_page_get_child(page.get()));
+		}
+	}
+	const auto current =
+	    std::find(visible.begin(), visible.end(), adw_view_stack_get_visible_child(self->stack));
+	if (current == visible.end()) {
+		return FALSE;
+	}
+	const auto next = (current - visible.begin()) + step;
+	if (next >= 0 && next < static_cast<std::ptrdiff_t>(visible.size())) {
+		adw_view_stack_set_visible_child(self->stack, visible[static_cast<std::size_t>(next)]);
+	}
+	return TRUE;
+}
+
+// A shortcut controller of the window's own, in the capture phase, so the keys work wherever the
+// focus is.
+void AddPageKeys(KytySettingsWindow* self) {
+	GtkEventController* keys = gtk_shortcut_controller_new();
+	gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+	for (const auto& [keyval, step]: {std::pair<guint, int32_t> {GDK_KEY_Page_Up, -1},
+	                                  std::pair<guint, int32_t> {GDK_KEY_Page_Down, 1}}) {
+		GtkShortcut* shortcut =
+		    gtk_shortcut_new(gtk_keyval_trigger_new(keyval, GDK_CONTROL_MASK),
+		                     gtk_callback_action_new(&OnPageKey, nullptr, nullptr));
+		gtk_shortcut_set_arguments(shortcut, g_variant_new_int32(step));
+		gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(keys), shortcut);
+	}
+	gtk_widget_add_controller(GTK_WIDGET(self), keys);
+}
+
 // ---- Construction
 
 KytySettingsWindow* NewWindow(LauncherContext& context, GtkWindow* parent,
@@ -1687,6 +1733,7 @@ KytySettingsWindow* NewWindow(LauncherContext& context, GtkWindow* parent,
 	    SignalScope::Connect(self->save_button, "clicked", G_CALLBACK(OnSave), self));
 	state.signals.push_back(
 	    SignalScope::Connect(self->reset_button, "clicked", G_CALLBACK(OnReset), self));
+	AddPageKeys(self);
 	return self;
 }
 

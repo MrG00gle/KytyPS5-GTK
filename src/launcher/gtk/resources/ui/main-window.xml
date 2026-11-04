@@ -266,9 +266,6 @@
                   <object class="GtkBox" id="log_area">
                     <property name="orientation">vertical</property>
                     <property name="visible">False</property>
-                    <style>
-                      <class name="log-pane"/>
-                    </style>
                     <child>
                       <object class="GtkBox">
                         <property name="spacing">6</property>

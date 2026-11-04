@@ -41,6 +41,7 @@
 #include "ui/support/uiDriver.h"
 #include "ui/support/uiFixtures.h"
 #include "ui/support/uiHarness.h"
+#include "ui/support/uiWindows.h"
 
 #include <adwaita.h>
 #include <algorithm>
@@ -61,6 +62,7 @@ namespace fs   = std::filesystem;
 namespace core = kyty::core;
 using kyty::gtk::GObjectPtr;
 using KytyUi::Check;
+using KytyUi::MappedToplevel;
 
 void Quit(KytyApplication* application) {
 	g_action_group_activate_action(G_ACTION_GROUP(application), "quit", nullptr);
@@ -451,20 +453,6 @@ void CapturePopover(GtkPopover* popover, const std::string& name) {
 		            height);
 	}
 	adw_style_manager_set_color_scheme(style, previous);
-}
-
-// The mapped toplevel of type, or nullptr.
-GtkWindow* MappedToplevel(GType type) {
-	GListModel* toplevels = gtk_window_get_toplevels();
-	for (guint i = 0; i < g_list_model_get_n_items(toplevels); i++) {
-		auto window = GObjectPtr<GtkWindow>::Adopt(
-		    static_cast<GtkWindow*>(g_list_model_get_item(toplevels, i)));
-		if (G_TYPE_CHECK_INSTANCE_TYPE(window.get(), type) &&
-		    gtk_widget_get_mapped(GTK_WIDGET(window.get())) != FALSE) {
-			return window.get();
-		}
-	}
-	return nullptr;
 }
 
 bool HasAction(gchar** actions, const char* action) {

@@ -50,11 +50,13 @@ struct MainWindowState {
 	std::unique_ptr<RunController>     run;
 	std::unique_ptr<UpdateUi>          update; // task 21.6
 	// Quitting while a game runs (D34): what runs once the game has exited, whether the
-	// confirmation is open, and whether the game was asked to stop for the quit.
-	std::function<void()> quit_done;
-	bool                  quit_asking   = false;
-	bool                  quit_stopping = false;
-	SourceId              quit_idle;
+	// confirmation is open (and the cancellable that closes it), and whether the game was asked to
+	// stop for the quit.
+	std::function<void()>    quit_done;
+	bool                     quit_asking = false;
+	GObjectPtr<GCancellable> quit_question;
+	bool                     quit_stopping = false;
+	SourceId                 quit_idle;
 	// Cancelled when the window goes away: no alert callback runs after it.
 	GObjectPtr<GCancellable> cancellable = GObjectPtr<GCancellable>::Adopt(g_cancellable_new());
 	std::vector<SignalScope> signals;
@@ -756,6 +758,15 @@ void OnRunChanged(KytyMainWindow* self) {
 	}
 	UpdateActions(self);
 	auto& state = *self->state;
+	// The game ended by itself while the quit question is open: there is nothing left to ask
+	// about, so the question closes and the quit goes on (phase 7 plan D27).
+	if (state.quit_asking && !state.run->Running()) {
+		state.quit_asking   = false;
+		state.quit_stopping = true;
+		if (const auto question = std::move(state.quit_question)) {
+			g_cancellable_cancel(question.get());
+		}
+	}
 	if (state.quit_stopping && !state.run->Running() && !state.quit_idle.Active()) {
 		state.quit_idle = kyty::gtk::SourceId(g_idle_add(&OnQuitIdle, self));
 	}
@@ -988,6 +999,9 @@ static void kyty_main_window_dispose(GObject* object) {
 	if (auto* state = self->state; state != nullptr && !state->disposed) {
 		state->disposed = true;
 		g_cancellable_cancel(state->cancellable.get());
+		if (const auto question = std::move(state->quit_question)) {
+			g_cancellable_cancel(question.get());
+		}
 		state->icon_width_save.Remove();
 		state->quit_idle.Remove();
 		state->quit_done = nullptr;
@@ -1245,7 +1259,8 @@ void MainWindowRequestQuit(KytyMainWindow* window, bool ask, std::function<void(
 	if (state.quit_asking) {
 		return; // the confirmation is open
 	}
-	state.quit_asking = true;
+	state.quit_asking   = true;
+	state.quit_question = GObjectPtr<GCancellable>::Adopt(g_cancellable_new());
 	Confirm(
 	    GTK_WINDOW(window), _("Stop the running game and quit?"),
 	    _("The emulator is asked to close. If it is still running 5 seconds later, it is ended."),
@@ -1256,13 +1271,14 @@ void MainWindowRequestQuit(KytyMainWindow* window, bool ask, std::function<void(
 		    }
 		    auto& asked       = *window->state;
 		    asked.quit_asking = false;
+		    asked.quit_question.reset();
 		    if (accepted) {
 			    StopForQuit(window);
 		    } else if (!asked.quit_stopping) {
 			    asked.quit_done = nullptr;
 		    }
 	    },
-	    state.cancellable.get());
+	    state.quit_question.get());
 }
 
 void SetMainWindowAccelerators(GtkApplication* application) {

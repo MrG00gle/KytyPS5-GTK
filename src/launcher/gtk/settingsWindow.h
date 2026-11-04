@@ -13,6 +13,8 @@
 // - per game: General, Network, and Debug, opened with the game's effective values
 //   (core::EnableCustomSettings, Requirement 9.2) and saved as its custom settings
 //   (core::SaveCustomSettings, 9.13).
+// Ctrl+Page_Up and Ctrl+Page_Down show the previous and the next page, wherever the focus is
+// (LFI-19); the first and the last page do not wrap around.
 // The rows come from the core::GameConfigurationFields() descriptors; the output path rows are
 // enabled only while their output is on (LFI-19); the GPU and microphone lists come from
 // DeviceLists when the window opens (9.5).

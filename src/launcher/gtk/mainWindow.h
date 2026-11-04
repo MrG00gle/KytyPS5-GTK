@@ -33,7 +33,8 @@
 // Quitting while a game runs (D34): closing the window or app.quit asks "Stop the running game and
 // quit?" (MainWindowRequestQuit); on accept the game gets SIGTERM (SIGKILL 5 s later) and the
 // window closes or the application quits after the exit; SIGINT and SIGTERM to the launcher stop
-// the game the same way without asking.
+// the game the same way without asking. A game that ends by itself while the question is open
+// closes the question, and the window closes or the application quits.
 // The view mode and the icon width (500 ms after the slider stops) are saved when they change, the
 // window size and maximized state when the window closes or the application quits (D32, LFI-04,
 // LFI-47), all through SaveSettingsAutomatically (nothing is written while the Settings_Store could
@@ -115,7 +116,9 @@ bool MainWindowGameRunning(KytyMainWindow* window);
 // then, or at once without ask (SIGINT, SIGTERM), the game gets SIGTERM and, if it is still alive
 // 5 s later, SIGKILL, and done runs from the main loop after it exited. A request while the
 // question is open replaces done (without ask it also stops the game at once); one after the user
-// agreed stops the game again (SIGTERM, same SIGKILL deadline). done may close the window.
+// agreed stops the game again (SIGTERM, same SIGKILL deadline). When the game exits while the
+// question is open, the question closes and done runs as if the user had agreed (phase 7 plan
+// D27). done may close the window.
 void MainWindowRequestQuit(KytyMainWindow* window, bool ask, std::function<void()> done);
 
 // The accelerators of the D30 action table (app.* and game.*), set on application.

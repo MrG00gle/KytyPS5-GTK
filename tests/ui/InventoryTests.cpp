@@ -55,6 +55,7 @@
 #include "ui/support/uiDriver.h"
 #include "ui/support/uiFixtures.h"
 #include "ui/support/uiHarness.h"
+#include "ui/support/uiWindows.h"
 #include "updater/core/updatePolicy.h"
 #include "updater/core/updateResult.h"
 
@@ -83,6 +84,23 @@ namespace fs   = std::filesystem;
 namespace core = kyty::core;
 using kyty::gtk::GObjectPtr;
 using KytyUi::Check;
+// The shared window, row, menu, and log helpers (uiWindows.h).
+using KytyUi::ActivateGameAction;
+using KytyUi::ButtonLabelled;
+using KytyUi::ButtonWithAction;
+using KytyUi::ClickMenuItem;
+using KytyUi::CloseError;
+using KytyUi::CloseWithEscape;
+using KytyUi::Exists;
+using KytyUi::FixtureEntry;
+using KytyUi::HasLine;
+using KytyUi::LogLines;
+using KytyUi::MappedToplevel;
+using KytyUi::MenuItem;
+using KytyUi::PageShown;
+using KytyUi::RowTitled;
+using KytyUi::ScaleNamed;
+using KytyUi::WaitForWindow;
 
 using Drive = std::function<void(KytyApplication*, KytyMainWindow*)>;
 
@@ -106,11 +124,6 @@ bool WriteText(const fs::path& path, std::string_view text) {
 	return Check(static_cast<bool>(out), "write " + path.string());
 }
 
-bool Exists(const fs::path& path) {
-	std::error_code ec;
-	return fs::exists(path, ec);
-}
-
 // What Kyty.ini holds now (the defaults when it does not exist).
 core::LauncherSettings Stored(KytyUi::UiContext& ui) {
 	return core::OpenSettingsStore(ui.SettingsFile()).loaded.settings;
@@ -124,19 +137,6 @@ bool Store(KytyUi::UiContext& ui, const std::function<void(core::LauncherSetting
 	const auto written = core::SaveSettingsStore(store, next);
 	return Check(static_cast<bool>(written), "write " + ui.SettingsFile().string() +
 	                                             (written ? "" : ": " + written.error().message));
-}
-
-core::GameEntry FixtureEntry(const fs::path& games, std::string_view title) {
-	core::GameEntry entry;
-	if (title == kAlpha) {
-		entry.path     = games / "Alpha Game";
-		entry.title_id = "PPSA01001";
-	} else {
-		entry.path     = games / "Beta" / "Beta Quest";
-		entry.title_id = "PPSA01002";
-	}
-	entry.title_name = std::string(title);
-	return entry;
 }
 
 // The game's own settings in Kyty.ini: the global configuration with user_name.
@@ -314,93 +314,6 @@ GtkWidget* FocusGameRow(KytyMainWindow* window, std::string_view title) {
 	return nullptr;
 }
 
-// The mapped toplevel of type, or nullptr.
-GtkWindow* MappedToplevel(GType type) {
-	GListModel* toplevels = gtk_window_get_toplevels();
-	for (guint i = 0; i < g_list_model_get_n_items(toplevels); i++) {
-		auto window = GObjectPtr<GtkWindow>::Adopt(
-		    static_cast<GtkWindow*>(g_list_model_get_item(toplevels, i)));
-		if (G_TYPE_CHECK_INSTANCE_TYPE(window.get(), type) &&
-		    gtk_widget_get_mapped(GTK_WIDGET(window.get())) != FALSE) {
-			return window.get();
-		}
-	}
-	return nullptr;
-}
-
-// Waits for a mapped and painted toplevel of type; nullptr after a Fail.
-GtkWindow* WaitForWindow(GType type, const std::string& what, int timeout_ms = 5000) {
-	GtkWindow* found = nullptr;
-	if (KytyUi::WaitFor(
-	        [&found, type]() {
-		        found = MappedToplevel(type);
-		        return found != nullptr;
-	        },
-	        timeout_ms, what) &&
-	    KytyUi::WaitForPaintedFrame(GTK_WIDGET(found))) {
-		return found;
-	}
-	return nullptr;
-}
-
-// Escape (on the window itself: a GtkText of the window would need a pointer device) closes it.
-bool CloseWithEscape(GtkWindow* window, const std::string& what) {
-	Check(KytyUi::KeyPressOn(GTK_WIDGET(window), GDK_KEY_Escape), "Escape is handled in " + what);
-	return KytyUi::WaitFor([window]() { return !KytyUi::IsToplevel(window); }, 3000,
-	                       "Escape to close " + what);
-}
-
-// The mapped button below root whose action is action, or nullptr.
-GtkWidget* ButtonWithAction(GtkWidget* root, std::string_view action) {
-	return KytyUi::FindFirst(root, [action](GtkWidget* widget) {
-		if (!GTK_IS_BUTTON(widget) || gtk_widget_get_mapped(widget) == FALSE) {
-			return false;
-		}
-		const char* name = gtk_actionable_get_action_name(GTK_ACTIONABLE(widget));
-		return name != nullptr && action == name;
-	});
-}
-
-// The button below root labelled with one of labels (its own text), or nullptr.
-GtkWidget* ButtonLabelled(GtkWidget* root, std::initializer_list<std::string_view> labels) {
-	return KytyUi::FindFirst(root, [labels](GtkWidget* widget) {
-		const std::string text = KytyUi::WidgetText(widget);
-		return GTK_IS_BUTTON(widget) &&
-		       std::find(labels.begin(), labels.end(), text) != labels.end();
-	});
-}
-
-// The preferences row below root titled title, or nullptr.
-GtkWidget* RowTitled(GtkWidget* root, std::string_view title) {
-	return KytyUi::FindFirst(root, [title](GtkWidget* widget) {
-		return ADW_IS_PREFERENCES_ROW(widget) && KytyUi::WidgetText(widget) == title;
-	});
-}
-
-// The scale below root whose accessible label is name (its row has the same title), or nullptr.
-GtkRange* ScaleNamed(GtkWidget* root, std::string_view name) {
-	GtkWidget* found = KytyUi::FindFirst(root, [name](GtkWidget* widget) {
-		return GTK_IS_SCALE(widget) &&
-		       KytyUi::AccessibleProperty(widget, GTK_ACCESSIBLE_PROPERTY_LABEL) ==
-		           std::optional<std::string>(std::string(name));
-	});
-	return found != nullptr ? GTK_RANGE(found) : nullptr;
-}
-
-// The page name of the view stack is shown (it exists and is visible).
-bool PageShown(GtkWidget* root, const char* name) {
-	auto*      stack = ADW_VIEW_STACK(KytyUi::FindByBuildableId(root, "stack"));
-	GtkWidget* child = stack != nullptr ? adw_view_stack_get_child_by_name(stack, name) : nullptr;
-	return child != nullptr &&
-	       adw_view_stack_page_get_visible(adw_view_stack_get_page(stack, child)) != FALSE;
-}
-
-// Closes an error alert with its Close button (GtkAlertDialog's own, "_Close" or "Close").
-bool CloseError(GtkWindow* alert) {
-	return KytyUi::CloseAlert(
-	    alert, ButtonLabelled(GTK_WIDGET(alert), {"_Close"}) != nullptr ? "_Close" : "Close");
-}
-
 // Waits for a mapped toplevel other than except whose text contains text (an alert over a window
 // that may show the same text, such as the update banner); nullptr after a Fail.
 GtkWindow* FindDialog(std::string_view text, GtkWindow* except, int timeout_ms = 3000) {
@@ -424,17 +337,6 @@ GtkWindow* FindDialog(std::string_view text, GtkWindow* except, int timeout_ms =
 	return found;
 }
 
-// The game's action (the game menu's item, the header bar button, the key all activate it).
-bool ActivateGameAction(KytyMainWindow* window, const char* action) {
-	GActionGroup* actions = kyty::gtk::MainWindowGameActions(window);
-	if (!Check(g_action_group_get_action_enabled(actions, action) != FALSE,
-	           std::string("game.") + action + " is enabled")) {
-		return false;
-	}
-	g_action_group_activate_action(actions, action, nullptr);
-	return true;
-}
-
 // Popovers need a grab with autohide, and the headless sessions have no seat (plan D10).
 void DisableAutohide(GtkWidget* root) {
 	for (GtkWidget* widget:
@@ -450,39 +352,6 @@ GtkPopover* MappedPopover(GtkWidget* root, std::string_view text) {
 		       KytyUi::AllText(widget).find(text) != std::string::npos;
 	});
 	return found != nullptr ? GTK_POPOVER(found) : nullptr;
-}
-
-// The menu item below root (a GtkModelButton of a popover menu) whose label is label.
-GtkWidget* MenuItem(GtkWidget* root, std::string_view label) {
-	return KytyUi::FindFirst(root, [label](GtkWidget* widget) {
-		if (g_strcmp0(G_OBJECT_TYPE_NAME(widget), "GtkModelButton") != 0) {
-			return false;
-		}
-		const std::string text = KytyUi::AllText(widget);
-		return text.substr(0, text.find('\n')) == label;
-	});
-}
-
-// Opens the menu button's popover (autohide off), clicks its item labelled label, and waits until
-// the popover is closed again. False when the popover or the item is missing.
-bool ClickMenuItem(GtkWidget* button, std::string_view label) {
-	if (button == nullptr || !GTK_IS_MENU_BUTTON(button)) {
-		return false;
-	}
-	GtkPopover* popover = KytyUi::OpenPopover(GTK_MENU_BUTTON(button));
-	if (popover == nullptr) {
-		return false;
-	}
-	GtkWidget* item = MenuItem(GTK_WIDGET(popover), label);
-	if (item != nullptr) {
-		g_signal_emit_by_name(item, "clicked");
-	}
-	if (gtk_widget_get_mapped(GTK_WIDGET(popover)) != FALSE) {
-		gtk_popover_popdown(popover);
-	}
-	KytyUi::WaitFor([popover]() { return gtk_widget_get_mapped(GTK_WIDGET(popover)) == FALSE; },
-	                2000, "the menu to close after \"" + std::string(label) + "\"");
-	return item != nullptr;
 }
 
 // Every item of a menu model, sections and submenus included: (label, action).
@@ -505,22 +374,6 @@ void MenuItems(GMenuModel* model, std::vector<std::pair<std::string, std::string
 			}
 		}
 	}
-}
-
-// The text lines of the log pane's model.
-std::vector<std::string> LogLines(KytyMainWindow* window) {
-	std::vector<std::string> lines;
-	GListModel*              log = G_LIST_MODEL(kyty::gtk::MainWindowLog(window));
-	for (guint i = 0; i < g_list_model_get_n_items(log); i++) {
-		auto line = GObjectPtr<GtkStringObject>::Adopt(
-		    static_cast<GtkStringObject*>(g_list_model_get_item(log, i)));
-		lines.emplace_back(gtk_string_object_get_string(line.get()));
-	}
-	return lines;
-}
-
-bool HasLine(const std::vector<std::string>& lines, std::string_view line) {
-	return std::find(lines.begin(), lines.end(), line) != lines.end();
 }
 
 // Sets the fake Emulator's behavior for the next runs (fake-kyty-emulator.sh); unset again by the
@@ -1606,8 +1459,9 @@ KYTY_UI_CASE(lfi_18) {
 	      "Reset keeps the game folders");
 }
 
-// LFI-19: the editor's pages General, Network, Debug with their fields, dependent fields enabled
-// only with their direction File, and the validation of a mandatory field.
+// LFI-19: the editor's pages General, Network, Debug with their fields (the view switcher, and
+// Ctrl+Page_Up and Ctrl+Page_Down), dependent fields enabled only with their direction File, and
+// the validation of a mandatory field.
 KYTY_UI_CASE(lfi_19) {
 	KytyUi::UiContext ui;
 	if (PrepareLibrary(ui).empty()) {
@@ -1622,7 +1476,6 @@ KYTY_UI_CASE(lfi_19) {
 		GtkWidget* root  = GTK_WIDGET(settings);
 		auto*      stack = ADW_VIEW_STACK(KytyUi::FindByBuildableId(root, "stack"));
 		// The pages through the view switcher (its buttons are the pages' tabs; Tab reaches them).
-		// design.md's Ctrl+PageUp/PageDown for the pages are not bound (a recorded deviation).
 		for (const auto& [title, page]: {std::pair<const char*, const char*> {"Debug", "debug"},
 		                                 {"Network", "network"},
 		                                 {"General", "general"}}) {
@@ -1636,6 +1489,39 @@ KYTY_UI_CASE(lfi_19) {
 			          g_strcmp0(adw_view_stack_get_visible_child_name(stack), page) == 0,
 			      std::string("the tab ") + title + " shows its page");
 		}
+		if (stack == nullptr) {
+			return;
+		}
+		// Ctrl+Page_Down and Ctrl+Page_Up: the next and the previous page, also with the focus on
+		// a spin row (which binds Ctrl+Page_Up and Ctrl+Page_Down itself); no wrap-around.
+		const auto shown = [stack]() {
+			const char* name = adw_view_stack_get_visible_child_name(stack);
+			return std::string(name != nullptr ? name : "");
+		};
+		GtkWidget* user_id = RowTitled(root, "User ID");
+		if (!Check(user_id != nullptr && ADW_IS_SPIN_ROW(user_id), "the User ID spin row")) {
+			return;
+		}
+		gtk_widget_grab_focus(user_id);
+		const double user_id_value           = adw_spin_row_get_value(ADW_SPIN_ROW(user_id));
+		const std::vector<std::string> pages = {"general",    "network", "debug", "folders",
+		                                        "controller", "updates", "about"};
+		std::vector<std::pair<guint, std::string>> presses;
+		for (std::size_t i = 1; i < pages.size(); i++) {
+			presses.emplace_back(GDK_KEY_Page_Down, pages[i]);
+		}
+		presses.emplace_back(GDK_KEY_Page_Down, pages.back());
+		for (std::size_t i = pages.size() - 1; i > 0; i--) {
+			presses.emplace_back(GDK_KEY_Page_Up, pages[i - 1]);
+		}
+		presses.emplace_back(GDK_KEY_Page_Up, pages.front());
+		for (const auto& [key, expected]: presses) {
+			const char* name = key == GDK_KEY_Page_Down ? "Ctrl+Page_Down" : "Ctrl+Page_Up";
+			Check(KytyUi::KeyPress(root, key, GDK_CONTROL_MASK) && shown() == expected,
+			      std::string(name) + " shows the page " + expected + " (" + shown() + ")");
+		}
+		Check(adw_spin_row_get_value(ADW_SPIN_ROW(user_id)) == user_id_value,
+		      "the page keys leave the focused User ID as it was");
 		for (const char* field: {"User name", "Console language", "Screen resolution", "GPU",
 		                         "Enable network connection", "Vulkan validation", "Shader logging",
 		                         "Printf output"}) {

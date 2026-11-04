@@ -45,9 +45,9 @@ LauncherContext* ApplicationContext(KytyApplication* application);
 
 // SIGINT and SIGTERM quit the running KytyApplication as app.quit does, so the launcher ends with
 // status 0 (plan D16), except that a running game is stopped without asking first (plan D34).
-// main() installs them before anything else. They stay installed for the
-// whole process lifetime: a signal that arrives before startup quits right after it, and one that
-// arrives while the process is already ending is caught and changes nothing.
+// main() installs them before anything else. They stay installed for the whole process lifetime: a
+// signal that arrives before startup quits right after it, and one that arrives while the process
+// is already ending is caught and changes nothing.
 void InstallQuitSignalHandlers();
 
 // What the UI tests replace in a KytyApplication (phase 7 plan D13). An empty member keeps what
