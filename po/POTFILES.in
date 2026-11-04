@@ -8,10 +8,10 @@ src/launcher/gtk/compressionDialog.cpp
 src/launcher/gtk/dialogRegistry.cpp
 src/launcher/gtk/dualsenseWidget.cpp
 src/launcher/gtk/gameActions.cpp
+src/launcher/gtk/gameCell.cpp
 src/launcher/gtk/gameListView.cpp
 src/launcher/gtk/gameObject.cpp
 src/launcher/gtk/gamePickerDialog.cpp
-src/launcher/gtk/gameViewSupport.cpp
 src/launcher/gtk/inputLabels.cpp
 src/launcher/gtk/inputMappingWindow.cpp
 src/launcher/gtk/libraryController.cpp

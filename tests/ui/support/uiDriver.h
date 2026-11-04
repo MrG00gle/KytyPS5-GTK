@@ -46,9 +46,10 @@ GtkWidget* FindByLabel(GtkWidget* root, std::string_view label);
 GtkWidget* FindByAccessibleLabel(GtkWidget* root, std::string_view label);
 
 // A widget's own visible text: a button's, check button's, or menu button's label, a label's or
-// inscription's text, an AdwPreferencesRow's title; "" for other widgets.
+// inscription's text, the text a game view cell draws (KytyGameCell), an AdwPreferencesRow's
+// title; "" for other widgets.
 std::string WidgetText(GtkWidget* widget);
-// Every label and inscription text below root, one per line.
+// Every label, inscription, and game view cell text below root, one per line.
 std::string AllText(GtkWidget* root);
 
 // ---- Accessibility (GTK_A11Y=test, plan D9)

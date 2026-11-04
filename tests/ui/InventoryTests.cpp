@@ -32,6 +32,7 @@
 #include "launcher/gtk/byteSize.h"
 #include "launcher/gtk/cheatsWindow.h"
 #include "launcher/gtk/compressionDialog.h"
+#include "launcher/gtk/gameCell.h"
 #include "launcher/gtk/gameListModel.h"
 #include "launcher/gtk/gameObject.h"
 #include "launcher/gtk/gamePickerDialog.h"
@@ -759,10 +760,13 @@ KYTY_UI_CASE(lfi_02) {
 		const std::string text = KytyUi::AllText(GTK_WIDGET(grid));
 		Check(text.find(kAlpha) != std::string::npos && text.find(kBeta) != std::string::npos,
 		      "the grid shows the games' names");
-		Check(kyty_game_get_texture(GameByTitle(context, kAlpha)) != nullptr &&
+		GdkTexture* alpha_icon = kyty_game_get_texture(GameByTitle(context, kAlpha));
+		Check(alpha_icon != nullptr &&
 		          KytyUi::FindFirst(GTK_WIDGET(grid),
-		                            [](GtkWidget* widget) {
-			                            return GTK_IS_PICTURE(widget) || GTK_IS_IMAGE(widget);
+		                            [alpha_icon](GtkWidget* widget) {
+			                            return KYTY_IS_GAME_CELL(widget) &&
+			                                   kyty_game_cell_get_texture(KYTY_GAME_CELL(widget)) ==
+			                                       alpha_icon;
 		                            }) != nullptr,
 		      "the grid items show the games' icons");
 		// A selection in the grid is the list's selection.
@@ -1147,7 +1151,7 @@ KYTY_UI_CASE(lfi_11) {
 		KytyUi::WaitFor(
 		    [window]() {
 			    return KytyUi::FindFirst(GTK_WIDGET(ListView(window)), [](GtkWidget* widget) {
-				           return GTK_IS_LABEL(widget) &&
+				           return KYTY_IS_GAME_CELL(widget) &&
 				                  gtk_widget_has_css_class(widget, "game-running") != FALSE &&
 				                  KytyUi::WidgetText(widget) == kAlpha;
 			           }) != nullptr;

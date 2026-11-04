@@ -1,10 +1,12 @@
 #include "launcher/gtk/gameGridView.h"
 
+#include "launcher/gtk/gameCell.h"
 #include "launcher/gtk/gameViewSupport.h"
 
 #include <algorithm>
 #include <memory>
 #include <unordered_set>
+#include <vector>
 
 namespace kyty::gtk {
 
@@ -12,12 +14,10 @@ namespace {
 
 constexpr const char* kItemKey = "kyty-game-grid-item";
 
-// The widgets of one grid item and the game it shows.
+// The widget of one grid item (a KytyGameCell tile, gameCell.h) and the game it shows.
 struct Item {
 	GameGridViewState*   state = nullptr;
 	GtkWidget*           root  = nullptr;
-	GameIcon             icon;
-	GtkWidget*           label = nullptr;
 	GObjectPtr<KytyGame> game;
 	SignalScope          notify;
 };
@@ -29,6 +29,9 @@ struct GameGridViewState {
 	GtkGridView*                   view       = nullptr;
 	int                            icon_width = GameGridView::kDefaultIconWidth;
 	std::unordered_set<Item*>      items; // every item widget set, bound or not
+	// The factory's connections (plan D25): gone with the state, so a view that outlives it never
+	// calls into it.
+	std::vector<SignalScope> signals;
 };
 
 namespace {
@@ -37,17 +40,21 @@ Item* ItemOf(GObject* object) {
 	return static_cast<Item*>(g_object_get_data(object, kItemKey));
 }
 
-int IconHeight(int width) {
+constexpr int IconHeight(int width) {
 	return width * 9 / 16;
 }
 
-// The item's content is the icon width wide (the title's width request; the item's CSS padding
-// comes on top); the icon, a height x height square, is centered above the title.
+static_assert(IconHeight(GameGridView::kMaxIconWidth) == kLargestGameIconSize,
+              "the details worker scales the icons to the grid's largest icon");
+
+// The item's content is the icon width wide (the item's CSS padding comes on top); the icon, a
+// height x height square, is centered above the title.
 void Resize(Item& item) {
 	const int width  = item.state->icon_width;
 	const int height = IconHeight(width);
-	gtk_widget_set_size_request(item.label, width, -1);
-	UpdateGameIcon(item.icon, item.game.get(), height, height / 2);
+	auto*     tile   = KYTY_GAME_CELL(item.root);
+	kyty_game_cell_set_tile_width(tile, width);
+	kyty_game_cell_set_icon(tile, item.game.get(), height, height / 2);
 }
 
 void Refresh(Item& item) {
@@ -55,14 +62,11 @@ void Refresh(Item& item) {
 	if (game == nullptr) {
 		return;
 	}
-	const std::string& title = kyty_game_get_entry(game).title_name;
-	if (g_strcmp0(gtk_label_get_text(GTK_LABEL(item.label)), title.c_str()) != 0) {
-		gtk_label_set_text(GTK_LABEL(item.label), title.c_str());
-	}
+	kyty_game_cell_set_text(KYTY_GAME_CELL(item.root), kyty_game_get_entry(game).title_name);
 	if (kyty_game_get_running(game)) {
-		gtk_widget_add_css_class(item.label, "game-running");
+		gtk_widget_add_css_class(item.root, "game-running");
 	} else {
-		gtk_widget_remove_css_class(item.label, "game-running");
+		gtk_widget_remove_css_class(item.root, "game-running");
 	}
 	Resize(item);
 }
@@ -75,21 +79,11 @@ void OnSetup(GtkSignalListItemFactory* /*factory*/, GObject* object, gpointer da
 	auto* state = static_cast<GameGridViewState*>(data);
 	auto* item  = new Item;
 	item->state = state;
-	item->root  = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+	// The icon and up to two lines of the title, wrapped to the item's width.
+	item->root = kyty_game_cell_new(GameCellKind::Tile);
 	gtk_widget_add_css_class(item->root, "game-grid-item");
-	item->icon = MakeGameIcon();
-	gtk_box_append(GTK_BOX(item->root), item->icon.image);
-	// Two lines at most, wrapped to the item's width (its natural width is tiny, so its width
-	// request, the icon width, sets the item's width).
-	item->label = gtk_label_new(nullptr);
-	gtk_label_set_wrap(GTK_LABEL(item->label), TRUE);
-	gtk_label_set_wrap_mode(GTK_LABEL(item->label), PANGO_WRAP_WORD_CHAR);
-	gtk_label_set_lines(GTK_LABEL(item->label), 2);
-	gtk_label_set_ellipsize(GTK_LABEL(item->label), PANGO_ELLIPSIZE_END);
-	gtk_label_set_justify(GTK_LABEL(item->label), GTK_JUSTIFY_CENTER);
-	gtk_label_set_max_width_chars(GTK_LABEL(item->label), 1);
-	gtk_widget_add_css_class(item->label, "game-title");
-	gtk_box_append(GTK_BOX(item->root), item->label);
+	gtk_widget_add_css_class(item->root, "game-title");
+	Resize(*item);
 	auto* list_item = GTK_LIST_ITEM(object);
 	gtk_list_item_set_child(list_item, item->root);
 	state->items.insert(item);
@@ -137,10 +131,11 @@ GameGridView::GameGridView(GameListModel& model) {
 	auto* state = new GameGridViewState;
 
 	GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
-	g_signal_connect(factory, "setup", G_CALLBACK(&OnSetup), state);
-	g_signal_connect(factory, "bind", G_CALLBACK(&OnBind), state);
-	g_signal_connect(factory, "unbind", G_CALLBACK(&OnUnbind), state);
-	g_signal_connect(factory, "teardown", G_CALLBACK(&OnTeardown), state);
+	auto&               signals = state->signals;
+	signals.push_back(SignalScope::Connect(factory, "setup", G_CALLBACK(&OnSetup), state));
+	signals.push_back(SignalScope::Connect(factory, "bind", G_CALLBACK(&OnBind), state));
+	signals.push_back(SignalScope::Connect(factory, "unbind", G_CALLBACK(&OnUnbind), state));
+	signals.push_back(SignalScope::Connect(factory, "teardown", G_CALLBACK(&OnTeardown), state));
 	// The view takes over the factory; the shell gives it the model while it is mapped.
 	GtkWidget* view = gtk_grid_view_new(nullptr, factory);
 	state->view     = GTK_GRID_VIEW(view);

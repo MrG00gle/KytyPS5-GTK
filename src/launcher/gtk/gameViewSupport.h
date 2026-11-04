@@ -1,8 +1,8 @@
 #pragma once
 
-// What the list view and the grid view share (task 20.2; plan D31): the game icon with its
-// placeholder and emblems, and GameViewShell, which wraps a GtkColumnView or GtkGridView and gives
-// it the context menu (resources/ui/game-menu.xml, LFI-12) and the view-local keys:
+// What the list view and the grid view share (task 20.2; plan D31): GameViewShell, which wraps a
+// GtkColumnView or GtkGridView and gives it the context menu (resources/ui/game-menu.xml, LFI-12)
+// and the view-local keys:
 // - right-click on an item selects it and pops up the game menu; on empty space it pops up the
 //   empty-space menu when one is set (U6: global settings, LFI-13);
 // - Shift+F10 and the Menu key pop up the game menu for the selected game;
@@ -24,6 +24,7 @@
 
 #include <gtk/gtk.h>
 #include <unordered_map>
+#include <vector>
 
 namespace kyty::gtk {
 
@@ -32,23 +33,13 @@ inline constexpr const char* kGameMenuResource = "/io/github/MrG00gle/KytyPS5_GT
 // The "game-menu" model of resources/ui/game-menu.xml.
 GObjectPtr<GMenuModel> LoadGameMenu();
 
-// The icon of a game: the texture or the placeholder (Requirement 7.16), the metadata-unavailable
-// emblem (Requirement 7.9), and the running emblem (LFI-11) over it. The overlay and the emblems
-// are created the first time a game needs them (the overlay then takes the image's place in its
-// parent box): a filter change rebuilds every realized row (about 200), so items stay as small as
-// possible (Requirement 7.13).
-struct GameIcon {
-	GtkWidget* image           = nullptr; // a child of a GtkBox, or of overlay
-	GtkWidget* overlay         = nullptr; // nullptr until an emblem is needed
-	GtkWidget* metadata_emblem = nullptr; // nullptr until needed
-	GtkWidget* running_emblem  = nullptr; // nullptr until needed
-};
+// The largest size a game icon is shown at, in pixels at scale 1: the grid view's icon at its
+// largest width (GameGridView: 320 x 9 / 16); the list view shows 48. The library's details worker
+// scales larger icons down to it once (FitTexture, Requirement 7.13).
+inline constexpr int kLargestGameIconSize = 180;
 
-// The image; the caller appends icon.image to a GtkBox.
-GameIcon MakeGameIcon();
-// Shows game's texture at texture_size pixels, or the placeholder icon at placeholder_size pixels
-// (in a texture_size square), and the emblems the game needs; a null game shows nothing.
-void UpdateGameIcon(GameIcon& icon, KytyGame* game, int texture_size, int placeholder_size);
+// The icon of a game, its placeholder (Requirement 7.16), and its emblems (Requirement 7.9,
+// LFI-11) are drawn by the views' KytyGameCell widgets (gameCell.h).
 
 class GameViewShell {
 public:
@@ -103,6 +94,11 @@ private:
 		bool     anchor = false;
 	};
 	std::unordered_map<GtkWidget*, Tracked> m_items;
+	// The view's connections and its key controller (whose callback actions call this shell),
+	// disconnected and removed with the shell (plan D25): a view that outlives the shell, kept by
+	// someone holding ColumnView() or GridView(), never calls into it.
+	std::vector<SignalScope>       m_signals;
+	GObjectPtr<GtkEventController> m_keys;
 };
 
 } // namespace kyty::gtk

@@ -18,4 +18,10 @@ namespace kyty::gtk {
 // a decode failure. source and file name the image in the message logged for a refused size.
 GdkTexture* DecodePng(std::string_view png, const std::filesystem::path& source, const char* file);
 
+// texture (transfer none) made to fit a max_size x max_size square (transfer full): a new reference
+// to texture when it fits already (or max_size is not positive), else a copy scaled down once by
+// averaging the source pixels each target pixel covers, with the aspect ratio kept, so the renderer
+// does not scale a large image at every frame (Requirement 7.13). nullptr for nullptr.
+GdkTexture* FitTexture(GdkTexture* texture, int max_size);
+
 } // namespace kyty::gtk

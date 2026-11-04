@@ -5,6 +5,7 @@
 #include "launcher/core/scanFileSystem.h"
 #include "launcher/core/settingsStore.h"
 #include "launcher/core/titleId.h"
+#include "launcher/gtk/gameViewSupport.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/imageDecoding.h"
 #include "launcher/gtk/services/controllerService.h"
@@ -62,6 +63,22 @@ std::optional<uint64_t> EntrySize(const fs::path& path, core::GameEntry::Kind ki
 	return total;
 }
 
+// The largest scale factor of the display's monitors (1 without a display).
+int LargestScaleFactor() {
+	int         scale   = 1;
+	GdkDisplay* display = gdk_display_get_default();
+	if (display == nullptr) {
+		return scale;
+	}
+	GListModel* monitors = gdk_display_get_monitors(display);
+	for (guint i = 0; i < g_list_model_get_n_items(monitors); i++) {
+		auto monitor = GObjectPtr<GdkMonitor>::Adopt(
+		    static_cast<GdkMonitor*>(g_list_model_get_item(monitors, i)));
+		scale = std::max(scale, gdk_monitor_get_scale_factor(monitor.get()));
+	}
+	return scale;
+}
+
 // The configured lightbar color ("#rrggbb"), or none: the game controls the LED.
 std::optional<LightbarColor> ConfiguredLightbar(const std::string& color) {
 	GdkRGBA rgba {};
@@ -115,6 +132,7 @@ struct LibraryController::DetailsTask {
 	std::vector<std::pair<fs::path, core::GameEntry::Kind>> entries;
 	std::shared_ptr<core::CancelToken>                      cancel;
 	gint64                                                  started_us = 0;
+	int                                                     icon_size  = kLargestGameIconSize;
 };
 
 // Details for the main thread; the last batch of a run marks it done.
@@ -296,6 +314,7 @@ void LibraryController::StartDetails() {
 	details->generation = m_generation;
 	details->cancel     = m_details_cancel;
 	details->started_us = g_get_monotonic_time();
+	details->icon_size  = kLargestGameIconSize * LargestScaleFactor();
 	GListModel* games   = m_context.library.Games();
 	for (guint i = 0; i < g_list_model_get_n_items(games); i++) {
 		auto game =
@@ -349,9 +368,12 @@ void LibraryController::RunDetails(GTask* task, gpointer /*source*/, gpointer ta
 		if (cancel.IsCancelled()) {
 			break;
 		}
-		batch->icons.emplace_back(
-		    path.native(), GObjectPtr<GdkTexture>::Adopt(DecodePng(
-		                       core::ReadIcon0(path, kind).value_or(""), path, "icon0.png")));
+		const auto decoded = GObjectPtr<GdkTexture>::Adopt(
+		    DecodePng(core::ReadIcon0(path, kind).value_or(""), path, "icon0.png"));
+		// Once, at the largest size the views show (the 512 x 512 icons would be scaled at every
+		// frame otherwise).
+		batch->icons.emplace_back(path.native(), GObjectPtr<GdkTexture>::Adopt(FitTexture(
+		                                             decoded.get(), details->icon_size)));
 		post(false);
 	}
 	for (const auto& [path, kind]: details->entries) {

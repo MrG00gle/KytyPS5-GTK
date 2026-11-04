@@ -1,5 +1,6 @@
 #include "ui/support/uiDriver.h"
 
+#include "launcher/gtk/gameCell.h"
 #include "ui/support/uiHarness.h"
 
 #include <algorithm>
@@ -275,6 +276,9 @@ std::string WidgetText(GtkWidget* widget) {
 	if (GTK_IS_INSCRIPTION(widget)) {
 		return Text(gtk_inscription_get_text(GTK_INSCRIPTION(widget)));
 	}
+	if (KYTY_IS_GAME_CELL(widget)) {
+		return kyty_game_cell_get_text(KYTY_GAME_CELL(widget));
+	}
 	if (ADW_IS_BUTTON_CONTENT(widget)) {
 		return Text(adw_button_content_get_label(ADW_BUTTON_CONTENT(widget)));
 	}
@@ -287,7 +291,8 @@ std::string WidgetText(GtkWidget* widget) {
 std::string AllText(GtkWidget* root) {
 	std::string text;
 	for (GtkWidget* widget: FindAll(root, [](GtkWidget* candidate) {
-		     return GTK_IS_LABEL(candidate) || GTK_IS_INSCRIPTION(candidate);
+		     return GTK_IS_LABEL(candidate) || GTK_IS_INSCRIPTION(candidate) ||
+		            KYTY_IS_GAME_CELL(candidate);
 	     })) {
 		const std::string own = WidgetText(widget);
 		if (!own.empty()) {

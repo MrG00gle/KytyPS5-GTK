@@ -1,65 +1,10 @@
 #include "launcher/gtk/gameViewSupport.h"
 
-#include "launcher/gtk/i18n.h"
-
 #include <algorithm>
 
 namespace kyty::gtk {
 
 namespace {
-
-constexpr const char* kPlaceholderIcon = "applications-games-symbolic";
-
-enum class Emblem { MetadataUnavailable, Running };
-
-// Puts icon.image into a new overlay at the image's place in its parent box.
-void EnsureOverlay(GameIcon& icon) {
-	if (icon.overlay != nullptr) {
-		return;
-	}
-	GtkWidget* box      = gtk_widget_get_parent(icon.image);
-	GtkWidget* previous = gtk_widget_get_prev_sibling(icon.image);
-	icon.overlay        = gtk_overlay_new();
-	gtk_widget_set_halign(icon.overlay, gtk_widget_get_halign(icon.image));
-	gtk_widget_set_valign(icon.overlay, gtk_widget_get_valign(icon.image));
-	g_object_ref(icon.image);
-	if (box != nullptr) {
-		gtk_box_remove(GTK_BOX(box), icon.image);
-	}
-	gtk_overlay_set_child(GTK_OVERLAY(icon.overlay), icon.image);
-	g_object_unref(icon.image);
-	if (box != nullptr) {
-		gtk_box_insert_child_after(GTK_BOX(box), icon.overlay, previous);
-	}
-}
-
-// Shows or hides an emblem of icon, creating it (and the overlay) the first time it is shown.
-void SetEmblem(GameIcon& icon, GtkWidget*& emblem, Emblem kind, bool show) {
-	if (emblem == nullptr) {
-		if (!show) {
-			return;
-		}
-		EnsureOverlay(icon);
-		const bool  metadata = kind == Emblem::MetadataUnavailable;
-		const char* text     = _("The metadata is unavailable");
-		if (!metadata) {
-			// TRANSLATORS: the emblem of the game that is running.
-			text = _("Running");
-		}
-		emblem = gtk_image_new_from_icon_name(metadata ? "dialog-warning-symbolic"
-		                                               : "media-playback-start-symbolic");
-		gtk_image_set_pixel_size(GTK_IMAGE(emblem), 16);
-		gtk_widget_add_css_class(emblem, "game-emblem");
-		gtk_widget_add_css_class(emblem, metadata ? "warning" : "accent");
-		gtk_widget_set_halign(emblem, metadata ? GTK_ALIGN_END : GTK_ALIGN_START);
-		gtk_widget_set_valign(emblem, metadata ? GTK_ALIGN_END : GTK_ALIGN_START);
-		gtk_widget_set_tooltip_text(emblem, text);
-		gtk_accessible_update_property(GTK_ACCESSIBLE(emblem), GTK_ACCESSIBLE_PROPERTY_LABEL, text,
-		                               -1);
-		gtk_overlay_add_overlay(GTK_OVERLAY(icon.overlay), emblem);
-	}
-	gtk_widget_set_visible(emblem, show ? TRUE : FALSE);
-}
 
 // The child at depth 1 or 2 of widget that is a tracked item (a click on a cell's or row's
 // padding picks the cell or row widget, whose descendant is the item widget).
@@ -99,43 +44,6 @@ GObjectPtr<GMenuModel> LoadGameMenu() {
 	    G_MENU_MODEL(gtk_builder_get_object(builder.get(), "game-menu")));
 }
 
-GameIcon MakeGameIcon() {
-	GameIcon icon;
-	icon.image = gtk_image_new();
-	gtk_widget_set_halign(icon.image, GTK_ALIGN_CENTER);
-	gtk_widget_set_valign(icon.image, GTK_ALIGN_CENTER);
-	return icon;
-}
-
-void UpdateGameIcon(GameIcon& icon, KytyGame* game, int texture_size, int placeholder_size) {
-	gtk_widget_set_size_request(icon.image, texture_size, texture_size);
-	if (game == nullptr) {
-		gtk_image_clear(GTK_IMAGE(icon.image));
-		SetEmblem(icon, icon.metadata_emblem, Emblem::MetadataUnavailable, false);
-		SetEmblem(icon, icon.running_emblem, Emblem::Running, false);
-		return;
-	}
-	// Only a change of the shown image resets it (a reset reloads the icon).
-	auto* image = GTK_IMAGE(icon.image);
-	if (GdkTexture* texture = kyty_game_get_texture(game); texture != nullptr) {
-		if (gtk_image_get_storage_type(image) != GTK_IMAGE_PAINTABLE ||
-		    gtk_image_get_paintable(image) != GDK_PAINTABLE(texture)) {
-			gtk_image_set_from_paintable(image, GDK_PAINTABLE(texture));
-		}
-		gtk_image_set_pixel_size(image, texture_size);
-		gtk_widget_remove_css_class(icon.image, "dim-label");
-	} else {
-		if (gtk_image_get_storage_type(image) != GTK_IMAGE_ICON_NAME) {
-			gtk_image_set_from_icon_name(image, kPlaceholderIcon);
-		}
-		gtk_image_set_pixel_size(image, placeholder_size);
-		gtk_widget_add_css_class(icon.image, "dim-label");
-	}
-	SetEmblem(icon, icon.metadata_emblem, Emblem::MetadataUnavailable,
-	          kyty_game_get_metadata_unavailable(game));
-	SetEmblem(icon, icon.running_emblem, Emblem::Running, kyty_game_get_running(game));
-}
-
 GameViewShell::GameViewShell(GtkWidget* view, GtkSingleSelection* selection)
     : m_selection(GObjectPtr<GtkSingleSelection>::Ref(selection)), m_view(view) {
 	m_root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -153,19 +61,22 @@ GameViewShell::GameViewShell(GtkWidget* view, GtkSingleSelection* selection)
 
 	GtkGesture* click = gtk_gesture_click_new();
 	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_SECONDARY);
-	g_signal_connect(click, "pressed", G_CALLBACK(&OnPressed), this);
+	m_signals.push_back(SignalScope::Connect(click, "pressed", G_CALLBACK(&OnPressed), this));
 	gtk_widget_add_controller(m_view, GTK_EVENT_CONTROLLER(click));
 
-	g_signal_connect(m_view, "activate", G_CALLBACK(&OnActivate), this);
-	g_signal_connect(m_view, "map", G_CALLBACK(&OnMap), this);
-	g_signal_connect(m_view, "unmap", G_CALLBACK(&OnUnmap), this);
+	m_signals.push_back(SignalScope::Connect(m_view, "activate", G_CALLBACK(&OnActivate), this));
+	m_signals.push_back(SignalScope::Connect(m_view, "map", G_CALLBACK(&OnMap), this));
+	m_signals.push_back(SignalScope::Connect(m_view, "unmap", G_CALLBACK(&OnUnmap), this));
 
 	// One tooltip handler for every item (setting a tooltip text per item at every bind would
 	// start a tooltip query each time).
 	gtk_widget_set_has_tooltip(m_view, TRUE);
-	g_signal_connect(m_view, "query-tooltip", G_CALLBACK(&OnQueryTooltip), this);
+	m_signals.push_back(
+	    SignalScope::Connect(m_view, "query-tooltip", G_CALLBACK(&OnQueryTooltip), this));
 
 	GtkEventController* keys = gtk_shortcut_controller_new();
+	// The shell owns a reference: its callback actions call it, so it removes the controller.
+	m_keys = GObjectPtr<GtkEventController>::Ref(keys);
 	gtk_shortcut_controller_set_scope(GTK_SHORTCUT_CONTROLLER(keys), GTK_SHORTCUT_SCOPE_LOCAL);
 	const auto add = [keys](GtkShortcutTrigger* trigger, GtkShortcutAction* action) {
 		gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(keys),
@@ -182,7 +93,13 @@ GameViewShell::GameViewShell(GtkWidget* view, GtkSingleSelection* selection)
 	gtk_widget_add_controller(m_view, keys);
 }
 
-GameViewShell::~GameViewShell() = default;
+GameViewShell::~GameViewShell() {
+	// The view may outlive the shell (a reference to ColumnView() or GridView()); a widget that is
+	// gone has removed its controllers already.
+	if (GtkWidget* view = gtk_event_controller_get_widget(m_keys.get()); view != nullptr) {
+		gtk_widget_remove_controller(view, m_keys.get());
+	}
+}
 
 GtkWidget* GameViewShell::NewMenu(GMenuModel* model) {
 	GtkWidget* menu = gtk_popover_menu_new_from_model(model);

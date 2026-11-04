@@ -41,7 +41,9 @@
 #       per backend, with the ui label, SKIP_RETURN_CODE 77, and TIMEOUT (default 120), which runs
 #       "bash WRAPPER --portal <PORTAL> <backend> -- <EXECUTABLE> --case <case>"; the unlabeled test
 #       <prefix>_case_list (tests/cmake/UiCaseListTest.cmake) checks that "<EXECUTABLE> --list" names
-#       exactly the listed cases, so a case cannot exist without its tests. Skips with a status
+#       exactly the listed cases, so a case cannot exist without its tests. EXECUTABLE is compiled
+#       with KYTY_UI_STRICT_FRAME_TIMING in every configuration but Debug (the cases assert
+#       Requirement 7.13's painted-frame limit only then). Skips with a status
 #       message when <dir> has no *Tests.cpp or a LINK or PORTAL_LINK item is not a target yet;
 #       OPTIONAL as for kyty_add_test_directory (every .cpp below <dir> is then exempt).
 #
@@ -376,6 +378,10 @@ function(kyty_add_ui_tests dir)
 
 	kyty_add_test_executable(${kyty_EXECUTABLE} SOURCES ${kyty_case_sources} ${kyty_support_sources}
 		LINK ${kyty_LINK})
+	# The painted-frame limit of Requirement 7.13 is about the shipped launcher; a Debug (coverage)
+	# build runs the same measurements and prints them (phase 7 plan D15).
+	target_compile_definitions(${kyty_EXECUTABLE} PRIVATE
+		$<$<NOT:$<CONFIG:Debug>>:KYTY_UI_STRICT_FRAME_TIMING>)
 	kyty_add_test_executable(${kyty_PORTAL} SOURCES ${kyty_portal_sources} LINK ${kyty_PORTAL_LINK})
 	foreach(kyty_case IN LISTS kyty_cases)
 		foreach(kyty_backend IN LISTS kyty_BACKENDS)
