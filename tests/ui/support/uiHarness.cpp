@@ -28,6 +28,12 @@ struct ExpectedLog {
 	int            seen = 0;
 };
 
+struct WatchedLog {
+	std::string              domain;
+	std::string              prefix;
+	std::vector<std::string> messages;
+};
+
 // The harness state. The log writer may run on any thread (GTask workers log too), so everything
 // it touches is under the mutex. Never destroyed: GLib may log while the process exits.
 struct HarnessState {
@@ -37,6 +43,7 @@ struct HarnessState {
 	std::string                    current  = kProgram;
 	int                            failures = 0;
 	std::vector<ExpectedLog>       expected;
+	std::vector<WatchedLog>        watched;
 	std::filesystem::path          capture_directory;
 };
 
@@ -65,10 +72,32 @@ std::string FieldText(const GLogField& field) {
 }
 
 // D11: warnings, criticals, and errors of every domain fail the case unless they were expected.
+// The domain and the message of a lower-level message, recorded when a watch matches (WatchLog).
+void RecordWatched(const GLogField* fields, gsize count) {
+	std::string domain;
+	std::string message;
+	for (gsize i = 0; i < count; i++) {
+		const std::string_view key = fields[i].key;
+		if (key == "GLIB_DOMAIN") {
+			domain = FieldText(fields[i]);
+		} else if (key == "MESSAGE") {
+			message = FieldText(fields[i]);
+		}
+	}
+	auto&                             state = State();
+	const std::lock_guard<std::mutex> lock(state.mutex);
+	for (auto& watch: state.watched) {
+		if (watch.domain == domain && message.compare(0, watch.prefix.size(), watch.prefix) == 0) {
+			watch.messages.push_back(message);
+		}
+	}
+}
+
 GLogWriterOutput Writer(GLogLevelFlags level, const GLogField* fields, gsize count,
                         gpointer user_data) {
 	const auto severity = static_cast<GLogLevelFlags>(level & G_LOG_LEVEL_MASK);
 	if ((severity & (G_LOG_LEVEL_ERROR | G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING)) == 0) {
+		RecordWatched(fields, count);
 		return g_log_writer_default(level, fields, count, user_data);
 	}
 	std::string domain;
@@ -160,6 +189,23 @@ void ExpectLog(std::string_view domain, GLogLevelFlags level, std::string_view p
 	auto&                             state = State();
 	const std::lock_guard<std::mutex> lock(state.mutex);
 	state.expected.push_back({std::string(domain), level, std::string(prefix), 0});
+}
+
+void WatchLog(std::string_view domain, std::string_view prefix) {
+	auto&                             state = State();
+	const std::lock_guard<std::mutex> lock(state.mutex);
+	state.watched.push_back({std::string(domain), std::string(prefix), {}});
+}
+
+std::vector<std::string> WatchedLogs(std::string_view prefix) {
+	auto&                             state = State();
+	const std::lock_guard<std::mutex> lock(state.mutex);
+	for (const auto& watch: state.watched) {
+		if (watch.prefix == prefix) {
+			return watch.messages;
+		}
+	}
+	return {};
 }
 
 const std::string& CaseName() {

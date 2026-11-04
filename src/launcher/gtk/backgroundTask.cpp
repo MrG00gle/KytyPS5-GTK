@@ -29,8 +29,10 @@ void OnDone(GObject* /*source*/, GAsyncResult* result, gpointer /*data*/) {
 } // namespace
 
 void RunInBackground(std::function<void()> work, std::function<void()> done) {
-	auto*  background = new BackgroundTask {std::move(work), std::move(done)};
-	GTask* task       = g_task_new(nullptr, nullptr, &OnDone, nullptr);
+	auto* background = new BackgroundTask {std::move(work), std::move(done)};
+	// Unowned (no GObjectPtr or SourceId), a recorded exception (p6-u9-6): the callers' alive
+	// flags and generations make a late done harmless.
+	GTask* task = g_task_new(nullptr, nullptr, &OnDone, nullptr);
 	g_task_set_task_data(task, background,
 	                     [](gpointer data) { delete static_cast<BackgroundTask*>(data); });
 	g_task_run_in_thread(task, &RunWork);

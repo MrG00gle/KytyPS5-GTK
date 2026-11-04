@@ -301,7 +301,9 @@ GtkWidget* NewTrophyRow(KytyTrophyWindow* self, TrophyPage& page, std::size_t in
 		// The local earned time, or "Earned" when the unlock data has no time (the Qt launcher's).
 		const std::string date =
 		    trophy.earned_unix_ms ? kyty::gtk::TrophyEarnedText(*trophy.earned_unix_ms) : "";
-		GtkWidget* label = NewLabel(date.empty() ? _("Earned") : date, "dim-label", false);
+		GtkWidget* label =
+		    // TRANSLATORS: the state of an earned trophy whose unlock time is unknown.
+		    NewLabel(date.empty() ? C_("trophy state", "Earned") : date, "dim-label", false);
 		gtk_label_set_xalign(GTK_LABEL(label), 1);
 		gtk_widget_add_css_class(label, "trophy-earned");
 		gtk_box_append(GTK_BOX(side), label);
@@ -392,7 +394,8 @@ void AddPage(KytyTrophyWindow* self, std::size_t index) {
 	               NewStat(_("Progress"), kyty::gtk::TrophyPercentText(viewer.percent)));
 	// TRANSLATORS: the earned trophies of all trophies: "<earned>/<total>".
 	const std::string earned = Format(C_("trophy count", "%u/%u"), viewer.earned, viewer.total);
-	gtk_box_append(GTK_BOX(header), NewStat(_("Earned"), earned));
+	// TRANSLATORS: the heading over the earned count of a trophy package ("3/6").
+	gtk_box_append(GTK_BOX(header), NewStat(C_("trophy heading", "Earned"), earned));
 	// The earned count of each grade the package has (the Qt launcher's header).
 	for (const auto grade: kyty::gtk::kTrophyGrades) {
 		const std::size_t g = core::TrophyGradeIndex(grade);
@@ -540,6 +543,7 @@ KytyTrophyWindow* kyty_trophy_window_new(kyty::gtk::LauncherContext& context, Gt
 	load->data_dir         = context.paths.data_dir;
 	load->user_id          = effective.configuration.user_id;
 	load->console_language = effective.configuration.console_language;
+	// An unowned GTask, a recorded exception (p6-u9-6): the alive flag drops a late result.
 	kyty::gtk::RunInBackground([load]() { Read(*load); },
 	                           [self, alive = state.alive, load]() {
 		                           if (*alive) {

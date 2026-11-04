@@ -18,11 +18,16 @@
 //   Then the dialog emits "archive-created" (the caller rescans the Game_Folders so the archive
 //   is listed) and closes, or shows the error when the directory could not be removed.
 //
+// The job is registered in LauncherContext::jobs while its thread runs, also after the dialog went
+// away (destroyed with its parent), so that app.quit and the application's shutdown cancel it and
+// wait until it has stopped and deleted its partial archive (phase 7 plan D29, p6-u9-2).
+//
 // Signal "archive-created" (no arguments): after a Completed job, once the user answered the
 // delete question.
 
 #include "launcher/core/archiveJob.h"
 #include "launcher/core/gameMetadata.h"
+#include "launcher/gtk/launcherContext.h"
 
 #include <adwaita.h>
 
@@ -37,8 +42,9 @@ G_END_DECLS
 // The compression of entry.path (entry is copied; a directory entry), transient for and modal over
 // parent (may be nullptr). It prepares the job and starts packing at once. packer replaces
 // Common::PackArchive (for the harness and the UI tests; empty in the launcher). Not presented
-// yet; GTK owns the window.
-KytyCompressionDialog* kyty_compression_dialog_new(GtkWindow*                   parent,
+// yet; GTK owns the window. context must outlive it.
+KytyCompressionDialog* kyty_compression_dialog_new(kyty::gtk::LauncherContext&  context,
+                                                   GtkWindow*                   parent,
                                                    const kyty::core::GameEntry& entry,
                                                    kyty::core::ArchivePacker    packer = {});
 

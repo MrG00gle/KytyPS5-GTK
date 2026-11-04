@@ -77,7 +77,8 @@ bool Busy(SessionState state) {
 	return false;
 }
 
-// The updater's fixed messages and their translated texts (plan D46).
+// The updater's fixed messages and their translatable texts (plan D46; phase 7 plan D28: the
+// launcher_gtk_update_message_text test drives a real updater::UpdateSession into each of them).
 struct FixedMessage {
 	std::string_view core;
 	const char*      text;
@@ -107,13 +108,41 @@ const FixedMessage kFixedMessages[] = {
     {"The download timed out.", N_("The download timed out.")},
 };
 
-// The numbers of message when it is parts[0], a number, parts[1], ..., a number, parts.back()
+// The updater's sentences with numbers (updater/core/updateSession.cpp DescribeMetadataFailure and
+// DescribeDownloadFailure, updater/core/downloadVerifier.cpp Finish): the words around the numbers
+// (words[0], a number, words[1], ..., a number, the last word) and the translatable text, whose
+// last number picks the plural form.
+struct NumberedMessage {
+	std::vector<std::string_view> words;
+	PluralText                    text;
+};
+
+const NumberedMessage kNumberedMessages[] = {
+    {{"The update check failed with HTTP status ", "."},
+     // TRANSLATORS: %llu is an HTTP status code, for example 404.
+     {N_("The update check failed with HTTP status %llu."), nullptr}},
+    {{"The download failed with HTTP status ", "."},
+     // TRANSLATORS: %llu is an HTTP status code, for example 404.
+     {N_("The download failed with HTTP status %llu."), nullptr}},
+    {{"The update check received no data for ", " seconds."},
+     NGettextNoop("The update check received no data for %llu second.",
+                  "The update check received no data for %llu seconds.")},
+    {{"The download received no data for ", " seconds."},
+     NGettextNoop("The download received no data for %llu second.",
+                  "The download received no data for %llu seconds.")},
+    {{"The downloaded file is smaller than the release asset (", " of ", " bytes)."},
+     // TRANSLATORS: the bytes received so far and the size of the update package.
+     NGettextNoop("The downloaded file is smaller than the release asset (%llu of %llu byte).",
+                  "The downloaded file is smaller than the release asset (%llu of %llu bytes).")},
+};
+
+// The numbers of message when it is words[0], a number, words[1], ..., a number, words.back()
 // (each number in decimal digits); otherwise nothing.
-std::vector<uint64_t> NumbersIn(std::string_view                        message,
-                                std::initializer_list<std::string_view> parts) {
+std::vector<uint64_t> NumbersIn(std::string_view                     message,
+                                const std::vector<std::string_view>& words) {
 	std::vector<uint64_t> numbers;
 	bool                  first = true;
-	for (const auto part: parts) {
+	for (const auto word: words) {
 		if (!std::exchange(first, false)) {
 			uint64_t   value     = 0;
 			const auto end       = message.data() + message.size();
@@ -124,56 +153,28 @@ std::vector<uint64_t> NumbersIn(std::string_view                        message,
 			numbers.push_back(value);
 			message.remove_prefix(static_cast<size_t>(next - message.data()));
 		}
-		if (!message.starts_with(part)) {
+		if (!message.starts_with(word)) {
 			return {};
 		}
-		message.remove_prefix(part.size());
+		message.remove_prefix(word.size());
 	}
 	return message.empty() ? numbers : std::vector<uint64_t> {};
 }
 
-// The updater's sentences with a number (updater/core/updateSession.cpp DescribeMetadataFailure
-// and DescribeDownloadFailure, updater/core/downloadVerifier.cpp Finish) as translated texts.
-std::optional<std::string> NumberedMessageText(std::string_view message) {
-	using Count = unsigned long long;
-	if (const auto n = NumbersIn(message, {"The update check failed with HTTP status ", "."});
-	    n.size() == 1) {
-		// TRANSLATORS: %llu is an HTTP status code, for example 404.
-		return Format(_("The update check failed with HTTP status %llu."),
-		              static_cast<Count>(n[0]));
+// The translated text of key with its numbers.
+std::string KeyText(const UpdateMessageKey& key) {
+	using Count               = unsigned long long;
+	const auto&       numbers = key.numbers;
+	const char* const text =
+	    key.plural_msgid != nullptr && !numbers.empty()
+	        ? NGettext(key.msgid, key.plural_msgid, static_cast<unsigned long>(numbers.back()))
+	        : _(key.msgid);
+	switch (numbers.size()) {
+		case 0: return text;
+		case 1: return Format(text, static_cast<Count>(numbers[0]));
+		default:
+			return Format(text, static_cast<Count>(numbers[0]), static_cast<Count>(numbers[1]));
 	}
-	if (const auto n = NumbersIn(message, {"The download failed with HTTP status ", "."});
-	    n.size() == 1) {
-		// TRANSLATORS: %llu is an HTTP status code, for example 404.
-		return Format(_("The download failed with HTTP status %llu."), static_cast<Count>(n[0]));
-	}
-	if (const auto n = NumbersIn(message, {"The update check received no data for ", " seconds."});
-	    n.size() == 1) {
-		return Format(NGettext("The update check received no data for %llu second.",
-		                       "The update check received no data for %llu seconds.",
-		                       static_cast<unsigned long>(n[0])),
-		              static_cast<Count>(n[0]));
-	}
-	if (const auto n = NumbersIn(message, {"The download received no data for ", " seconds."});
-	    n.size() == 1) {
-		return Format(NGettext("The download received no data for %llu second.",
-		                       "The download received no data for %llu seconds.",
-		                       static_cast<unsigned long>(n[0])),
-		              static_cast<Count>(n[0]));
-	}
-	if (const auto n =
-	        NumbersIn(message, {"The downloaded file is smaller than the release asset (", " of ",
-	                            " bytes)."});
-	    n.size() == 2) {
-		// TRANSLATORS: the bytes received so far and the size of the update package.
-		return Format(NGettext("The downloaded file is smaller than the release asset (%llu of "
-		                       "%llu byte).",
-		                       "The downloaded file is smaller than the release asset (%llu of "
-		                       "%llu bytes).",
-		                       static_cast<unsigned long>(n[1])),
-		              static_cast<Count>(n[0]), static_cast<Count>(n[1]));
-	}
-	return std::nullopt;
 }
 
 // Every update alert has the window title of the Qt launcher's update message boxes.
@@ -225,14 +226,25 @@ std::string ReleasePageUrl(std::string_view tag) {
 	return std::string(updater::kReleasesPage) + "/tag/" + updater::PercentEncode(tag);
 }
 
-std::string UpdateMessageText(std::string_view message) {
+std::optional<UpdateMessageKey> UpdateMessageKeyFor(std::string_view message) {
 	for (const auto& fixed: kFixedMessages) {
 		if (message == fixed.core) {
-			return _(fixed.text);
+			return UpdateMessageKey {fixed.text, nullptr, {}};
 		}
 	}
-	if (auto numbered = NumberedMessageText(message)) {
-		return std::move(*numbered);
+	for (const auto& numbered: kNumberedMessages) {
+		auto numbers = NumbersIn(message, numbered.words);
+		if (!numbers.empty() && numbers.size() + 1 == numbered.words.size()) {
+			return UpdateMessageKey {numbered.text.singular, numbered.text.plural,
+			                         std::move(numbers)};
+		}
+	}
+	return std::nullopt;
+}
+
+std::string UpdateMessageText(std::string_view message) {
+	if (const auto key = UpdateMessageKeyFor(message)) {
+		return KeyText(*key);
 	}
 	// "Could not verify the currently installed release. <reason>"
 	const std::string unverified = std::string(updater::kInstalledReleaseUnverifiedMessage) + " ";
@@ -428,6 +440,7 @@ void UpdateUi::OnProgressDestroyed(GtkWidget* /*window*/, gpointer data) {
 void UpdateUi::StartCleanup() {
 	const fs::path where  = m_context.launcher_directory;
 	auto           result = std::make_shared<updater::WorkspaceCleanup>();
+	// An unowned GTask, a recorded exception (p6-u9-6): the alive flag drops a late result.
 	RunInBackground(
 	    [where, result]() {
 		    *result = updater::CleanupStaleWorkspaces(where, fs::file_time_type::clock::now());

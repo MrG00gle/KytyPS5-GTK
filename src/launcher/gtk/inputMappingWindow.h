@@ -21,8 +21,10 @@
 // not Name=Value refuses the save, and the editor lists the invalid entries of
 // SerializeMapping(model), numbered from 1, and offers to remove them. For a game, "Use global
 // mapping" (shown only then; enabled while the game has its own mapping) makes the game use the
-// global mapping again (core::UseGlobalMapping) and writes the Settings_Store. Cancel, Escape,
-// and closing write nothing (11.14): no edit reaches the Settings_Store before Save.
+// global mapping again (core::UseGlobalMapping) and writes the Settings_Store; while the game has
+// no custom settings, the header says "Saving gives this game its own settings." (a save seeds
+// them from the Global_Configuration, phase 7 D29). Section titles are markup-escaped. Cancel,
+// Escape, and closing write nothing (11.14): no edit reaches the Settings_Store before Save.
 //
 // Signal "saved" (no arguments): emitted after the editor wrote the Settings_Store (Save, Use
 // global mapping), before it closes.

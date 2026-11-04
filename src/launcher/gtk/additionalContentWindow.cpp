@@ -5,6 +5,7 @@
 #include "launcher/core/titleId.h"
 #include "launcher/gtk/alerts.h"
 #include "launcher/gtk/backgroundTask.h"
+#include "launcher/gtk/focusSupport.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/imageDecoding.h"
@@ -37,6 +38,8 @@ struct AdditionalContentWindowState {
 	std::uint64_t    generation = 0; // of the latest listing
 	bool             loaded     = false;
 	bool             disposed   = false;
+	// Refresh moved the focus out of the list (the focus returns to Refresh after the listing).
+	bool refocus_refresh = false;
 	// False from dispose on: a pending listing's result is dropped.
 	std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 	// Cancelled when the window goes away: no Open folder or alert callback runs after it.
@@ -154,6 +157,8 @@ void Apply(KytyAdditionalContentWindow* self, AddOnLoad& load) {
 	state.loaded = true;
 	state.folder = load.addons_dir;
 	gtk_spinner_stop(self->spinner);
+	// The status line next to the list is selectable (FEAT-012 (11)).
+	kyty::gtk::MoveFocusOutOf(GTK_WINDOW(self), GTK_WIDGET(self->items_list), self->refresh_button);
 	gtk_list_box_remove_all(self->items_list);
 	const auto& items = load.listing.items;
 	for (std::size_t i = 0; i < items.size(); i++) {
@@ -167,6 +172,11 @@ void Apply(KytyAdditionalContentWindow* self, AddOnLoad& load) {
 	// The Qt launcher enabled Open folder only while the folder exists.
 	gtk_widget_set_sensitive(self->open_button, load.listing.folder_exists ? TRUE : FALSE);
 	gtk_widget_set_sensitive(self->refresh_button, TRUE);
+	// The focus left a row for Refresh, which was off while it listed: it goes back to Refresh.
+	if (std::exchange(state.refocus_refresh, false) &&
+	    gtk_root_get_focus(GTK_ROOT(self)) == nullptr) {
+		gtk_widget_grab_focus(self->refresh_button);
+	}
 	g_debug("additional content of %s in \"%s\": %zu item(s)", state.entry.path.c_str(),
 	        load.addons_dir.c_str(), items.size());
 }
@@ -175,6 +185,11 @@ void List(KytyAdditionalContentWindow* self) {
 	auto& state  = *self->state;
 	state.loaded = false;
 	state.generation++;
+	// Refresh (its mnemonic) with a focused row: the rows are hidden now and removed later.
+	GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(self));
+	state.refocus_refresh =
+	    focus != nullptr && gtk_widget_is_ancestor(focus, GTK_WIDGET(self->items_list)) != FALSE;
+	kyty::gtk::MoveFocusOutOf(GTK_WINDOW(self), GTK_WIDGET(self->items_list), self->refresh_button);
 	gtk_widget_set_sensitive(self->refresh_button, FALSE);
 	gtk_widget_set_sensitive(self->open_button, FALSE);
 	gtk_stack_set_visible_child_name(self->content_stack, "loading");
@@ -183,6 +198,7 @@ void List(KytyAdditionalContentWindow* self) {
 	load->addons_dir = state.context->settings.loaded.settings.addons_dir;
 	load->entry      = state.entry;
 	load->generation = state.generation;
+	// An unowned GTask, a recorded exception (p6-u9-6): the alive flag drops a late result.
 	kyty::gtk::RunInBackground([load]() { Read(*load); },
 	                           [self, alive = state.alive, load]() {
 		                           if (*alive) {

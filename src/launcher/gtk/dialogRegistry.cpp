@@ -139,10 +139,10 @@ DialogHandle OpenAdditionalContentWindow(LauncherContext& context, GtkWindow* pa
 	return Presented(GTK_WINDOW(kyty_additional_content_window_new(context, parent, *args.entry)));
 }
 
-DialogHandle OpenCompressionDialog(LauncherContext& /*context*/, GtkWindow* parent,
+DialogHandle OpenCompressionDialog(LauncherContext& context, GtkWindow* parent,
                                    const DialogArgs& args) {
 	g_return_val_if_fail(args.entry != nullptr, DialogHandle {});
-	return Presented(GTK_WINDOW(kyty_compression_dialog_new(parent, *args.entry)));
+	return Presented(GTK_WINDOW(kyty_compression_dialog_new(context, parent, *args.entry)));
 }
 
 // The cheats of DialogArgs::entry (required).

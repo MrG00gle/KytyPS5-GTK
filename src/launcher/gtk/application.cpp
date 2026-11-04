@@ -52,6 +52,7 @@ struct KytyApplicationState {
 	std::optional<Services>              test_services;
 	std::filesystem::path                test_launcher_directory;
 	std::optional<updater::UpdateUiMode> test_update_mode;
+	std::optional<std::string>           test_release_tag;
 };
 
 } // namespace kyty::gtk
@@ -109,6 +110,10 @@ void Quit(GtkApplication* application, bool ask) {
 	}
 	for (const auto& window: MainWindows(application)) {
 		kyty_main_window_save_state(window.get());
+	}
+	// A compression that runs stops and deletes its partial archive first (phase 7 plan D29).
+	if (auto* context = ApplicationContext(KYTY_APPLICATION(application)); context != nullptr) {
+		context->jobs.CancelAndWait(kBackgroundJobStopTimeout);
 	}
 	g_application_quit(G_APPLICATION(application));
 }
@@ -197,8 +202,8 @@ static void kyty_application_startup(GApplication* application) {
 		g_message("cannot read the working directory: %s", ec.message().c_str());
 		working_directory = "/";
 	}
-	// The UI tests' hooks (plan D13) replace the real services, the launcher directory, and the
-	// update mode; the launcher sets none of them.
+	// The UI tests' hooks (plan D13) replace the real services, the launcher directory, the update
+	// mode, and the release tag; the launcher sets none of them.
 	if (!state->test_services) {
 		state->services = std::make_unique<kyty::gtk::ApplicationServices>();
 	}
@@ -213,6 +218,9 @@ static void kyty_application_startup(GApplication* application) {
 	     .update_mode        = update_mode,
 	     .local              = state->local},
 	    state->test_services ? *state->test_services : state->services->Get());
+	if (state->test_release_tag) {
+		state->context->release_tag = *state->test_release_tag;
+	}
 
 	gtk_window_set_default_icon_name(kyty::gtk::kApplicationId);
 	kyty::gtk::AddIconResourcePath();
@@ -251,6 +259,11 @@ static void kyty_application_shutdown(GApplication* application) {
 	auto* self                     = KYTY_APPLICATION(application);
 	kyty::gtk::running_application = nullptr;
 	self->state->version_probe.reset();
+	// Also when the main window was closed (its compression dialog went with it): the background
+	// jobs stop before the context goes away (phase 7 plan D29).
+	if (self->state->context) {
+		self->state->context->jobs.CancelAndWait(kyty::gtk::kBackgroundJobStopTimeout);
+	}
 	// The windows use the context, which finalize destroys. The main window takes its transient
 	// windows along (destroy-with-parent) and closes its alerts (their cancellable); an alert is
 	// never destroyed from outside (FEAT-005 (6)).
@@ -300,5 +313,6 @@ KytyApplication* kyty_application_new_for_testing(const kyty::gtk::ApplicationTe
 	}
 	state->test_launcher_directory = hooks.launcher_directory;
 	state->test_update_mode        = hooks.update_mode;
+	state->test_release_tag        = hooks.release_tag;
 	return application;
 }

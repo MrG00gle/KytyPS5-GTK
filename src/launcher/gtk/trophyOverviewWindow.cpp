@@ -1,5 +1,6 @@
 #include "launcher/gtk/trophyOverviewWindow.h"
 
+#include "launcher/core/cancelToken.h"
 #include "launcher/core/settingsStore.h"
 #include "launcher/core/trophyModel.h"
 #include "launcher/gtk/backgroundTask.h"
@@ -12,6 +13,7 @@
 #include <cstdarg>
 #include <cstddef>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,11 +29,14 @@ struct OverviewGame {
 	int             console_language = 0;
 };
 
-// What the GTask thread reads.
+// What the GTask thread reads. The window cancels it when it goes away; the read stops before the
+// next game (p6-u9-1).
 struct OverviewLoad {
 	std::filesystem::path     data_dir;
 	std::vector<OverviewGame> games;
 	core::TrophyOverview      overview;
+	core::CancelToken         cancel;
+	std::size_t               games_read = 0;
 };
 
 struct TrophyOverviewWindowState {
@@ -39,8 +44,13 @@ struct TrophyOverviewWindowState {
 	std::vector<core::GameEntry>        entries; // the library's games, in scan order
 	std::vector<GObjectPtr<GdkTexture>> icons;   // their icons as the library had them
 	core::TrophyOverview                overview;
-	bool                                loaded   = false;
-	bool                                disposed = false;
+	std::shared_ptr<OverviewLoad>       load; // the running read, until its result arrives
+	// The rows' columns line up whether or not a game has a Platinum trophy (p6-u9-5): the
+	// progress block and each grade's count have a size group over every row.
+	GObjectPtr<GtkSizeGroup>              progress_group;
+	std::vector<GObjectPtr<GtkSizeGroup>> grade_groups;
+	bool                                  loaded   = false;
+	bool                                  disposed = false;
 	// False from dispose on: the background read's result is dropped.
 	std::shared_ptr<bool>    alive = std::make_shared<bool>(true);
 	std::vector<SignalScope> signals;
@@ -90,15 +100,31 @@ bool Alive(KytyTrophyOverviewWindow* self) {
 	return self->state != nullptr && !self->state->disposed;
 }
 
-// The GTask thread's work: every game's packages and unlock data, then the overview.
+// The GTask thread's work: every game's packages and unlock data, then the overview. Only what
+// BuildTrophyOverview counts is kept per game (the grades and the unlocked IDs: no icon, name,
+// description, or reward text), and a cancelled read stops before the next game (p6-u9-1).
 void Read(OverviewLoad& load) {
 	std::vector<core::TrophyOverviewEntry> entries;
 	entries.reserve(load.games.size());
 	for (const auto& game: load.games) {
+		if (load.cancel.IsCancelled()) {
+			return;
+		}
 		auto trophies =
 		    core::LoadGameTrophies(game.entry, load.data_dir, game.user_id, game.console_language);
+		for (auto& package: trophies.packages) {
+			for (auto& trophy: package.package.trophies) {
+				// swap, not clear(): the memory itself goes
+				std::string().swap(trophy.name);
+				std::string().swap(trophy.description);
+				std::string().swap(trophy.reward);
+				std::string().swap(trophy.icon_png);
+			}
+			package.unlocks.timestamps.clear();
+		}
 		entries.push_back(
 		    {game.entry.title_name, game.entry.title_id, std::move(trophies.packages)});
+		load.games_read++;
 	}
 	load.overview = core::BuildTrophyOverview(entries);
 }
@@ -146,7 +172,8 @@ GtkWidget* NewGameRow(KytyTrophyOverviewWindow* self, const core::TrophyOverview
 
 	const std::string percent = kyty::gtk::TrophyPercentText(game.percent);
 	// TRANSLATORS: the earned trophies of all trophies of a game: "Earned <earned>/<total>".
-	const std::string earned       = Format(_("Earned %u/%u"), game.earned, game.total);
+	const std::string earned =
+	    Format(C_("trophy overview column", "Earned %u/%u"), game.earned, game.total);
 	GtkWidget*        progress_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
 	gtk_widget_set_valign(progress_box, GTK_ALIGN_CENTER);
 	gtk_box_append(GTK_BOX(progress_box), NewLabel(percent, "title-2", 1));
@@ -157,17 +184,19 @@ GtkWidget* NewGameRow(KytyTrophyOverviewWindow* self, const core::TrophyOverview
 	gtk_accessible_update_state(GTK_ACCESSIBLE(progress), GTK_ACCESSIBLE_STATE_HIDDEN, TRUE, -1);
 	gtk_box_append(GTK_BOX(progress_box), progress);
 	gtk_box_append(GTK_BOX(box), progress_box);
+	gtk_size_group_add_widget(state.progress_group.get(), progress_box);
 
-	// Platinum only when the game has a platinum trophy (the Qt launcher's rule).
+	// Platinum only when the game has a platinum trophy (the Qt launcher's rule); without one, an
+	// empty box keeps its column, so the columns of every row line up (p6-u9-5).
 	for (const auto grade: kyty::gtk::kTrophyGrades) {
 		const std::size_t g = core::TrophyGradeIndex(grade);
-		if (grade == core::TrophyGrade::Platinum && game.total_by_grade[g] == 0) {
-			continue;
-		}
-		GtkWidget* count =
-		    kyty::gtk::NewTrophyGradeCount(grade, game.earned_by_grade[g], kRowGradeIconSize);
+		GtkWidget*        count =
+		    grade == core::TrophyGrade::Platinum && game.total_by_grade[g] == 0
+		        ? gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0)
+		        : kyty::gtk::NewTrophyGradeCount(grade, game.earned_by_grade[g], kRowGradeIconSize);
 		gtk_widget_set_valign(count, GTK_ALIGN_CENTER);
 		gtk_box_append(GTK_BOX(box), count);
+		gtk_size_group_add_widget(state.grade_groups[g].get(), count);
 	}
 
 	const std::string accessible =
@@ -202,6 +231,7 @@ void Apply(KytyTrophyOverviewWindow* self, OverviewLoad& load) {
 	auto& state    = *self->state;
 	state.loaded   = true;
 	state.overview = std::move(load.overview);
+	state.load.reset();
 	gtk_spinner_stop(self->spinner);
 	g_debug("trophy overview: %zu game(s), %zu with trophy data", state.entries.size(),
 	        state.overview.rows.size());
@@ -235,6 +265,11 @@ static void kyty_trophy_overview_window_dispose(GObject* object) {
 	if (auto* state = self->state; state != nullptr && !state->disposed) {
 		state->disposed = true;
 		*state->alive   = false;
+		// A read that still runs stops before its next game.
+		if (state->load) {
+			state->load->cancel.Cancel();
+			state->load.reset();
+		}
 		state->signals.clear();
 	}
 	gtk_widget_dispose_template(GTK_WIDGET(self), KYTY_TYPE_TROPHY_OVERVIEW_WINDOW);
@@ -276,6 +311,12 @@ KytyTrophyOverviewWindow* kyty_trophy_overview_window_new(kyty::gtk::LauncherCon
 	gtk_spinner_start(self->spinner);
 	state.signals.push_back(
 	    SignalScope::Connect(self->games_list, "row-activated", G_CALLBACK(&OnRowActivated), self));
+	state.progress_group =
+	    GObjectPtr<GtkSizeGroup>::Adopt(gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL));
+	for (std::size_t i = 0; i < std::size(kyty::gtk::kTrophyGrades); i++) {
+		state.grade_groups.push_back(
+		    GObjectPtr<GtkSizeGroup>::Adopt(gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL)));
+	}
 
 	auto load         = std::make_shared<OverviewLoad>();
 	load->data_dir    = context.paths.data_dir;
@@ -292,8 +333,13 @@ KytyTrophyOverviewWindow* kyty_trophy_overview_window_new(kyty::gtk::LauncherCon
 		state.entries.push_back(entry);
 		state.icons.push_back(GObjectPtr<GdkTexture>::Ref(kyty_game_get_texture(game.get())));
 	}
+	state.load = load;
+	// An unowned GTask, a recorded exception (p6-u9-6): the alive flag drops a late result.
 	kyty::gtk::RunInBackground([load]() { Read(*load); },
 	                           [self, alive = state.alive, load]() {
+		                           g_debug("trophy overview: read %zu of %zu game(s)%s",
+		                                   load->games_read, load->games.size(),
+		                                   load->cancel.IsCancelled() ? ", cancelled" : "");
 		                           if (*alive) {
 			                           Apply(self, *load);
 		                           }

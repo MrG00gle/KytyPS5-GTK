@@ -54,6 +54,13 @@ bool Check(bool value, std::string_view what);
 // case, and the case fails unless it arrives exactly once.
 void ExpectLog(std::string_view domain, GLogLevelFlags level, std::string_view prefix);
 
+// From now on, records every message below the warning level (message, info, debug) of domain
+// whose text starts with prefix, from any thread. GLib's default writer still prints them (debug
+// only with G_MESSAGES_DEBUG).
+void WatchLog(std::string_view domain, std::string_view prefix);
+// The messages the watch with this prefix recorded so far, in order.
+[[nodiscard]] std::vector<std::string> WatchedLogs(std::string_view prefix);
+
 // The running case's name.
 [[nodiscard]] const std::string& CaseName();
 

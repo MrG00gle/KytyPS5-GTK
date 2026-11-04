@@ -198,9 +198,17 @@ GtkWindow* UiContext::ParentWindow() {
 
 int UiContext::RunApplication(const std::function<void(KytyApplication*, KytyMainWindow*)>& drive,
                               std::optional<kyty::updater::UpdateUiMode> update_mode) {
+	return RunApplication(drive, RunOptions {.update_mode = update_mode});
+}
+
+int UiContext::RunApplication(const std::function<void(KytyApplication*, KytyMainWindow*)>& drive,
+                              const RunOptions& options) {
 	const kyty::gtk::Services             services = m_services->Get();
 	const kyty::gtk::ApplicationTestHooks hooks {
-	    .services = &services, .launcher_directory = AppDirectory(), .update_mode = update_mode};
+	    .services           = options.services != nullptr ? options.services : &services,
+	    .launcher_directory = AppDirectory(),
+	    .update_mode        = options.update_mode,
+	    .release_tag        = options.release_tag};
 	auto application = GObjectPtr<KytyApplication>::Adopt(kyty_application_new_for_testing(hooks));
 	ApplicationRun run;
 	run.drive = drive;

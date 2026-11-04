@@ -90,7 +90,8 @@ void Show(KytyTrophyDetailsDialog* self, const core::TrophyRow& row) {
 	gtk_widget_set_visible(self->reveal_button, row.masked ? TRUE : FALSE);
 	gtk_label_set_text(self->grade_value,
 	                   row.masked ? _("Hidden trophy") : kyty::gtk::TrophyGradeLabel(row.grade));
-	gtk_label_set_text(self->status_value, row.unlocked ? _("Earned") : _("Not earned"));
+	gtk_label_set_text(self->status_value, row.unlocked ? C_("trophy state", "Earned")
+	                                                    : C_("trophy state", "Not earned"));
 	const std::string date = row.unlocked && row.earned_unix_ms
 	                             ? kyty::gtk::TrophyEarnedText(*row.earned_unix_ms)
 	                             : std::string();

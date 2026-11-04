@@ -7,6 +7,7 @@
 #include "launcher/core/settingsStore.h"
 #include "launcher/core/titleId.h"
 #include "launcher/gtk/alerts.h"
+#include "launcher/gtk/focusSupport.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/services/desktopLauncher.h"
@@ -66,6 +67,7 @@ struct _KytyCheatsWindow {
 	GtkWidget*    refresh_button;
 	GtkWidget*    import_button;
 	GtkStack*     local_stack;
+	GtkWidget*    local_empty_page;
 	GtkListBox*   cheats_list;
 	GtkLabel*     local_status;
 	GtkWidget*    reload_button;
@@ -115,20 +117,9 @@ void SetSensitive(GtkWidget* widget, bool sensitive) {
 	gtk_widget_set_sensitive(widget, sensitive ? TRUE : FALSE);
 }
 
-// Moves the keyboard focus to target (or nowhere) when it is inside list, before list's rows are
-// removed. Otherwise GTK moves the focus away from the removed widget only after the next frame,
-// and when that move lands on a selectable label (the status lines), GTK 4.22's
-// gtk_label_grab_focus reads the removed widget after the window dropped its last reference
-// (Gtk-CRITICAL gtk_widget_is_ancestor: assertion 'GTK_IS_WIDGET (widget)' failed).
+// Before list's rows are removed (focusSupport.h).
 void MoveFocusOutOf(KytyCheatsWindow* self, GtkListBox* list, GtkWidget* target) {
-	GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(self));
-	if (focus == nullptr ||
-	    (focus != GTK_WIDGET(list) && gtk_widget_is_ancestor(focus, GTK_WIDGET(list)) == FALSE)) {
-		return;
-	}
-	if (target == nullptr || gtk_widget_grab_focus(target) == FALSE) {
-		gtk_root_set_focus(GTK_ROOT(self), nullptr);
-	}
+	kyty::gtk::MoveFocusOutOf(GTK_WINDOW(self), GTK_WIDGET(list), target);
 }
 
 // ---- Local view (Requirement 11.6, HC-33)
@@ -140,8 +131,8 @@ std::string LocalStatusText(const core::LocalCheatFile& local) {
 		return _("Unsupported title ID.");
 	}
 	if (!local.readable) {
-		return Format(_("Could not read the local cheat file %s:\n%s"), local.path.c_str(),
-		              local.message.c_str());
+		// The core's message names the file (p6-u10-2).
+		return Format(_("Could not read the local cheat file:\n%s"), local.message.c_str());
 	}
 	if (!local.bytes) {
 		return Format(_("No local cheat file: %s"), local.path.c_str());
@@ -153,6 +144,32 @@ std::string LocalStatusText(const core::LocalCheatFile& local) {
 	return Format(
 	    kyty::gtk::NGettext("Loaded %d cheat from %s.", "Loaded %d cheats from %s.", count),
 	    static_cast<int>(count), local.path.c_str());
+}
+
+// The Local view's page without cheats names the file's state (p6-u10-1): no file (import one),
+// a file that cannot be read (nothing can be imported over it; the status line below has the
+// reason), a file that is not valid, or a valid file without cheats.
+void ShowLocalEmptyPage(KytyCheatsWindow* self, const core::LocalCheatFile& local) {
+	const char* title       = _("No local cheats");
+	const char* description = _("Import a cheat file from the Remote view to choose its cheats "
+	                            "here.");
+	if (!local.path.empty() && !local.readable) {
+		title       = _("The local cheat file cannot be read");
+		description = _("Nothing can be imported while the file cannot be read. Fix it, then "
+		                "use Reload.");
+	} else if (local.bytes && !local.document) {
+		title       = _("The local cheat file is not valid");
+		description = _("Import a cheat file from the Remote view to replace it, or fix the file "
+		                "and use Reload.");
+	} else if (local.document) {
+		title       = _("The local cheat file has no cheats");
+		description = _("Import a cheat file from the Remote view to replace it.");
+	}
+	auto* page = ADW_STATUS_PAGE(self->local_empty_page);
+	adw_status_page_set_title(page, title);
+	// The description is markup.
+	const GCharPtr markup(g_markup_escape_text(description, -1));
+	adw_status_page_set_description(page, markup.get());
 }
 
 GtkWidget* NewCheatRow(const core::Cheat& cheat, GtkCheckButton** check_out) {
@@ -186,6 +203,9 @@ void LoadLocal(KytyCheatsWindow* self) {
 			state.checks.push_back(check);
 		}
 		count = state.local.document->cheats.size();
+	}
+	if (count == 0) {
+		ShowLocalEmptyPage(self, state.local);
 	}
 	gtk_stack_set_visible_child_name(self->local_stack, count > 0 ? "cheats" : "empty");
 	SetSensitive(self->apply_button, count > 0);
@@ -344,6 +364,18 @@ void OnRefresh(GtkButton* /*button*/, gpointer data) {
 	if (Alive(self)) {
 		LoadRemote(self);
 	}
+}
+
+// The columns keep their widths while the list loads (FEAT-010 (8)): the Version header, in its
+// size group with the rows' version cells, reserves the width of the widest usual cell, a version
+// with " (installed)" in the header's (bold) font. The Format header is wider than its cells.
+void ReserveVersionColumn(KytyCheatsWindow* self) {
+	const std::string probe  = Format(_("%s (installed)"), "00.000");
+	auto              layout = GObjectPtr<PangoLayout>::Adopt(
+	    gtk_widget_create_pango_layout(self->version_header, probe.c_str()));
+	int width = 0;
+	pango_layout_get_pixel_size(layout.get(), &width, nullptr);
+	gtk_widget_set_size_request(self->version_header, width, -1);
 }
 
 void OnCatalogLoaded(KytyCheatsWindow* self, const core::CheatCatalogResult& result) {
@@ -609,6 +641,7 @@ static void kyty_cheats_window_class_init(KytyCheatsWindowClass* klass) {
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, refresh_button);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, import_button);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, local_stack);
+	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, local_empty_page);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, cheats_list);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, local_status);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, reload_button);
@@ -675,6 +708,7 @@ KytyCheatsWindow* kyty_cheats_window_new(kyty::gtk::LauncherContext& context, Gt
 	connect(self->enable_all_button, "clicked", G_CALLBACK(&OnEnableAll));
 	connect(self->disable_all_button, "clicked", G_CALLBACK(&OnDisableAll));
 
+	ReserveVersionColumn(self);
 	LoadLocal(self);
 	LoadRemote(self);
 	return self;

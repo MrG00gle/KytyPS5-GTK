@@ -57,9 +57,24 @@ updater::UpdateSessionConfig UpdateSessionConfigFor(const LauncherContext& conte
 // The page of the release tag: updater::kReleasesPage + "/tag/" + updater::PercentEncode(tag).
 std::string ReleasePageUrl(std::string_view tag);
 
-// A session message (updater::SessionOutcome::message) as shown: a fixed message of the updater,
-// or one of its sentences with a number (an HTTP status, seconds, bytes), as a translated text,
-// anything else as it is, with invalid UTF-8 replaced (plan D46).
+// What UpdateMessageText shows for one of the updater's fixed sentences or for one of its sentences
+// with numbers (phase 7 plan D28): msgid, a literal of updateUi.cpp in the kyty-launcher domain,
+// with plural_msgid when the last number picks a plural form (NGettext), and the numbers of the
+// sentence in order, which the text's %llu conversions take.
+struct UpdateMessageKey {
+	const char*           msgid        = nullptr;
+	const char*           plural_msgid = nullptr;
+	std::vector<uint64_t> numbers;
+};
+
+// The key of message when it is a fixed message of the updater or one of its sentences with a
+// number (an HTTP status, seconds, bytes), copied word for word from src/updater/core; nullopt for
+// anything else (a reason, a path, a process's standard error).
+std::optional<UpdateMessageKey> UpdateMessageKeyFor(std::string_view message);
+
+// A session message (updater::SessionOutcome::message) as shown: the translated text of its key
+// (UpdateMessageKeyFor), "Could not verify the currently installed release. <reason>" with its
+// reason shown the same way, and anything else as it is, with invalid UTF-8 replaced (plan D46).
 std::string UpdateMessageText(std::string_view message);
 
 // The body of the previous-result message (HC-35): the message without surrounding white space,

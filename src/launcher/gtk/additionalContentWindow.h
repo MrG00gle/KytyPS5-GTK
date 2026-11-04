@@ -8,7 +8,8 @@
 // add-on's sce_sys/icon0.png, else the game's icon), its title (or its entitlement label), and its
 // content ID as the tooltip. The status line gives the number of add-ons ("1 installed add-on",
 // "2 installed add-ons") or says that the add-ons folder is not set, does not exist, or has no
-// add-on for the game (the launcher's translated texts, D46). Refresh lists again; Open folder
+// add-on for the game (the launcher's translated texts, D46). Refresh lists again (a focused row
+// gives the focus to Refresh before the rows go, focusSupport.h; phase 7 D29); Open folder
 // (enabled while the folder exists) opens the add-ons folder through DesktopLauncher::OpenFolder
 // and shows an error when that fails. Escape and Close close the window.
 

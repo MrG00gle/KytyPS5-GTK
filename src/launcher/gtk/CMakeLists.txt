@@ -115,6 +115,7 @@ if(KYTY_XGETTEXT)
 		list(APPEND kyty_gtk_pot_commands
 			COMMAND "${KYTY_XGETTEXT}" ${kyty_gtk_xgettext_options} --language=C++ --keyword=_
 			        --keyword=N_ --keyword=C_:1c,2 --keyword=NC_:1c,2 --keyword=NGettext:1,2
+			        --keyword=NGettextNoop:1,2
 			        ${kyty_gtk_pot_sources})
 	endif()
 	if(kyty_gtk_pot_ui_files)

@@ -19,10 +19,17 @@
 #include "updater/core/processRunner.h"
 #include "updater/core/updatePolicy.h"
 
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+
+namespace kyty::core {
+class CancelToken;
+} // namespace kyty::core
 
 namespace kyty::gtk {
 
@@ -48,6 +55,47 @@ struct Services {
 	ControllerService&       controller;       // services/controllerService.h
 	TitleSoundPlayer&        title_sound;      // services/titleSoundPlayer.h
 };
+
+// The background jobs that write files and must have stopped before the launcher exits (phase 7
+// plan D29, p6-u9-2: a compression whose partial archive the job deletes when it stops). Main
+// thread only.
+class BackgroundJobs {
+	struct State;
+
+public:
+	// A registered job. The job calls Finished() on the main thread once its thread has stopped;
+	// that works after the registry is gone too (it does nothing then).
+	class Job {
+	public:
+		void Finished();
+
+	private:
+		friend class BackgroundJobs;
+		std::weak_ptr<State> m_state;
+		std::uint64_t        m_id = 0;
+	};
+
+	BackgroundJobs();
+	~BackgroundJobs();
+	BackgroundJobs(const BackgroundJobs&)            = delete;
+	BackgroundJobs& operator=(const BackgroundJobs&) = delete;
+
+	// Registers a running job that cancel stops; what names it in the log.
+	Job Register(std::shared_ptr<core::CancelToken> cancel, std::string what);
+
+	[[nodiscard]] std::size_t Count() const;
+
+	// Cancels every registered job, then iterates the default main context (windows draw, idles
+	// and the jobs' results run) until each job has finished or timeout has passed. True when no
+	// job is left. A call while another one waits only cancels and returns whether none is left.
+	bool CancelAndWait(std::chrono::milliseconds timeout);
+
+private:
+	std::shared_ptr<State> m_state;
+};
+
+// How long the launcher waits for its background jobs when it quits (phase 7 plan D29).
+inline constexpr std::chrono::milliseconds kBackgroundJobStopTimeout {10000};
 
 struct LauncherContext {
 	explicit LauncherContext(const Services& context_services): services(context_services) {}
@@ -85,6 +133,9 @@ struct LauncherContext {
 	core::PathRemover* path_remover = &core::HostPathRemover();
 	// --local: the compatibility database is ./compatibility_db.json, with editable entries.
 	bool local = false;
+	// The compressions that run (compressionDialog.h); app.quit and the application's shutdown
+	// cancel them and wait until they have stopped (kBackgroundJobStopTimeout at most).
+	BackgroundJobs jobs;
 
 	LauncherContext(const LauncherContext&)            = delete;
 	LauncherContext& operator=(const LauncherContext&) = delete;

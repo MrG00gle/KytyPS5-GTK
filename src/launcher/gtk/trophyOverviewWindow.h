@@ -11,8 +11,11 @@
 // - one row per game with trophy data and none for the others: the game icon, its name (its title
 //   ID when the name is empty), its title ID, the grade-weighted percentage (HC-01) with a progress
 //   bar, "Earned <earned>/<total>", and the earned count of each grade (Platinum only when the
-//   game has a platinum trophy, as Qt);
+//   game has a platinum trophy, as Qt; its column stays empty otherwise, so that the columns of
+//   every row line up, phase 7 D29);
 // - "No games with trophies found in the game folders." when no game has trophy data.
+// The read keeps only the counts of each game (no trophy texts or icons) and stops before the next
+// game once the overview is closed (phase 7 D29, p6-u9-1).
 // Activating a row (click, Enter) opens that game's trophy window (trophyWindow.h). Escape closes
 // the overview.
 

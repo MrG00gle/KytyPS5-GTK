@@ -209,6 +209,7 @@ void LibraryController::Rescan() {
 	scan->started_us = g_get_monotonic_time();
 	g_debug("scan %" G_GUINT64_FORMAT " started: %zu game folder(s)", m_generation,
 	        scan->folders.size());
+	// An unowned GTask, a recorded exception (p6-u9-6): the alive flag drops a late result.
 	GTask* task = g_task_new(nullptr, nullptr, &OnScanned, nullptr);
 	g_task_set_task_data(task, scan, [](gpointer data) { delete static_cast<ScanTask*>(data); });
 	g_task_run_in_thread(task, &RunScan);
@@ -322,6 +323,7 @@ void LibraryController::StartDetails() {
 		const auto& entry = kyty_game_get_entry(game.get());
 		details->entries.emplace_back(entry.path, entry.kind);
 	}
+	// An unowned GTask, a recorded exception (p6-u9-6): its batches carry the alive flag.
 	GTask* task = g_task_new(nullptr, nullptr, nullptr, nullptr);
 	g_task_set_task_data(task, details,
 	                     [](gpointer data) { delete static_cast<DetailsTask*>(data); });
@@ -357,7 +359,8 @@ void LibraryController::RunDetails(GTask* task, gpointer /*source*/, gpointer ta
 		batch->count = delivered;
 		// An idle source of the default main context: ApplyBatch runs on the thread that iterates
 		// the context, the main thread, also when no thread owns the context at this moment (an
-		// invoke of the context would then run it here, in the worker).
+		// invoke of the context would then run it here, in the worker). An unowned idle, a
+		// recorded exception (p6-u9-6): the alive flag and the generation drop a late batch.
 		g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, &ApplyBatch, batch,
 		                [](gpointer data) { delete static_cast<Batch*>(data); });
 		batch     = last ? nullptr : new_batch();
@@ -573,7 +576,8 @@ void LibraryController::LoadArt(KytyGame* game) {
 	art->path       = kyty_game_get_entry(game).path;
 	art->kind       = kyty_game_get_entry(game).kind;
 	art->cancel     = m_art_cancel;
-	GTask* task     = g_task_new(nullptr, nullptr, &OnArt, nullptr);
+	// An unowned GTask, a recorded exception (p6-u9-6): the alive flag drops a late result.
+	GTask* task = g_task_new(nullptr, nullptr, &OnArt, nullptr);
 	g_task_set_task_data(task, art, [](gpointer data) { delete static_cast<ArtTask*>(data); });
 	g_task_run_in_thread(task, &RunArt);
 	g_object_unref(task);

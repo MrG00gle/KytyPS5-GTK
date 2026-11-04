@@ -17,6 +17,7 @@
 namespace kyty::gtk {
 
 struct CompressionDialogState {
+	LauncherContext*                   context = nullptr;
 	core::GameEntry                    entry;
 	std::shared_ptr<core::ArchiveJob>  job; // after Prepare succeeded
 	std::shared_ptr<core::CancelToken> cancel     = std::make_shared<core::CancelToken>();
@@ -217,13 +218,20 @@ void Start(KytyCompressionDialog* self) {
 	auto cancel   = state.cancel;
 	auto progress = [self, alive = state.alive](int percent) {
 		// From the job's thread: an idle source of the default main context runs it on the main
-		// thread, in order.
+		// thread, in order. An unowned idle, a recorded exception (p6-u9-6): the alive flag drops
+		// it after dispose.
 		g_idle_add_full(G_PRIORITY_DEFAULT, &ApplyProgress,
 		                new ProgressUpdate {self, alive, percent},
 		                [](gpointer data) { delete static_cast<ProgressUpdate*>(data); });
 	};
+	// The job stays registered until its thread has stopped, also when the dialog goes away first,
+	// so that quitting waits for the partial archive to be deleted (p6-u9-2).
+	auto registered =
+	    state.context->jobs.Register(cancel, "compression of " + state.entry.path.string());
+	// An unowned GTask, a recorded exception (p6-u9-6): the alive flag drops a late result.
 	kyty::gtk::RunInBackground([job, cancel, progress]() { job->Run(progress, *cancel); },
-	                           [self, alive = state.alive]() {
+	                           [self, alive = state.alive, registered]() mutable {
+		                           registered.Finished();
 		                           if (*alive) {
 			                           OnFinished(self);
 		                           }
@@ -297,12 +305,14 @@ static void kyty_compression_dialog_class_init(KytyCompressionDialogClass* klass
 	                                    "window.close", nullptr);
 }
 
-KytyCompressionDialog* kyty_compression_dialog_new(GtkWindow*                   parent,
+KytyCompressionDialog* kyty_compression_dialog_new(kyty::gtk::LauncherContext&  context,
+                                                   GtkWindow*                   parent,
                                                    const kyty::core::GameEntry& entry,
                                                    kyty::core::ArchivePacker    packer) {
-	auto* self  = KYTY_COMPRESSION_DIALOG(g_object_new(KYTY_TYPE_COMPRESSION_DIALOG, nullptr));
-	auto& state = *self->state;
-	state.entry = entry;
+	auto* self    = KYTY_COMPRESSION_DIALOG(g_object_new(KYTY_TYPE_COMPRESSION_DIALOG, nullptr));
+	auto& state   = *self->state;
+	state.context = &context;
+	state.entry   = entry;
 	if (parent != nullptr) {
 		gtk_window_set_transient_for(GTK_WINDOW(self), parent);
 	}

@@ -20,4 +20,15 @@ inline const char* NGettext(const char* singular, const char* plural, unsigned l
 	return g_dngettext(GETTEXT_PACKAGE, singular, plural, n);
 }
 
+// The two untranslated forms of a plural text, for a table that NGettext() translates later (what
+// N_() is to _()). xgettext extracts them with --keyword=NGettextNoop:1,2.
+struct PluralText {
+	const char* singular = nullptr;
+	const char* plural   = nullptr; // nullptr: a text without a plural form
+};
+
+constexpr PluralText NGettextNoop(const char* singular, const char* plural) {
+	return {singular, plural};
+}
+
 } // namespace kyty::gtk

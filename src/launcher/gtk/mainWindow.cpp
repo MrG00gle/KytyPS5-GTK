@@ -546,8 +546,8 @@ void OnCompress(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer dat
 	    !self->state->context->run_state.CanCompress(kyty_game_get_entry(game).path)) {
 		return;
 	}
-	KytyCompressionDialog* dialog =
-	    kyty_compression_dialog_new(GTK_WINDOW(self), kyty_game_get_entry(game));
+	KytyCompressionDialog* dialog = kyty_compression_dialog_new(
+	    *self->state->context, GTK_WINDOW(self), kyty_game_get_entry(game));
 	g_signal_connect_object(dialog, "archive-created", G_CALLBACK(&OnArchiveCreated), self,
 	                        GConnectFlags(0));
 	gtk_window_present(GTK_WINDOW(dialog));

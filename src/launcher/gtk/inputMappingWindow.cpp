@@ -61,6 +61,7 @@ struct _KytyInputMappingWindow {
 	GtkWidget*      game_info;
 	GtkLabel*       game_title_label;
 	GtkLabel*       game_note_label;
+	GtkWidget*      game_settings_note_label;
 	GtkLabel*       controller_status;
 	GtkBox*         pad_columns;
 	GtkBox*         diagram_box;
@@ -472,8 +473,10 @@ void BuildTab(KytyInputMappingWindow* self, core::InputDevice device, GtkBox* pa
 			}
 			if (group == nullptr) {
 				group = adw_preferences_group_new();
-				adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(group),
-				                                kyty::gtk::InputSectionText(section).c_str());
+				// The group's title is markup, so a translated "&" or "<" is escaped (p6-u8-2).
+				const GCharPtr title(
+				    g_markup_escape_text(kyty::gtk::InputSectionText(section).c_str(), -1));
+				adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(group), title.get());
 			}
 			GtkWidget* row = adw_action_row_new();
 			adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
@@ -562,6 +565,10 @@ KytyInputMappingWindow* NewWindow(LauncherContext& context, GtkWindow* parent,
 		                   own ? _("This game has its own input mapping.")
 		                       : _("This game uses the global input mapping. Saving gives it its "
 		                           "own mapping."));
+		// Save creates the game's custom settings from the global ones when it has none
+		// (core::SaveMapping, p6-u8-3), so the editor says so.
+		gtk_widget_set_visible(self->game_settings_note_label,
+		                       core::HasCustomSettings(settings, *entry) ? FALSE : TRUE);
 		gtk_widget_set_visible(self->game_info, TRUE);
 		gtk_widget_set_visible(GTK_WIDGET(self->global_button), TRUE);
 		gtk_widget_set_sensitive(GTK_WIDGET(self->global_button), own ? TRUE : FALSE);
@@ -636,6 +643,8 @@ static void kyty_input_mapping_window_class_init(KytyInputMappingWindowClass* kl
 	gtk_widget_class_bind_template_child(widget_class, KytyInputMappingWindow, game_info);
 	gtk_widget_class_bind_template_child(widget_class, KytyInputMappingWindow, game_title_label);
 	gtk_widget_class_bind_template_child(widget_class, KytyInputMappingWindow, game_note_label);
+	gtk_widget_class_bind_template_child(widget_class, KytyInputMappingWindow,
+	                                     game_settings_note_label);
 	gtk_widget_class_bind_template_child(widget_class, KytyInputMappingWindow, controller_status);
 	gtk_widget_class_bind_template_child(widget_class, KytyInputMappingWindow, pad_columns);
 	gtk_widget_class_bind_template_child(widget_class, KytyInputMappingWindow, diagram_box);

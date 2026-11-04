@@ -82,6 +82,17 @@ public:
 	                   std::optional<kyty::updater::UpdateUiMode>                    update_mode =
 	                       kyty::updater::UpdateUiMode::Other);
 
+	// What else RunApplication can replace (application.h ApplicationTestHooks).
+	struct RunOptions {
+		std::optional<kyty::updater::UpdateUiMode> update_mode = kyty::updater::UpdateUiMode::Other;
+		// Instead of Services() (a TestServices of the case's own, for example on a virtual
+		// clock); it must outlive the run.
+		const kyty::gtk::Services* services = nullptr;
+		std::optional<std::string> release_tag;
+	};
+	int RunApplication(const std::function<void(KytyApplication*, KytyMainWindow*)>& drive,
+	                   const RunOptions&                                             options);
+
 private:
 	KytyTests::TempDir                             m_tree;
 	std::unique_ptr<KytyTests::LoopbackServer>     m_server;

@@ -16,8 +16,11 @@
 //   app.* actions, or presents the existing one; "main window presented" (g_debug) is logged when
 //   it is first mapped.
 // - app.quit stores the main window's size first; while a game runs it asks "Stop the running game
-//   and quit?" and quits after the game exited (plan D34, MainWindowRequestQuit). shutdown destroys
-//   the main window (and with it the windows it opened) before the context goes away.
+//   and quit?" and quits after the game exited (plan D34, MainWindowRequestQuit). A compression
+//   that runs is cancelled, and app.quit and shutdown wait until it has stopped and deleted its
+//   partial archive (LauncherContext::jobs, at most kBackgroundJobStopTimeout; phase 7 plan D29).
+//   shutdown destroys the main window (and with it the windows it opened) before the context goes
+//   away.
 // - kyty_application_new_for_testing (phase 7 plan D13): the same application for the UI tests,
 //   with their fake services, launcher directory, and update mode.
 
@@ -27,6 +30,7 @@
 #include <adwaita.h>
 #include <filesystem>
 #include <optional>
+#include <string>
 
 G_BEGIN_DECLS
 
@@ -51,14 +55,17 @@ LauncherContext* ApplicationContext(KytyApplication* application);
 void InstallQuitSignalHandlers();
 
 // What the UI tests replace in a KytyApplication (phase 7 plan D13). An empty member keeps what
-// the launcher uses: the real services (ApplicationServices), LauncherDirectory(), and
-// updater::CurrentUpdateUiMode().
+// the launcher uses: the real services (ApplicationServices), LauncherDirectory(),
+// updater::CurrentUpdateUiMode(), and this build's release tag.
 struct ApplicationTestHooks {
 	// Copied by kyty_application_new_for_testing; the services it names must outlive the
 	// application.
 	const Services*                      services = nullptr;
 	std::filesystem::path                launcher_directory;
 	std::optional<updater::UpdateUiMode> update_mode;
+	// The installed release of an Official build (LauncherContext::release_tag), set before the
+	// main window and its update session exist.
+	std::optional<std::string> release_tag;
 };
 
 } // namespace kyty::gtk

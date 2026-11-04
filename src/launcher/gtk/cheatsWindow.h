@@ -20,13 +20,16 @@
 // and asks again; then it shows the Local view.
 //
 // Local view: the cheats of the local cheat file (core::LoadLocalCheats) with check boxes, the
-// status line (no file, cannot be read, not valid with the parse error, or the number of cheats),
-// Reload, Apply selection (core::SaveIfUnchanged of the checked states against the bytes that were
-// read; "Cheat file changed; reload the dialog." when the file changed on disk; then it reads the
-// file again), and Enable all and Disable all, which change only the check boxes. The local file is
-// read and written on the main thread (at most core::kMaxCheatFileBytes), as in Qt.
+// status line (no file, cannot be read with the core's reason, not valid with the parse error, or
+// the number of cheats), a page without cheats whose title and description name the file's state
+// (phase 7 D29: no file, cannot be read, not valid, no cheats), Reload, Apply selection
+// (core::SaveIfUnchanged of the checked states against the bytes that were read; "Cheat file
+// changed; reload the dialog." when the file changed on disk; then it reads the file again), and
+// Enable all and Disable all, which change only the check boxes. The local file is read and written
+// on the main thread (at most core::kMaxCheatFileBytes), as in Qt.
 //
-// Escape and Close close the window.
+// The window opens at 900x700, the preview keeps a minimum height, and the file list's Version
+// column reserves its width while the list loads (phase 7 D29). Escape and Close close the window.
 
 #include "launcher/core/gameMetadata.h"
 #include "launcher/gtk/launcherContext.h"
