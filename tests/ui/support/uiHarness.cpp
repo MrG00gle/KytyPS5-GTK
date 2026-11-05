@@ -145,9 +145,62 @@ GLogWriterOutput Writer(GLogLevelFlags level, const GLogField* fields, gsize cou
 int Usage() {
 	std::fprintf(stderr,
 	             "usage: %s --list\n"
-	             "       %s --case <name> [--capture-dir <directory>]\n",
-	             kProgram, kProgram);
+	             "       %s --case <name> [--capture-dir <directory>]\n"
+	             "       %s --selftest critical|warning|expected-warning|missing-expected|clean\n",
+	             kProgram, kProgram, kProgram);
 	return 1;
+}
+
+// The harness self-test (task 22.6; Requirement 17.11; phase 7 plan D38): each kind runs like a
+// case, after gtk_init, and ends as tests/cmake/UiHarnessSelfTest.cmake expects. The kinds are not
+// cases: --list does not name them, and no test of their own runs them.
+constexpr const char* kSelfTestDomain   = "kyty-launcher";
+constexpr const char* kSelfTestExpected = "ui_harness_selftest: a declared warning";
+
+// A real critical from GTK: its precondition check on a widget argument (exit 1).
+void SelfTestCritical() {
+	gtk_widget_set_visible(nullptr, TRUE);
+}
+
+// A warning from the launcher's domain, which no case declared (exit 1).
+void SelfTestWarning() {
+	g_log(kSelfTestDomain, G_LOG_LEVEL_WARNING, "ui_harness_selftest: a deliberate warning");
+}
+
+// A declared warning that arrives once, as the 8.4 offline warning does (exit 0).
+void SelfTestExpectedWarning() {
+	ExpectLog(kSelfTestDomain, G_LOG_LEVEL_WARNING, kSelfTestExpected);
+	g_log(kSelfTestDomain, G_LOG_LEVEL_WARNING, "%s (ExpectLog)", kSelfTestExpected);
+}
+
+// A declared warning that never arrives (exit 1).
+void SelfTestMissingExpected() {
+	ExpectLog(kSelfTestDomain, G_LOG_LEVEL_WARNING, kSelfTestExpected);
+}
+
+// Nothing to report (exit 0).
+void SelfTestClean() {}
+
+struct SelfTest {
+	std::string_view kind;
+	CaseFn           run;
+};
+
+constexpr SelfTest kSelfTests[] = {
+    {"critical", &SelfTestCritical},
+    {"warning", &SelfTestWarning},
+    {"expected-warning", &SelfTestExpectedWarning},
+    {"missing-expected", &SelfTestMissingExpected},
+    {"clean", &SelfTestClean},
+};
+
+CaseFn FindSelfTest(std::string_view kind) {
+	for (const auto& test: kSelfTests) {
+		if (test.kind == kind) {
+			return test.run;
+		}
+	}
+	return nullptr;
 }
 
 } // namespace
@@ -234,6 +287,7 @@ int main(int argc, char** argv) {
 	auto&       state = KytyUi::State();
 	bool        list  = false;
 	std::string name;
+	std::string selftest;
 	std::string capture_directory;
 	for (int i = 1; i < argc; i++) {
 		const std::string_view argument = argv[i];
@@ -241,6 +295,8 @@ int main(int argc, char** argv) {
 			list = true;
 		} else if (argument == "--case" && i + 1 < argc) {
 			name = argv[++i];
+		} else if (argument == "--selftest" && i + 1 < argc) {
+			selftest = argv[++i];
 		} else if (argument == "--capture-dir" && i + 1 < argc) {
 			capture_directory = argv[++i];
 		} else {
@@ -253,14 +309,25 @@ int main(int argc, char** argv) {
 		}
 		return 0;
 	}
-	if (name.empty()) {
+	if (name.empty() == selftest.empty()) {
 		return KytyUi::Usage();
 	}
-	const auto found = state.cases.find(name);
-	if (found == state.cases.end()) {
-		std::fprintf(stderr, "%s: unknown case %s (--list names them)\n", KytyUi::kProgram,
-		             name.c_str());
-		return 1;
+	KytyUi::CaseFn run = nullptr;
+	if (!selftest.empty()) {
+		run = KytyUi::FindSelfTest(selftest);
+		if (run == nullptr) {
+			std::fprintf(stderr, "%s: unknown self-test %s\n", KytyUi::kProgram, selftest.c_str());
+			return KytyUi::Usage();
+		}
+		name = "selftest-" + selftest;
+	} else {
+		const auto found = state.cases.find(name);
+		if (found == state.cases.end()) {
+			std::fprintf(stderr, "%s: unknown case %s (--list names them)\n", KytyUi::kProgram,
+			             name.c_str());
+			return 1;
+		}
+		run = found->second;
 	}
 	if (capture_directory.empty()) {
 		const char* from_environment = std::getenv("KYTY_UI_CAPTURE_DIR");
@@ -303,7 +370,7 @@ int main(int argc, char** argv) {
 	            gdk_display_get_name(gdk_display_get_default()),
 	            backend != nullptr ? backend : "(unset)", a11y != nullptr ? a11y : "(unset)");
 
-	found->second();
+	run();
 	// Idles of windows the case destroyed run now, so their messages still count.
 	KytyUi::Pump(100);
 

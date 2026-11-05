@@ -481,11 +481,17 @@ kyty_add_test(NAME source_check_platform_macros
 kyty_add_test_directory(tests/source_check LINK kyty_source_check LABELS source-check)
 
 # Repository content checks (Requirements 2.3, 3.7, 3.9, 4.1, 4.2, 4.8, 4.9; gtk_settings_save: the
-# GTK launcher saves Kyty.ini only through SaveSettingsStore) and license and copyright preservation
-# checks (Requirements 21.1, 21.6) over this source tree.
+# GTK launcher saves Kyty.ini only through SaveSettingsStore; task 23.2: qt_remnants 6.1 and 6.3,
+# translatable 6.12, dialog_registry 17.10, and layering 6.7 as source_check_layering, the design's
+# name) and license and copyright preservation checks (Requirements 21.1, 21.6) over this source
+# tree. They need no build output, so they are registered with KYTY_BUILD_LAUNCHER OFF too.
 foreach(kyty_check IN ITEMS nix_terms windows_terms macos_terms cmake_apple bundle_strings deleted_paths
-		vscode_patterns gtk_settings_save)
-	kyty_add_test(NAME content_check_${kyty_check}
+		vscode_patterns gtk_settings_save qt_remnants translatable dialog_registry layering)
+	set(kyty_check_name content_check_${kyty_check})
+	if(kyty_check STREQUAL "layering")
+		set(kyty_check_name source_check_layering)
+	endif()
+	kyty_add_test(NAME ${kyty_check_name}
 		COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/content_checks.py"
 		        --repo "${CMAKE_SOURCE_DIR}" --check ${kyty_check}
 		LABELS source-check
@@ -612,6 +618,42 @@ kyty_add_ui_tests(tests/ui ${kyty_launcher_gtk_optional}
 	BACKENDS wayland x11
 	TIMEOUT 120
 	LINK kyty_launcher_gtk kyty_test_support kyty_gtk_test_support)
+# The harness self-test (task 22.6; phase 7 plan D38): launcher_ui_tests --selftest <kind> inside
+# ui/with-display.sh on both backends (a critical or a warning fails and is printed, a declared
+# warning passes, a declared warning that never comes fails), and the wrapper's 77 for a missing
+# server. A UI test, so label ui and SKIP_RETURN_CODE 77, which it returns only when this host lacks
+# a display server.
+if(TARGET launcher_ui_tests)
+	kyty_add_test(NAME ui_harness_selftest
+		COMMAND "${CMAKE_COMMAND}" "-DBASH=${KYTY_UI_TESTS_BASH}"
+		        "-DWRAPPER=${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh"
+		        "-DPORTAL=$<TARGET_FILE:ui_fake_portal>" "-DEXE=$<TARGET_FILE:launcher_ui_tests>"
+		        "-DWORK_DIR=${kyty_selftests_dir}/ui_harness_selftest"
+		        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/UiHarnessSelfTest.cmake"
+		LABELS ui
+		SKIP_RETURN_CODE 77
+		TIMEOUT 300)
+endif()
+# The launcher without a display (task 22.6, Requirement 6.15; phase 7 plan D38): exit 1 within 5 s,
+# the message on stderr, the Settings_Store unchanged. It starts no display server: no label.
+if(TARGET kyty_launcher)
+	kyty_add_test(NAME launcher_no_display
+		COMMAND "${CMAKE_COMMAND}" "-DLAUNCHER=$<TARGET_FILE:kyty_launcher>"
+		        "-DWORK_DIR=${kyty_selftests_dir}/launcher_no_display"
+		        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LauncherNoDisplayTest.cmake"
+		TIMEOUT 60)
+endif()
+# The GTK module check of the configure step (task 23.2, Requirement 6.5; phase 7 plan D37):
+# cmake/KytyGtk.cmake with fake pkg-config modules. It needs pkg-config, not GTK.
+find_package(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+	kyty_add_test(NAME gtk_pkgconfig_guard
+		COMMAND "${CMAKE_COMMAND}" "-DPKG_CONFIG=${PKG_CONFIG_EXECUTABLE}"
+		        "-DMODULE_DIR=${CMAKE_SOURCE_DIR}/cmake"
+		        "-DWORK_DIR=${kyty_selftests_dir}/gtk_pkgconfig_guard"
+		        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GtkPkgconfigGuardTest.cmake"
+		TIMEOUT 60)
+endif()
 
 # Build classification (task 17.6, Requirement 13.2): kyty_classify_build() in script mode over every
 # combination of its inputs.
