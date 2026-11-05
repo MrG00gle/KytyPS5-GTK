@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- The GTK launcher's GResource bundle (plan D8). The app icon files are byte-identical copies of
-     src/launcher/icons/kyty.svg and kyty-small.svg; the small artwork serves every fixed size.
+     the Qt launcher's src/launcher/icons/kyty.svg and kyty-small.svg at the head of the main branch;
+     the small artwork serves every fixed size.
      The icon paths follow gtk_icon_theme_add_resource_path(): <path>/<size>/<context>/<name>.
      images/ comes from assets/ (the second source directory). -->
 <gresources>

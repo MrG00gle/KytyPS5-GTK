@@ -1,8 +1,7 @@
 // The GTK launcher's entry point (task 19.3, Requirements 6.15 and 6.12; plan D10, D16).
 //
 // Without a display, it prints "kyty_launcher: cannot open display: <reason>" and exits with 1
-// before anything reads the Settings_Store. The prefix is the executable's name from task 23.1 on
-// (this temporary build is kyty_gtk_launcher).
+// before anything reads the Settings_Store. The prefix is the executable's name.
 
 #include "launcher/gtk/application.h"
 #include "launcher/gtk/gobjectPtr.h"

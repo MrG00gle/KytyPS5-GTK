@@ -154,16 +154,14 @@ if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12.0.0)
 	list(APPEND KYTY_IWYU
 		kyty_emulator
 		common
-		#launcher
 	)
 	list(APPEND KYTY_CLANG_TIDY
 		kyty_emulator
 		#common
-		launcher
 	)
 endif()
 
-option(KYTY_BUILD_LAUNCHER "Build Qt launcher" ON)
+option(KYTY_BUILD_LAUNCHER "Build the GTK launcher (kyty_launcher) and the Updater" ON)
 
 config_compiler_and_linker()
 
@@ -395,12 +393,7 @@ endif()
 
 install(TARGETS kyty_emulator DESTINATION .)
 if(KYTY_BUILD_LAUNCHER)
-	add_subdirectory("${KYTY_SOURCE_DIR}/launcher" "${CMAKE_CURRENT_BINARY_DIR}/launcher")
-
-	if(LINUX)
-		target_link_options(launcher PRIVATE $<$<CONFIG:Release>:-Wl,--strip-all>)
-	endif()
-	# The GTK launcher (kyty_launcher_gtk and, until task 23.1, kyty_gtk_launcher).
+	# The GTK launcher (kyty_launcher_gtk and the kyty_launcher executable).
 	add_subdirectory("${KYTY_SOURCE_DIR}/launcher/gtk" "${CMAKE_CURRENT_BINARY_DIR}/launcher/gtk")
 endif()
 

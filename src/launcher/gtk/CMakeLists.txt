@@ -1,11 +1,11 @@
 # The GTK launcher (task 19.1; design.md, "GTK presentation components"), added by the top-level
 # CMakeLists.txt only when KYTY_BUILD_LAUNCHER is ON:
 # - kyty_launcher_gtk: every source here and in services/ except main.cpp, plus the compiled
-#   GResource bundle. The GTK API floor is PUBLIC, so every consumer (kyty_gtk_launcher and the
-#   tests/launcher_gtk executables) compiles against the same floor.
-# - kyty_gtk_launcher: the temporary executable name until task 23.1 removes the Qt launcher and
-#   takes over kyty_launcher. It is written next to the Qt kyty_launcher, so it finds kyty_emulator
-#   and the staged kyty_updater the same way. No install rule yet.
+#   GResource bundle. The GTK API floor is PUBLIC, so every consumer (kyty_launcher and the test
+#   executables) compiles against the same floor.
+# - kyty_launcher: the launcher executable (Requirement 6.4), written to
+#   ${CMAKE_BINARY_DIR}/launcher with the staged kyty_updater next to it, and installed next to
+#   kyty_emulator and kyty_updater.
 # - update-pot (not part of all): extracts the strings of the files in po/POTFILES.in into
 #   ${CMAKE_BINARY_DIR}/po/kyty-launcher.pot.
 include(KytyGtk)
@@ -76,17 +76,27 @@ target_compile_definitions(kyty_launcher_gtk PRIVATE "G_LOG_DOMAIN=\"kyty-launch
 # objects with RTTI as well.
 target_compile_options(kyty_launcher_gtk PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-frtti>)
 
-# ---- kyty_gtk_launcher
-add_executable(kyty_gtk_launcher main.cpp)
-target_link_libraries(kyty_gtk_launcher PRIVATE kyty_launcher_gtk)
-target_compile_definitions(kyty_gtk_launcher PRIVATE "G_LOG_DOMAIN=\"kyty-launcher\"")
-kyty_link_with_lld(kyty_gtk_launcher)
-set_target_properties(kyty_gtk_launcher PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/launcher")
-add_dependencies(kyty_gtk_launcher kyty_emulator)
-# src/launcher/CMakeLists.txt defines stage_updater when kyty_updater exists (not in Flatpak builds).
-if(TARGET stage_updater)
-	add_dependencies(kyty_gtk_launcher stage_updater)
+# ---- kyty_launcher
+add_executable(kyty_launcher main.cpp)
+target_link_libraries(kyty_launcher PRIVATE kyty_launcher_gtk)
+target_compile_definitions(kyty_launcher PRIVATE "G_LOG_DOMAIN=\"kyty-launcher\"")
+kyty_link_with_lld(kyty_launcher)
+# Release builds ship the executable stripped, as kyty_emulator.
+target_link_options(kyty_launcher PRIVATE $<$<CONFIG:Release>:-Wl,--strip-all>)
+set_target_properties(kyty_launcher PROPERTIES
+	RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/launcher")
+add_dependencies(kyty_launcher kyty_emulator)
+# src/updater/CMakeLists.txt skips kyty_updater in Flatpak builds.
+if(TARGET kyty_updater)
+	add_custom_target(stage_updater
+		COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:kyty_launcher>
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:kyty_updater>
+			$<TARGET_FILE_DIR:kyty_launcher>/$<TARGET_FILE_NAME:kyty_updater>
+		DEPENDS kyty_updater
+		VERBATIM)
+	add_dependencies(kyty_launcher stage_updater)
 endif()
+install(TARGETS kyty_launcher RUNTIME DESTINATION .)
 
 # ---- update-pot
 set(kyty_gtk_potfiles "${CMAKE_SOURCE_DIR}/po/POTFILES.in")
