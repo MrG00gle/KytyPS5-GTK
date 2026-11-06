@@ -11,13 +11,15 @@
 //   content_compress_delete_original, content_import_settings_other_title.
 // - Trophies (11.1, 11.2, LFI-25, LFI-26): content_trophy_viewer, content_trophy_details,
 //   content_trophy_overview, content_trophy_overview_alignment (W4-20),
-//   content_trophy_overview_cancel (W4-16).
+//   content_trophy_overview_cancel (W4-16), trophy_overview_trims_titles (p7-u7-2).
 // - Add-ons (11.3, LFI-28): content_addons_list, content_addons_refresh_focused (W4-27).
 // - Compression (11.8-11.11, 11.16, LFI-29): content_compress_progress_cancel,
-//   content_compress_verify_failed, content_compress_quit_midway (W4-17).
+//   content_compress_verify_failed, content_compress_quit_midway (W4-17),
+//   compression_quit_after_main_window_closed and compression_quit_job_outlives_wait (p7-u7-2).
 // - Cheats (11.4-11.6, LFI-27): content_cheats_remote_list (W4-24, W4-28),
-//   content_cheats_remote_not_json (W4-25), content_cheats_local_states (W4-22, W4-23),
-//   content_cheats_apply_enable_disable.
+//   content_cheats_remote_not_json (W4-25, phase 8 plan D9), content_cheats_local_states (W4-22,
+//   W4-23, p7-u7-1), content_cheats_apply_enable_disable, cheats_version_column_font_change
+//   (p7-u7-3), cheats_split_position_states (phase 8 plan D12).
 // - Input mapping (11.14, LFI-24): content_input_mapping_capture (key, mouse, and pad),
 //   content_input_mapping_per_game, content_input_mapping_per_game_note (W4-14),
 //   content_input_mapping_markup (W4-13, a translated section title with "<" and "&" through a
@@ -63,7 +65,9 @@
 #include <adwaita.h>
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -226,6 +230,70 @@ double Fraction(GtkWindow* dialog) {
 	return bar != nullptr ? gtk_progress_bar_get_fraction(bar) : -1;
 }
 
+// A packer for the quit cases (p7-u7-2): writes the partial archive and reports progress every
+// 20 ms. Once a progress call returns false (cancelled), it needs stop_ms more before it returns
+// (a slow stop). With stuck_ms > 0 it sleeps that long after the first progress call without
+// another one (a section that does not see the cancellation), then returns. ended gets the
+// monotonic time at which it returned; ArchiveJob::Run then deletes the partial archive.
+core::ArchivePacker QuitPacker(int stop_ms, int stuck_ms,
+                               std::shared_ptr<std::atomic<gint64>> ended) {
+	return [=](const fs::path& /*directory*/, const fs::path& archive,
+	           const std::function<bool(std::uint64_t, std::uint64_t)>& progress) {
+		const auto finish = [&ended](bool result) {
+			ended->store(g_get_monotonic_time());
+			return result;
+		};
+		constexpr std::uint64_t kSteps = 1000;
+		if (!gen::WriteHostFile(archive, "partial archive")) {
+			return finish(false);
+		}
+		for (std::uint64_t i = 1; i < kSteps; i++) {
+			if (!progress(i, kSteps)) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(stop_ms));
+				return finish(false);
+			}
+			if (stuck_ms > 0) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(stuck_ms));
+				return finish(false);
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
+		return finish(true);
+	};
+}
+
+// Writes a small game folder titled title for the quit cases; false after a Fail.
+bool WriteQuitGame(const fs::path& game, const char* title, const char* title_id) {
+	return KytyUi::WriteGameWithParam(game, KytyUi::ParamJson(title, title_id, "01.000")) &&
+	       KytyUi::WriteText(game / "data" / "payload.bin", std::string(4096, 'x'));
+}
+
+// The compression dialog of the listed game titled title, with packer, over the main window, once
+// its job is registered and the partial archive exists; nullptr after a Fail.
+GtkWindow* StartQuitCompression(KytyApplication* application, KytyMainWindow* window,
+                                const char* title, core::ArchivePacker packer,
+                                const fs::path& archive) {
+	auto& context = KytyUi::ContextOf(application);
+	if (!KytyUi::SelectTitle(context.library, title)) {
+		return nullptr;
+	}
+	const auto entry  = kyty_game_get_entry(KytyUi::GameByTitle(context.library, title));
+	GtkWindow* dialog = Present(GTK_WINDOW(kyty_compression_dialog_new(context, GTK_WINDOW(window),
+	                                                                   entry, std::move(packer))),
+	                            "the compression dialog");
+	if (dialog == nullptr ||
+	    !KytyUi::WaitFor([&]() { return context.jobs.Count() == 1 && KytyUi::Exists(archive); },
+	                     5000,
+	                     "the compression to be registered and its partial archive to exist")) {
+		return nullptr;
+	}
+	return dialog;
+}
+
+long long Milliseconds(gint64 from_us, gint64 to_us) {
+	return static_cast<long long>((to_us - from_us) / 1000);
+}
+
 // A file of size random bytes (zstd cannot shrink it, so packing it takes a while).
 bool WriteRandomFile(const fs::path& path, std::size_t size) {
 	std::string     bytes(size, '\0');
@@ -260,11 +328,11 @@ bool WaitForRemoteList(GtkWidget* root) {
 	    "the remote list to show Alpha Game's files");
 }
 
-// Serves Alpha Game's 01.000 JSON file with body.
-void ServeAlphaFile(KytyUi::UiContext& ui, std::string body) {
+// Serves Alpha Game's JSON file of version (01.000 or 01.020) with body.
+void ServeAlphaFile(KytyUi::UiContext& ui, std::string body, const char* version = "01.000") {
 	core::RemoteCheatFile file;
-	file.name    = gen::CheatFileName("PPSA01001", "01.000", "alpha", "json");
-	file.version = "01.000";
+	file.name    = gen::CheatFileName("PPSA01001", version, "alpha", "json");
+	file.version = version;
 	file.format  = "json";
 	KytyTests::LoopbackResponse response;
 	response.body         = std::move(body);
@@ -956,6 +1024,88 @@ KYTY_UI_CASE(content_trophy_overview_cancel) {
 	}
 }
 
+// p7-u7-2 (p6-u9-1): once the overview's read has counted a game, it keeps none of its trophies'
+// names, descriptions, reward texts, icons, or unlock times; the rows still count right. The
+// read's debug log says how many bytes of those texts and icons it read and kept.
+KYTY_UI_CASE(trophy_overview_trims_titles) {
+	KytyUi::UiContext ui;
+	const auto        games = ContentLibrary(ui);
+	if (games.empty()) {
+		return;
+	}
+	// Beta Quest: three trophies with long texts, a 64 KiB icon each, and two unlock times.
+	constexpr std::size_t        kIconBytes = std::size_t {64} << 10u;
+	std::vector<gen::TrophySpec> trophies;
+	std::size_t                  beta_bytes = 0;
+	for (const auto& [id, grade]:
+	     std::vector<std::pair<int, char>> {{0, 'P'}, {1, 'G'}, {2, 'B'}}) {
+		auto spec = Trophy(id, grade, "Beta trophy " + std::to_string(id) + std::string(200, 'n'));
+		spec.detail     = "Beta details " + std::to_string(id) + std::string(300, 'd');
+		spec.has_reward = true;
+		spec.reward     = "Beta reward " + std::to_string(id) + std::string(100, 'r');
+		spec.icon       = std::string(kIconBytes, static_cast<char>('a' + id));
+		beta_bytes += spec.name->size() + spec.detail->size() + spec.reward->size() + kIconBytes;
+		trophies.push_back(std::move(spec));
+	}
+	gen::TrophyPackageSpec package;
+	package.title    = "Beta Trophies";
+	package.trophies = trophies;
+	core::TrophyUnlocks unlocks;
+	unlocks.unlocked = {1, 2};
+	// 2024-01-01 and 2024-01-02 in the Emulator's ticks (microseconds since 0001-01-01).
+	constexpr std::uint64_t kDay  = std::uint64_t {86400} * 1000000u;
+	constexpr std::uint64_t k2024 = (std::uint64_t {62135596800} + 1704067200u) * 1000000u;
+	unlocks.timestamps            = {{1, k2024}, {2, k2024 + kDay}};
+	if (!KytyUi::WriteText(games / "Beta" / "Beta Quest" / "sce_sys" / "trophy2" / "trophy00.ucp",
+	                       gen::TrophyPackageBytes(package)) ||
+	    !Check(gen::WriteUnlocks(ui.AppDirectory(), "PPSA01002", core::kDefaultUserId, 0, unlocks),
+	           "write Beta Quest's unlocks")) {
+		return;
+	}
+	auto& context = ui.Context();
+	FillLibrary(context, {Entry(games, kAlphaTitle), Entry(games, kBetaTitle)});
+	KytyUi::WatchLog("kyty-launcher", "trophy overview: ");
+	auto* overview = KYTY_TROPHY_OVERVIEW_WINDOW(
+	    Present(GTK_WINDOW(kyty_trophy_overview_window_new(context, ui.ParentWindow())),
+	            "the trophy overview"));
+	if (overview == nullptr ||
+	    !KytyUi::WaitFor([overview]() { return kyty_trophy_overview_window_is_loaded(overview); },
+	                     5000, "the overview to be read")) {
+		return;
+	}
+	KytyUi::WaitForPaintedFrame(GTK_WIDGET(overview));
+	std::size_t read  = 0;
+	std::size_t kept  = 0;
+	std::size_t times = 0;
+	int         found = 0;
+	for (const auto& log: KytyUi::WatchedLogs("trophy overview: ")) {
+		std::printf("%s: %s\n", KytyUi::CaseName().c_str(), log.c_str());
+		std::size_t values[3] = {};
+		if (std::sscanf(log.c_str(),
+		                "trophy overview: %zu byte(s) of trophy texts and icons read, %zu kept, "
+		                "%zu unlock time(s) kept",
+		                &values[0], &values[1], &values[2]) == 3) {
+			read  = values[0];
+			kept  = values[1];
+			times = values[2];
+			found++;
+		}
+	}
+	if (Check(found == 1, "the read logs what it read and kept")) {
+		Check(read >= beta_bytes, "the read got Beta Quest's texts and icons (" +
+		                              std::to_string(read) + " >= " + std::to_string(beta_bytes) +
+		                              " bytes)");
+		Check(kept == 0, "no trophy text or icon is kept (" + std::to_string(kept) + " bytes)");
+		Check(times == 0, "no unlock time is kept (" + std::to_string(times) + ")");
+	}
+	const auto rows = Named(GTK_WIDGET(overview), GTK_TYPE_LIST_BOX_ROW, "");
+	if (Check(rows.size() == 2, "two games have trophy data")) {
+		Check(KytyUi::AllText(rows[1]).find("Earned 2/3") != std::string::npos,
+		      "Beta Quest still counts its trophies: " + KytyUi::AllText(rows[1]));
+	}
+	KytyUi::CloseWithEscape(GTK_WINDOW(overview), "the trophy overview");
+}
+
 // ---- Add-ons
 
 // The additional content window (11.3): the add-ons whose title ID is the game's (case and
@@ -1242,6 +1392,167 @@ KYTY_UI_CASE(content_compress_quit_midway) {
 	      "the quit cancelled the compression and waited for it");
 }
 
+// p7-u7-2: closing the main window during a compression (no game runs, so it closes without a
+// question) takes the compression dialog along, whose dispose cancels the job; the application's
+// shutdown then waits for the job (at most 10 s). The packer needs 1.5 s to stop after the
+// cancellation, so the partial archive is gone when the run returns only because shutdown waited.
+KYTY_UI_CASE(compression_quit_after_main_window_closed) {
+	KytyUi::UiContext ui;
+	const auto        games = KytyUi::PrepareLibrary(ui);
+	if (games.empty()) {
+		return;
+	}
+	const fs::path game    = games / "Slow Stop Game";
+	const fs::path archive = games / "Slow Stop Game.zar";
+	if (!WriteQuitGame(game, "Slow Stop Game", "PPSA01021")) {
+		return;
+	}
+	const auto listing = Listing(games);
+	const auto source  = gen::SnapshotTree(game);
+	KytyUi::WatchLog("kyty-launcher", "background job");
+	auto      ended    = std::make_shared<std::atomic<gint64>>(0);
+	gint64    close_us = 0;
+	const int status = ui.RunApplication([&](KytyApplication* application, KytyMainWindow* window) {
+		if (!KytyUi::WaitForLibrary(window) ||
+		    StartQuitCompression(application, window, "Slow Stop Game", QuitPacker(1500, 0, ended),
+		                         archive) == nullptr) {
+			KytyUi::QuitApplication(application);
+			return;
+		}
+		close_us = g_get_monotonic_time();
+		gtk_window_close(GTK_WINDOW(window));
+	});
+	// Before the main context runs again: what the launcher leaves when it ends.
+	const gint64 ended_us     = g_get_monotonic_time();
+	const bool   left_archive = KytyUi::Exists(archive);
+	const gint64 job_ended_us = ended->load();
+	Check(status == 0, "the application ends with status 0");
+	std::printf("%s: the launcher ended %lld ms after the main window was closed; the job ended "
+	            "after %lld ms\n",
+	            KytyUi::CaseName().c_str(), Milliseconds(close_us, ended_us),
+	            job_ended_us != 0 ? Milliseconds(close_us, job_ended_us) : -1LL);
+	for (const auto& log: KytyUi::WatchedLogs("background job")) {
+		std::printf("%s: %s\n", KytyUi::CaseName().c_str(), log.c_str());
+	}
+	Check(job_ended_us != 0 && job_ended_us <= ended_us,
+	      "the job stopped before the launcher ended");
+	Check(ended_us - close_us < 10 * G_USEC_PER_SEC,
+	      "the launcher ended within 10 s of the close (" +
+	          std::to_string(Milliseconds(close_us, ended_us)) + " ms)");
+	Check(!left_archive, "no partial archive is left when the launcher ends");
+	Check(Listing(games) == listing, "no other file is left next to the game");
+	Check(gen::SnapshotTree(game) == source, "the game folder is unchanged");
+	const auto logs = KytyUi::WatchedLogs("background job");
+	Check(std::find(logs.begin(), logs.end(),
+	                "background job cancelled: compression of " + game.string()) != logs.end() &&
+	          std::any_of(logs.begin(), logs.end(),
+	                      [](const std::string& log) {
+		                      return log.starts_with("background jobs stopped after ");
+	                      }),
+	      "the shutdown cancelled the compression and waited for it");
+}
+
+// p7-u7-2, phase 8 plan D13: a job that does not stop within the 10 s wait
+// (kBackgroundJobStopTimeout; a packer stuck for 14 s where it does not see the cancellation). The
+// launcher waits one 10 s for it and quits without it, whether app.quit (Ctrl+Q) quits, whose wait
+// is followed by the shutdown's, or the main window is closed (the shutdown's wait alone). The
+// launcher's process would end with the job, so a stuck job's partial archive remains; in the
+// case's process the job ends later and deletes it.
+KYTY_UI_CASE(compression_quit_job_outlives_wait) {
+	constexpr int kStuckMs = 14000;
+	KytyUi::WatchLog("kyty-launcher", "background job");
+	for (const bool close_window: {false, true}) {
+		const std::string how = close_window ? "window close" : "app.quit";
+		KytyUi::UiContext ui;
+		const auto        games = KytyUi::PrepareLibrary(ui);
+		if (games.empty()) {
+			return;
+		}
+		const fs::path game    = games / "Stuck Game";
+		const fs::path archive = games / "Stuck Game.zar";
+		if (!WriteQuitGame(game, "Stuck Game", "PPSA01022")) {
+			return;
+		}
+		const auto                    source       = gen::SnapshotTree(game);
+		const std::size_t             logs_before  = KytyUi::WatchedLogs("background job").size();
+		auto                          ended        = std::make_shared<std::atomic<gint64>>(0);
+		gint64                        trigger_us   = 0;
+		gint64                        quit_done_us = 0;
+		bool                          archive_at_quit_done = false;
+		KytyUi::UiContext::RunOptions options;
+		// The shutdown's 10 s wait starts after drive returned.
+		options.quit_timeout_ms = close_window ? 15000 : 10000;
+		const int status        = ui.RunApplication(
+		    [&](KytyApplication* application, KytyMainWindow* window) {
+			    if (!KytyUi::WaitForLibrary(window) ||
+			        StartQuitCompression(application, window, "Stuck Game",
+			                             QuitPacker(0, kStuckMs, ended), archive) == nullptr) {
+				    KytyUi::QuitApplication(application);
+				    return;
+			    }
+			    trigger_us = g_get_monotonic_time();
+			    if (close_window) {
+				    gtk_window_close(GTK_WINDOW(window));
+				    return;
+			    }
+			    KytyUi::QuitApplication(application);
+			    quit_done_us         = g_get_monotonic_time();
+			    archive_at_quit_done = KytyUi::Exists(archive);
+		    },
+		    options);
+		const gint64 ended_us        = g_get_monotonic_time();
+		const bool   archive_at_exit = KytyUi::Exists(archive);
+		Check(status == 0, how + ": the application ends with status 0");
+		// The job's thread still runs: wait for it (the case's directory goes with the case).
+		KytyUi::WaitFor([&ended]() { return ended->load() != 0; }, kStuckMs + 5000,
+		                how + ": the stuck job to end");
+		KytyUi::WaitFor([&archive]() { return !KytyUi::Exists(archive); }, 2000,
+		                how + ": the job to delete its partial archive once it ended");
+		const gint64 job_ended_us = ended->load();
+		if (!close_window) {
+			std::printf("%s: %s returned after %lld ms\n", KytyUi::CaseName().c_str(), how.c_str(),
+			            Milliseconds(trigger_us, quit_done_us));
+		}
+		std::printf("%s: %s: the launcher ended after %lld ms, the job after %lld ms; partial "
+		            "archive %s when the launcher ended, %s after the job ended\n",
+		            KytyUi::CaseName().c_str(), how.c_str(), Milliseconds(trigger_us, ended_us),
+		            job_ended_us != 0 ? Milliseconds(trigger_us, job_ended_us) : -1LL,
+		            archive_at_exit ? "present" : "absent",
+		            KytyUi::Exists(archive) ? "present" : "absent");
+		auto logs = KytyUi::WatchedLogs("background job");
+		logs.erase(logs.begin(),
+		           logs.begin() + static_cast<std::ptrdiff_t>(std::min(logs_before, logs.size())));
+		for (const auto& log: logs) {
+			std::printf("%s: %s: %s\n", KytyUi::CaseName().c_str(), how.c_str(), log.c_str());
+		}
+		if (!close_window) {
+			const auto waited = quit_done_us - trigger_us;
+			Check(waited >= 10 * G_USEC_PER_SEC && waited < 11 * G_USEC_PER_SEC,
+			      how + " waited the 10 s and went on (" + std::to_string(waited / 1000) + " ms)");
+			Check(archive_at_quit_done, how + ": the partial archive is there after the wait");
+		}
+		// One 10 s budget per quit: about 10 s from the trigger to the end, never a second wait.
+		const auto total = ended_us - trigger_us;
+		Check(total >= 10 * G_USEC_PER_SEC && total < 11 * G_USEC_PER_SEC,
+		      how + ": the launcher ended after one 10 s wait (" + std::to_string(total / 1000) +
+		          " ms)");
+		const auto count = [&logs](const std::string& start, const std::string& end) {
+			return std::count_if(logs.begin(), logs.end(), [&](const std::string& log) {
+				return log.starts_with(start) && log.ends_with(end);
+			});
+		};
+		const std::string job = "compression of " + game.string();
+		Check(count("background job still running after ", " ms: " + job) == 1,
+		      how + ": one wait ran out and logged the job");
+		Check(count("background job not waited for again: ", job) == (close_window ? 0 : 1),
+		      how + ": the shutdown after app.quit does not wait for the job again");
+		Check(archive_at_exit, how + ": a stuck job's partial archive remains when the launcher "
+		                             "ends");
+		Check(!KytyUi::Exists(archive), how + ": the job deletes its partial archive once it ends");
+		Check(gen::SnapshotTree(game) == source, how + ": the game folder is unchanged");
+	}
+}
+
 // ---- Cheats
 
 // The Remote view (11.4): the credit link, Alpha Game's files with the installed version first,
@@ -1337,8 +1648,9 @@ KYTY_UI_CASE(content_cheats_remote_list) {
 	KytyUi::CloseWithEscape(cheats, "the cheats window");
 }
 
-// W4-25 (p6-u10-4, 11.6): a remote file that is not JSON: the error names the file, no cheat is
-// listed, Import stays disabled, and the local file is unchanged.
+// W4-25 (p6-u10-4, 11.6): a remote file that is not JSON: the error names the file and gives the
+// parser's reason without its "[json.exception...]" prefix (phase 8 plan D9), no cheat is listed,
+// Import stays disabled, and the local file is unchanged.
 KYTY_UI_CASE(content_cheats_remote_not_json) {
 	KytyUi::UiContext ui;
 	const auto        games = ContentLibrary(ui);
@@ -1367,6 +1679,12 @@ KYTY_UI_CASE(content_cheats_remote_not_json) {
 	const std::string status = LabelText(root, "preview_status");
 	Check(status.find("PPSA01001_01.000_alpha.json") != std::string::npos,
 	      "the error names the file: " + status);
+	// Phase 8 plan D9: the parser's reason without nlohmann's "[json.exception...]" prefix.
+	Check(status.find("PPSA01001_01.000_alpha.json: Invalid cheat JSON (parse error at line 1, "
+	                  "column ") != std::string::npos,
+	      "the error gives the parser's reason: " + status);
+	Check(KytyUi::AllText(root).find("[json.exception") == std::string::npos,
+	      "no text of the window shows the parser's exception prefix: " + status);
 	Check(Named(Widget(root, "preview_list"), ADW_TYPE_ACTION_ROW, "").empty(),
 	      "no cheat is listed");
 	Check(gtk_widget_get_sensitive(Widget(root, "import_button")) == FALSE,
@@ -1377,8 +1695,9 @@ KYTY_UI_CASE(content_cheats_remote_not_json) {
 }
 
 // W4-22, W4-23 (p6-u10-1, p6-u10-2): the Local view without cheats names the file's state: no
-// file, a file that cannot be read (a directory in its place; the reason names the path once), a
-// file that is not valid, and a valid file without cheats.
+// file, a file that cannot be read (a directory in its place; one sentence with the path once and
+// the reason, p7-u7-1), a file that is not valid (the parser's reason without its exception
+// prefix, phase 8 plan D9), and a valid file without cheats.
 KYTY_UI_CASE(content_cheats_local_states) {
 	KytyUi::UiContext ui;
 	const auto        games = ContentLibrary(ui);
@@ -1404,7 +1723,9 @@ KYTY_UI_CASE(content_cheats_local_states) {
 		     std::error_code ec;
 		     fs::create_directories(local, ec);
 	     },
-	     "The local cheat file cannot be read", "Could not read the local cheat file:\n"},
+	     "The local cheat file cannot be read",
+	     "Could not read the local cheat file " + local.string() + ": " +
+	         std::generic_category().message(EISDIR)},
 	    {"invalid",
 	     [&]() {
 		     remove();
@@ -1443,14 +1764,30 @@ KYTY_UI_CASE(content_cheats_local_states) {
 		              (std::string_view(description).find("Nothing can be imported") !=
 		               std::string_view::npos),
 		      std::string(state.name) + ": the description fits the state");
-		if (std::string_view(state.name) == "unreadable") {
+		const auto occurrences = [&status](std::string_view text) {
 			std::size_t count = 0;
-			for (auto at = status.find(local.string()); at != std::string::npos;
-			     at      = status.find(local.string(), at + 1)) {
+			for (auto at = status.find(text); at != std::string::npos;
+			     at      = status.find(text, at + 1)) {
 				count++;
 			}
-			Check(count == 1, "the unreadable file's status names its path once: " + status);
+			return count;
+		};
+		if (std::string_view(state.name) == "unreadable") {
+			Check(occurrences(local.string()) == 1,
+			      "the unreadable file's status names its path once: " + status);
+			// p7-u7-1: one sentence with the path and the reason.
+			Check(status == state.status_start && occurrences("Could not read") == 1 &&
+			          occurrences("cannot read") == 0,
+			      "the unreadable file's status says \"Could not read\" once: " + status);
 		}
+		if (std::string_view(state.name) == "invalid") {
+			// Phase 8 plan D9: the parser's reason without the exception prefix.
+			Check(status.find(local.string() + ": Invalid cheat JSON (parse error at line 1, ") !=
+			          std::string::npos,
+			      "the invalid file's status gives the parser's reason: " + status);
+		}
+		Check(KytyUi::AllText(root).find("[json.exception") == std::string::npos,
+		      std::string(state.name) + ": no text shows the parser's exception prefix");
 		Check(gtk_widget_get_sensitive(Widget(root, "apply_button")) == FALSE,
 		      std::string(state.name) + ": nothing to apply");
 		Check(KytyUi::Capture(cheats, state.name), "the state renders");
@@ -1511,6 +1848,284 @@ KYTY_UI_CASE(content_cheats_apply_enable_disable) {
 	      "Reload shows the changed file's cheat");
 	Check(KytyUi::Capture(cheats, "local"), "the Local view renders");
 	KytyUi::CloseWithEscape(cheats, "the cheats window");
+}
+
+// p7-u7-3: the Version column follows a font change and a text scale change while the window is
+// open: its width stays that of "00.000 (installed)" in the header's font, the width the column
+// reserves.
+KYTY_UI_CASE(cheats_version_column_font_change) {
+	KytyUi::UiContext ui;
+	const auto        games = ContentLibrary(ui);
+	if (games.empty()) {
+		return;
+	}
+	GtkWindow* cheats = OpenCheats(ui, Entry(games, kAlphaTitle));
+	if (cheats == nullptr) {
+		return;
+	}
+	GtkWidget* root = GTK_WIDGET(cheats);
+	adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(Widget(root, "stack")), "remote");
+	if (!WaitForRemoteList(root)) {
+		return;
+	}
+	KytyUi::WaitForPaintedFrame(root);
+	GtkWidget*   header   = Widget(root, "version_header");
+	GtkSettings* settings = gtk_widget_get_settings(root);
+	// The width the column must have: the probe text in the header's current font.
+	const auto reserved = [header]() {
+		auto layout = GObjectPtr<PangoLayout>::Adopt(
+		    gtk_widget_create_pango_layout(header, "00.000 (installed)"));
+		int width = 0;
+		pango_layout_get_pixel_size(layout.get(), &width, nullptr);
+		return width;
+	};
+	const auto follows = [&](const std::string& what, int previous) {
+		const bool done = KytyUi::WaitFor(
+		    [&]() {
+			    return gtk_widget_get_width(header) == reserved() &&
+			           gtk_widget_get_width(header) != previous;
+		    },
+		    3000, "the Version column to follow " + what);
+		std::printf("%s: %s: Version column %d px, \"00.000 (installed)\" %d px (was %d px)\n",
+		            KytyUi::CaseName().c_str(), what.c_str(), gtk_widget_get_width(header),
+		            reserved(), previous);
+		return done;
+	};
+	const int before = gtk_widget_get_width(header);
+	Check(before == reserved(), "the column reserves the probe's width (" + std::to_string(before) +
+	                                " px, probe " + std::to_string(reserved()) + " px)");
+	gchar* font = nullptr;
+	int    dpi  = 0;
+	g_object_get(settings, "gtk-font-name", &font, "gtk-xft-dpi", &dpi, nullptr);
+	const std::string original = font != nullptr ? font : "Sans 10";
+	g_free(font);
+	std::printf("%s: gtk-font-name \"%s\", gtk-xft-dpi %d\n", KytyUi::CaseName().c_str(),
+	            original.c_str(), dpi);
+	// The same font at 1.5 times its size.
+	PangoFontDescription* description = pango_font_description_from_string(original.c_str());
+	const int             size        = pango_font_description_get_size(description);
+	pango_font_description_set_size(description, (size > 0 ? size : 10 * PANGO_SCALE) * 3 / 2);
+	const kyty::gtk::GCharPtr larger(pango_font_description_to_string(description));
+	pango_font_description_free(description);
+	g_object_set(settings, "gtk-font-name", larger.get(), nullptr);
+	if (follows(std::string("gtk-font-name \"") + larger.get() + "\"", before)) {
+		Check(gtk_widget_get_width(header) > before, "a larger font widens the column");
+		Check(KytyUi::Capture(cheats, "font-larger"), "the larger font renders");
+	}
+	// A text scale of 1.5 (gtk-xft-dpi is in 1024ths of a dot per inch).
+	const int font_width = gtk_widget_get_width(header);
+	const int scaled_dpi = (dpi > 0 ? dpi : 96 * 1024) * 3 / 2;
+	g_object_set(settings, "gtk-xft-dpi", scaled_dpi, nullptr);
+	if (follows("gtk-xft-dpi " + std::to_string(scaled_dpi), font_width)) {
+		Check(gtk_widget_get_width(header) > font_width, "a larger text scale widens the column");
+		Check(KytyUi::Capture(cheats, "text-scale-larger"), "the larger text scale renders");
+	}
+	// Back to the original settings: back to the original width.
+	g_object_set(settings, "gtk-font-name", original.c_str(), "gtk-xft-dpi", dpi, nullptr);
+	if (follows("the original settings", gtk_widget_get_width(header))) {
+		Check(gtk_widget_get_width(header) == before, "the original settings give the first width");
+	}
+	KytyUi::CloseWithEscape(cheats, "the cheats window");
+}
+
+// The list/preview split of the Remote view (screens review (b), phase 8 plan D12) in one state:
+// the paned's position and allocation, the preview's y in the window, and what decides them.
+struct SplitSample {
+	std::string state;
+	int         position        = -1;
+	int         paned_y         = -1;
+	int         paned_height    = -1;
+	int         preview_y       = -1;
+	int         start_natural   = -1;
+	int         end_natural     = -1;
+	int         remote_status   = -1; // the heights of the two status lines below the paned
+	int         preview_status  = -1;
+	int         list_height     = -1; // the file list's pane with its margins; the preview's window
+	int         preview_height  = -1;
+	int         content_minimum = -1; // the window content's minimum height at its width
+};
+
+SplitSample SampleSplit(GtkWidget* root, const std::string& state) {
+	KytyUi::WaitForPaintedFrame(root);
+	KytyUi::WaitForPaintedFrame(root);
+	SplitSample sample;
+	sample.state = state;
+	auto* paned  = GTK_PANED(KytyUi::FindByType(root, GTK_TYPE_PANED));
+	if (!Check(paned != nullptr, state + ": the Remote view's paned")) {
+		return sample;
+	}
+	GtkWidget* start      = gtk_paned_get_start_child(paned);
+	GtkWidget* end        = gtk_paned_get_end_child(paned);
+	sample.position       = gtk_paned_get_position(paned);
+	sample.paned_y        = static_cast<int>(PositionIn(GTK_WIDGET(paned), root).y);
+	sample.paned_height   = gtk_widget_get_height(GTK_WIDGET(paned));
+	sample.preview_y      = static_cast<int>(PositionIn(end, root).y);
+	sample.remote_status  = gtk_widget_get_height(Widget(root, "remote_status"));
+	sample.preview_status = gtk_widget_get_height(Widget(root, "preview_status"));
+	gtk_widget_measure(start, GTK_ORIENTATION_VERTICAL, -1, nullptr, &sample.start_natural, nullptr,
+	                   nullptr);
+	gtk_widget_measure(end, GTK_ORIENTATION_VERTICAL, -1, nullptr, &sample.end_natural, nullptr,
+	                   nullptr);
+	// The list's pane: the box with the header and the list, with its margins.
+	sample.list_height    = gtk_widget_get_height(start) + gtk_widget_get_margin_top(start) +
+	                        gtk_widget_get_margin_bottom(start);
+	sample.preview_height = gtk_widget_get_height(end);
+	if (GtkWidget* content = adw_window_get_content(ADW_WINDOW(root)); content != nullptr) {
+		gtk_widget_measure(content, GTK_ORIENTATION_VERTICAL, gtk_widget_get_width(content),
+		                   &sample.content_minimum, nullptr, nullptr, nullptr);
+	}
+	std::printf("%s: %s: position %d, paned y %d height %d, preview y %d, natural start %d end "
+	            "%d, status heights remote %d preview %d, list %d, preview %d, content minimum "
+	            "%d\n",
+	            KytyUi::CaseName().c_str(), state.c_str(), sample.position, sample.paned_y,
+	            sample.paned_height, sample.preview_y, sample.start_natural, sample.end_natural,
+	            sample.remote_status, sample.preview_status, sample.list_height,
+	            sample.preview_height, sample.content_minimum);
+	return sample;
+}
+
+// Screens review (b), phase 8 plan D12: the list/preview split keeps one handle position through
+// the Remote view's states: the list loading, listed, a previewed file, a file that is not JSON,
+// an incomplete collection (a long status line), and a game without remote files. The file list
+// keeps its height (resize-start-child off), 171 px with four whole rows at 900x700 (its
+// min-content-height 140 and the header); the status lines growing below take the preview's
+// height, which stays at least 170 px.
+KYTY_UI_CASE(cheats_split_position_states) {
+	KytyUi::UiContext ui;
+	const auto        games = ContentLibrary(ui);
+	if (games.empty()) {
+		return;
+	}
+	// The JSON index answers after 1.5 s, so the list is seen while it loads.
+	for (auto [url, body]: KytyUi::CheatIndexes()) {
+		KytyTests::LoopbackResponse response;
+		response.body         = std::move(body);
+		response.content_type = "text/plain";
+		response.delay_ms     = url == core::CheatIndexUrl("json") ? 1500 : 0;
+		ui.Server().Script(url, std::move(response));
+	}
+	ServeAlphaFile(ui, gen::CheatDocumentText(gen::RemoteCheatSpec(
+	                       "PPSA01001", "01.000", "eboot.bin", {"One", "Two", "Three", "Four"})));
+	ServeAlphaFile(ui, "this is not JSON at all", "01.020");
+	std::vector<SplitSample> samples;
+	const auto               open = [&](const core::GameEntry& entry) -> GtkWidget* {
+		GtkWindow* cheats = OpenCheats(ui, entry);
+		if (cheats == nullptr) {
+			return nullptr;
+		}
+		GtkWidget* root = GTK_WIDGET(cheats);
+		adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(Widget(root, "stack")), "remote");
+		return root;
+	};
+	const auto sample = [&samples](GtkWidget* root, const std::string& state) {
+		int width  = 0;
+		int height = 0;
+		gtk_window_get_default_size(GTK_WINDOW(root), &width, &height);
+		Check(width == 900 && height == 700, state + ": the window is 900x700");
+		samples.push_back(SampleSplit(root, state));
+		Check(KytyUi::Capture(GTK_WINDOW(root), state), state + " renders");
+	};
+	GtkWidget* root = open(Entry(games, kAlphaTitle));
+	if (root == nullptr) {
+		return;
+	}
+	if (Check(HasText(root, "Loading remote cheats…"), "the list is loading")) {
+		sample(root, "loading");
+	}
+	if (!WaitForRemoteList(root)) {
+		return;
+	}
+	sample(root, "listed");
+	gtk_list_box_select_row(GTK_LIST_BOX(Widget(root, "files_list")),
+	                        GTK_LIST_BOX_ROW(FileRow(root, ", PPSA01001_01.000_alpha.json")));
+	if (KytyUi::WaitFor(
+	        [root]() { return gtk_widget_get_sensitive(Widget(root, "import_button")) != FALSE; },
+	        5000, "the preview to load")) {
+		sample(root, "preview");
+	}
+	gtk_list_box_select_row(GTK_LIST_BOX(Widget(root, "files_list")),
+	                        GTK_LIST_BOX_ROW(FileRow(root, ", PPSA01001_01.020_alpha.json")));
+	if (KytyUi::WaitFor(
+	        [root]() {
+		        return LabelText(root, "preview_status")
+		            .starts_with("Could not preview this file: ");
+	        },
+	        5000, "the parse error")) {
+		sample(root, "not-json");
+	}
+	KytyUi::CloseWithEscape(GTK_WINDOW(root), "the cheats window");
+
+	// The MC4 index fails: the status line says the collection is incomplete.
+	KytyTests::LoopbackResponse failed;
+	failed.status = 500;
+	ui.Server().Script(core::CheatIndexUrl("mc4"), std::move(failed));
+	root = open(Entry(games, kAlphaTitle));
+	if (root == nullptr) {
+		return;
+	}
+	if (KytyUi::WaitFor(
+	        [root]() { return HasText(root, "Could not load the complete collection: "); }, 8000,
+	        "the incomplete collection")) {
+		sample(root, "incomplete");
+	}
+	KytyUi::CloseWithEscape(GTK_WINDOW(root), "the cheats window");
+
+	// A game without remote files (every index answers again).
+	for (auto [url, body]: KytyUi::CheatIndexes()) {
+		KytyTests::LoopbackResponse response;
+		response.body         = std::move(body);
+		response.content_type = "text/plain";
+		ui.Server().Script(url, std::move(response));
+	}
+	auto none       = Entry(games, kAlphaTitle);
+	none.title_id   = "PPSA01009";
+	none.title_name = "No Cheats Game";
+	root            = open(none);
+	if (root == nullptr) {
+		return;
+	}
+	if (KytyUi::WaitFor([root]() { return HasText(root, "No remote cheats found for PPSA01009."); },
+	                    8000, "the empty list")) {
+		sample(root, "no-files");
+	}
+	KytyUi::CloseWithEscape(GTK_WINDOW(root), "the cheats window");
+
+	if (!Check(samples.size() == 6, "every state was sampled")) {
+		return;
+	}
+	for (const auto& other: samples) {
+		Check(other.position == samples.front().position &&
+		          other.preview_y == samples.front().preview_y,
+		      other.state + ": the split is where it was while the list loaded (position " +
+		          std::to_string(other.position) + " vs " +
+		          std::to_string(samples.front().position) + ", preview y " +
+		          std::to_string(other.preview_y) + " vs " +
+		          std::to_string(samples.front().preview_y) + ")");
+		Check(other.position == 171 && other.list_height == 171,
+		      other.state + ": the file list is 171 px, four whole rows (position " +
+		          std::to_string(other.position) + ", list " + std::to_string(other.list_height) +
+		          ")");
+		Check(other.preview_height >= 170, other.state + ": the preview keeps at least 170 px (" +
+		                                       std::to_string(other.preview_height) + ")");
+	}
+	// Four whole rows: the fourth file's row ends inside the list's viewport.
+	GtkWidget* fourth = nullptr;
+	root              = open(Entry(games, kAlphaTitle));
+	if (root != nullptr && WaitForRemoteList(root)) {
+		KytyUi::WaitForPaintedFrame(root);
+		fourth = FileRow(root, ", PPSA01001_01.020_alpha.json");
+		GtkWidget* window =
+		    fourth != nullptr ? gtk_widget_get_ancestor(fourth, GTK_TYPE_SCROLLED_WINDOW) : nullptr;
+		if (Check(window != nullptr, "the fourth file's row is in the list")) {
+			const auto bottom = PositionIn(fourth, window).y + gtk_widget_get_height(fourth);
+			std::printf("%s: the fourth row ends at %.0f of the list's %d px\n",
+			            KytyUi::CaseName().c_str(), bottom, gtk_widget_get_height(window));
+			Check(bottom <= gtk_widget_get_height(window),
+			      "the fourth row is whole (ends at " + std::to_string(static_cast<int>(bottom)) +
+			          " of " + std::to_string(gtk_widget_get_height(window)) + " px)");
+		}
+		KytyUi::CloseWithEscape(GTK_WINDOW(root), "the cheats window");
+	}
 }
 
 // ---- Input mapping

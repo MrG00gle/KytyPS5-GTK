@@ -88,6 +88,8 @@ public:
 	// Cancels every registered job, then iterates the default main context (windows draw, idles
 	// and the jobs' results run) until each job has finished or timeout has passed. True when no
 	// job is left. A call while another one waits only cancels and returns whether none is left.
+	// A job that outlived an earlier wait is cancelled again but not waited for a second time, so
+	// a quit (app.quit, then shutdown) waits at most one timeout for it (phase 8 plan D13).
 	bool CancelAndWait(std::chrono::milliseconds timeout);
 
 private:

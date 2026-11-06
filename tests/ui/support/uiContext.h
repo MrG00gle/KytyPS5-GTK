@@ -76,8 +76,9 @@ public:
 
 	// Runs the real KytyApplication (plan D13) with the services, AppDirectory(), and update_mode,
 	// from WorkingDirectory(). drive runs once its main window is mapped ("main window presented")
-	// and should end with app.quit; when the application has not quit 10 s after drive returned,
-	// the case fails and the application quits. Returns g_application_run's status.
+	// and should end with app.quit; when the application has not quit 10 s
+	// (RunOptions::quit_timeout_ms) after drive returned, the case fails and the application
+	// quits. Returns g_application_run's status.
 	int RunApplication(const std::function<void(KytyApplication*, KytyMainWindow*)>& drive,
 	                   std::optional<kyty::updater::UpdateUiMode>                    update_mode =
 	                       kyty::updater::UpdateUiMode::Other);
@@ -89,6 +90,9 @@ public:
 		// clock); it must outlive the run.
 		const kyty::gtk::Services* services = nullptr;
 		std::optional<std::string> release_tag;
+		// How long the application may take to quit after drive returned before the case fails
+		// (longer for a case whose quit waits for a background job).
+		int quit_timeout_ms = 10000;
 	};
 	int RunApplication(const std::function<void(KytyApplication*, KytyMainWindow*)>& drive,
 	                   const RunOptions&                                             options);

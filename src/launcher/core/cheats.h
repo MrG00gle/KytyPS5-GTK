@@ -154,6 +154,9 @@ struct LocalCheatFile {
 	std::optional<std::string> bytes;
 	// The parsed file; nullopt (zero cheats listed) when there is no file or it does not parse.
 	std::optional<CheatDocument> document;
+	// Why the file could not be read, the system's error text alone ("Is a directory"); empty
+	// when it was read or does not exist (p7-u7-1: the launcher frames it with the path).
+	std::string reason;
 	// The status line, Qt's texts: "Unsupported title ID.", "No local cheat file: <path>",
 	// "Could not read cheat file: <reason>", the parse error (it names the path), or
 	// "Loaded <n> cheat(s) from <path>.".

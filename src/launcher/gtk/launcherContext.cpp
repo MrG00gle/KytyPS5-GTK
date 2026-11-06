@@ -19,6 +19,7 @@ struct BackgroundJobs::State {
 		std::uint64_t                      id = 0;
 		std::shared_ptr<core::CancelToken> cancel;
 		std::string                        what;
+		bool                               outlived = false; // still running after a wait ended
 	};
 	std::vector<Entry> jobs;
 	std::uint64_t      next    = 1;
@@ -74,6 +75,17 @@ bool BackgroundJobs::CancelAndWait(std::chrono::milliseconds timeout) {
 	if (state->waiting) {
 		return state->jobs.empty();
 	}
+	// A job that outlived an earlier wait is not waited for again (one timeout per quit).
+	const auto awaited = [&state]() {
+		return std::any_of(state->jobs.begin(), state->jobs.end(),
+		                   [](const auto& job) { return !job.outlived; });
+	};
+	if (!awaited()) {
+		for (const auto& job: state->jobs) {
+			g_debug("background job not waited for again: %s", job.what.c_str());
+		}
+		return false;
+	}
 	state->waiting           = true;
 	const gint64 started     = g_get_monotonic_time();
 	bool         out_of_time = false;
@@ -85,15 +97,18 @@ bool BackgroundJobs::CancelAndWait(std::chrono::milliseconds timeout) {
 		    return G_SOURCE_REMOVE;
 	    },
 	    &out_of_time));
-	while (!state->jobs.empty() && !out_of_time) {
+	while (awaited() && !out_of_time) {
 		g_main_context_iteration(nullptr, TRUE);
 	}
 	state->waiting       = false;
 	const auto waited_ms = (g_get_monotonic_time() - started) / 1000;
 	if (!state->jobs.empty()) {
-		for (const auto& job: state->jobs) {
-			g_message("background job still running after %lld ms: %s",
-			          static_cast<long long>(waited_ms), job.what.c_str());
+		for (auto& job: state->jobs) {
+			if (!job.outlived) {
+				g_message("background job still running after %lld ms: %s",
+				          static_cast<long long>(waited_ms), job.what.c_str());
+			}
+			job.outlived = true;
 		}
 		return false;
 	}

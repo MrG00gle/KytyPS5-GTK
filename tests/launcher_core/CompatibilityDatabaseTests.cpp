@@ -209,6 +209,10 @@ void TestParseErrors() {
 		Check(!result.has_value(), "invalid JSON is rejected: " + std::string(json));
 		Check(Contains(result.error(), "not valid JSON") && Contains(result.error(), "parse error"),
 		      "the message describes the parse error: " + result.error());
+		// Phase 8 plan D9: without nlohmann's "[json.exception...]" prefix.
+		Check(Contains(result.error(), "the content is not valid JSON: parse error at line ") &&
+		          !Contains(result.error(), "[json.exception"),
+		      "the parser's reason has no exception prefix: " + result.error());
 	}
 	for (const std::string_view json: {"[]", "[{\"PPSA1\": {\"status\": \"InGame\"}}]", "1",
 	                                   "\"PPSA1\"", "null", "true", "1.5"}) {

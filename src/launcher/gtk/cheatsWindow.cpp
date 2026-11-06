@@ -47,6 +47,9 @@ struct CheatsWindowState {
 	// Cancelled when the window goes away: no link, alert, or confirmation callback runs after it.
 	GObjectPtr<GCancellable> cancellable = GObjectPtr<GCancellable>::Adopt(g_cancellable_new());
 	std::vector<SignalScope> signals;
+	// After a font or text scale change, until the next painted frame: the Version column is
+	// measured again then (p7-u7-3).
+	SignalScope remeasure;
 };
 
 } // namespace kyty::gtk
@@ -131,8 +134,10 @@ std::string LocalStatusText(const core::LocalCheatFile& local) {
 		return _("Unsupported title ID.");
 	}
 	if (!local.readable) {
-		// The core's message names the file (p6-u10-2).
-		return Format(_("Could not read the local cheat file:\n%s"), local.message.c_str());
+		// One sentence with the path once (p6-u10-2) and the system's reason alone (p7-u7-1).
+		// TRANSLATORS: the local cheat file's path, then the system's reason ("Is a directory").
+		return Format(_("Could not read the local cheat file %s: %s"), local.path.c_str(),
+		              local.reason.c_str());
 	}
 	if (!local.bytes) {
 		return Format(_("No local cheat file: %s"), local.path.c_str());
@@ -376,6 +381,37 @@ void ReserveVersionColumn(KytyCheatsWindow* self) {
 	int width = 0;
 	pango_layout_get_pixel_size(layout.get(), &width, nullptr);
 	gtk_widget_set_size_request(self->version_header, width, -1);
+	g_debug("cheats: the Version column reserves %d px", width);
+}
+
+void OnVersionHeaderPainted(GdkFrameClock* /*clock*/, gpointer data) {
+	auto* self = KYTY_CHEATS_WINDOW(data);
+	if (Alive(self)) {
+		self->state->remeasure.Disconnect();
+		ReserveVersionColumn(self);
+	}
+}
+
+// p7-u7-3: a font or text scale change makes the reserved width wrong. The header's style takes
+// the new setting in the layout of the next frame, so the width is measured again once that frame
+// is painted.
+void OnTextSettingChanged(GtkSettings* /*settings*/, GParamSpec* /*pspec*/, gpointer data) {
+	auto* self = KYTY_CHEATS_WINDOW(data);
+	if (!Alive(self)) {
+		return;
+	}
+	GdkFrameClock* clock = gtk_widget_get_frame_clock(self->version_header);
+	if (clock == nullptr) {
+		// Not realized: no frame comes, and the style is computed when it is needed.
+		ReserveVersionColumn(self);
+		return;
+	}
+	auto& state = *self->state;
+	if (!state.remeasure.Connected()) {
+		state.remeasure =
+		    SignalScope::Connect(clock, "after-paint", G_CALLBACK(&OnVersionHeaderPainted), self);
+	}
+	gtk_widget_queue_draw(self->version_header);
 }
 
 void OnCatalogLoaded(KytyCheatsWindow* self, const core::CheatCatalogResult& result) {
@@ -605,6 +641,7 @@ static void kyty_cheats_window_dispose(GObject* object) {
 		state->disposed = true;
 		g_cancellable_cancel(state->cancellable.get());
 		state->signals.clear();
+		state->remeasure.Disconnect();
 		// Cancels the pending downloads; their results are never delivered.
 		state->catalog.reset();
 		state->remote.reset();
@@ -707,6 +744,9 @@ KytyCheatsWindow* kyty_cheats_window_new(kyty::gtk::LauncherContext& context, Gt
 	connect(self->apply_button, "clicked", G_CALLBACK(&OnApply));
 	connect(self->enable_all_button, "clicked", G_CALLBACK(&OnEnableAll));
 	connect(self->disable_all_button, "clicked", G_CALLBACK(&OnDisableAll));
+	GtkSettings* settings = gtk_widget_get_settings(GTK_WIDGET(self));
+	connect(settings, "notify::gtk-font-name", G_CALLBACK(&OnTextSettingChanged));
+	connect(settings, "notify::gtk-xft-dpi", G_CALLBACK(&OnTextSettingChanged));
 
 	ReserveVersionColumn(self);
 	LoadLocal(self);

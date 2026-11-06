@@ -53,7 +53,8 @@ KytyMainWindow* MainWindowOf(GtkApplication* application) {
 
 struct ApplicationRun {
 	std::function<void(KytyApplication*, KytyMainWindow*)> drive;
-	bool                                                   driven = false;
+	bool                                                   driven          = false;
+	int                                                    quit_timeout_ms = 10000;
 	SourceId                                               watchdog;
 };
 
@@ -70,9 +71,9 @@ void OnActivated(GApplication* application, gpointer data) {
 	}
 	run->drive(KYTY_APPLICATION(application), window);
 	run->watchdog = SourceId(g_timeout_add(
-	    10000,
+	    static_cast<guint>(run->quit_timeout_ms),
 	    [](gpointer target) -> gboolean {
-		    Fail("the application did not quit within 10 s after the case");
+		    Fail("the application did not quit within the case's time after the case");
 		    g_application_quit(G_APPLICATION(target));
 		    return G_SOURCE_REMOVE;
 	    },
@@ -211,7 +212,8 @@ int UiContext::RunApplication(const std::function<void(KytyApplication*, KytyMai
 	    .release_tag        = options.release_tag};
 	auto application = GObjectPtr<KytyApplication>::Adopt(kyty_application_new_for_testing(hooks));
 	ApplicationRun run;
-	run.drive = drive;
+	run.drive           = drive;
+	run.quit_timeout_ms = options.quit_timeout_ms;
 	g_signal_connect_after(application.get(), "activate", G_CALLBACK(&OnActivated), &run);
 
 	std::error_code ec;

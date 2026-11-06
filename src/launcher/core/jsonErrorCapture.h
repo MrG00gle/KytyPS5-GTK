@@ -52,12 +52,20 @@ private:
 	std::string m_message;
 };
 
-// The nlohmann parser's message for the error in json, or "invalid JSON" when it reports none.
+// The nlohmann parser's message for the error in json without its "[json.exception.<kind>.<id>] "
+// prefix ("parse error at line 1, column 1: ..."; phase 8 plan D9), or "invalid JSON" when it
+// reports none.
 template <typename Json>
 std::string DescribeJsonError(std::string_view json) {
 	JsonErrorCapture<Json> capture;
 	Json::sax_parse(json.begin(), json.end(), &capture);
-	return capture.Message().empty() ? std::string("invalid JSON") : capture.Message();
+	std::string message = capture.Message();
+	if (constexpr std::string_view kPrefix = "[json.exception."; message.starts_with(kPrefix)) {
+		if (const auto end = message.find("] "); end != std::string::npos) {
+			message.erase(0, end + 2);
+		}
+	}
+	return message.empty() ? std::string("invalid JSON") : message;
 }
 
 } // namespace kyty::core

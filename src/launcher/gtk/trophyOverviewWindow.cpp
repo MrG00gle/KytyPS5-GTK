@@ -37,6 +37,11 @@ struct OverviewLoad {
 	core::TrophyOverview      overview;
 	core::CancelToken         cancel;
 	std::size_t               games_read = 0;
+	// The trophy texts and icons the read got, and what it still held of them and of the unlock
+	// times when it built the overview (for the debug log; p7-u7-2).
+	std::size_t text_bytes_read   = 0;
+	std::size_t text_bytes_kept   = 0;
+	std::size_t unlock_times_kept = 0;
 };
 
 struct TrophyOverviewWindowState {
@@ -100,6 +105,17 @@ bool Alive(KytyTrophyOverviewWindow* self) {
 	return self->state != nullptr && !self->state->disposed;
 }
 
+// The bytes the strings of a trophy's texts and icon hold on the heap.
+std::size_t TextHeapBytes(const core::TrophyDefinition& trophy) {
+	static const std::size_t inline_capacity = std::string().capacity();
+	std::size_t              bytes           = 0;
+	for (const std::string* text:
+	     {&trophy.name, &trophy.description, &trophy.reward, &trophy.icon_png}) {
+		bytes += text->capacity() > inline_capacity ? text->capacity() : 0;
+	}
+	return bytes;
+}
+
 // The GTask thread's work: every game's packages and unlock data, then the overview. Only what
 // BuildTrophyOverview counts is kept per game (the grades and the unlocked IDs: no icon, name,
 // description, or reward text), and a cancelled read stops before the next game (p6-u9-1).
@@ -114,6 +130,8 @@ void Read(OverviewLoad& load) {
 		    core::LoadGameTrophies(game.entry, load.data_dir, game.user_id, game.console_language);
 		for (auto& package: trophies.packages) {
 			for (auto& trophy: package.package.trophies) {
+				load.text_bytes_read += trophy.name.size() + trophy.description.size() +
+				                        trophy.reward.size() + trophy.icon_png.size();
 				// swap, not clear(): the memory itself goes
 				std::string().swap(trophy.name);
 				std::string().swap(trophy.description);
@@ -125,6 +143,14 @@ void Read(OverviewLoad& load) {
 		entries.push_back(
 		    {game.entry.title_name, game.entry.title_id, std::move(trophies.packages)});
 		load.games_read++;
+	}
+	for (const auto& entry: entries) {
+		for (const auto& package: entry.packages) {
+			for (const auto& trophy: package.package.trophies) {
+				load.text_bytes_kept += TextHeapBytes(trophy);
+			}
+			load.unlock_times_kept += package.unlocks.timestamps.size();
+		}
 	}
 	load.overview = core::BuildTrophyOverview(entries);
 }
@@ -340,6 +366,10 @@ KytyTrophyOverviewWindow* kyty_trophy_overview_window_new(kyty::gtk::LauncherCon
 		                           g_debug("trophy overview: read %zu of %zu game(s)%s",
 		                                   load->games_read, load->games.size(),
 		                                   load->cancel.IsCancelled() ? ", cancelled" : "");
+		                           g_debug("trophy overview: %zu byte(s) of trophy texts and "
+		                                   "icons read, %zu kept, %zu unlock time(s) kept",
+		                                   load->text_bytes_read, load->text_bytes_kept,
+		                                   load->unlock_times_kept);
 		                           if (*alive) {
 			                           Apply(self, *load);
 		                           }

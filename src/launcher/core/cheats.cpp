@@ -358,6 +358,7 @@ LocalCheatFile LoadLocalCheats(const std::filesystem::path& data_dir, std::strin
 			local.readable = true;
 			local.message  = "No local cheat file: " + local.path.string();
 		} else {
+			local.reason  = std::generic_category().message(bytes.error().error_number);
 			local.message = "Could not read cheat file: " + bytes.error().message;
 		}
 		return local;

@@ -2,8 +2,9 @@
 // (src/launcher/core/jsonErrorCapture.h, plan D25), for nlohmann::json and nlohmann::ordered_json:
 // it accepts every value kind of the public nlohmann::json_sax interface (including a binary
 // value, which only binary formats such as CBOR produce), records the parser's message and stops
-// at the first error, and DescribeJsonError falls back to "invalid JSON" when the parser reports
-// none.
+// at the first error, and DescribeJsonError gives that message without the
+// "[json.exception.<kind>.<id>] " prefix (phase 8 plan D9) or falls back to "invalid JSON" when the
+// parser reports none.
 
 #include "launcher/core/jsonErrorCapture.h"
 #include "support/noDisplay.h"
@@ -50,6 +51,16 @@ void TestCapture(const std::string& what) {
 
 	Check(DescribeJsonError<Json>("{\"a\":}").find("syntax error") != std::string::npos,
 	      what + ": DescribeJsonError names the syntax error");
+	// Phase 8 plan D9: the parser's own text starts with "[json.exception.<kind>.<id>] ";
+	// DescribeJsonError gives the reason without it.
+	Check(capture.Message().starts_with("[json.exception.parse_error."),
+	      what + ": the parser's text has the exception prefix: " + capture.Message());
+	for (const char* json: {"{\"a\":}", "x", "", "[1,", "\"\xFF\""}) {
+		const auto described = DescribeJsonError<Json>(json);
+		Check(described.starts_with("parse error at line 1, column ") &&
+		          described.find("[json.exception") == std::string::npos,
+		      what + ": the reason without the exception prefix: " + described);
+	}
 	Check(DescribeJsonError<Json>("{}") == "invalid JSON",
 	      what + ": content without an error gives the fallback text");
 }

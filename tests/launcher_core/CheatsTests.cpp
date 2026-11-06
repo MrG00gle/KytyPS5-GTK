@@ -19,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -177,6 +178,11 @@ void TestParseErrors() {
 	const auto not_json = ParseCheatDocument("{", "f.json");
 	Check(not_json.error().find("parse error") != std::string::npos,
 	      "the parser's message is carried: " + not_json.error());
+	// Phase 8 plan D9: the parser's reason without nlohmann's "[json.exception...]" prefix.
+	const auto not_text = ParseCheatDocument("this is not JSON at all", "f.json");
+	Check(not_text.error().starts_with("f.json: Invalid cheat JSON (parse error at line 1, ") &&
+	          not_text.error().find("[json.exception") == std::string::npos,
+	      "the reason has no exception prefix: " + not_text.error());
 }
 
 void TestSerialize() {
@@ -500,6 +506,25 @@ void TestLoadLocalCheats() {
 	Check(!local.readable && !local.bytes && !local.document &&
 	          local.message.starts_with("Could not read cheat file: "),
 	      "an unreadable file: " + local.message);
+	// p7-u7-1: the reason alone, for the launcher's own sentence with the path.
+	Check(local.reason == std::generic_category().message(EISDIR),
+	      "an unreadable file's reason is the system's text alone: " + local.reason);
+	Check(local.message.find(local.reason) != std::string::npos,
+	      "the message carries the same reason: " + local.message);
+
+	std::filesystem::remove(path);
+	temp.WriteFile("_Patches/PPSA01234.json", std::string(kyty::core::kMaxCheatFileBytes + 1, ' '));
+	local = kyty::core::LoadLocalCheats(data, "PPSA01234");
+	Check(!local.readable && !local.bytes && local.reason == std::generic_category().message(EFBIG),
+	      "a file over the limit: " + local.reason);
+	std::filesystem::remove(path);
+	for (const char* title: {"PPSA01234", "CUSA01234"}) {
+		Check(kyty::core::LoadLocalCheats(data, title).reason.empty(),
+		      std::string("no reason without a read error: ") + title);
+	}
+	temp.WriteFile("_Patches/PPSA01234.json", ValidRemote());
+	Check(kyty::core::LoadLocalCheats(data, "PPSA01234").reason.empty(),
+	      "no reason for a file that was read");
 }
 
 } // namespace
