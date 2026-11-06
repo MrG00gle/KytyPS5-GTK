@@ -31,7 +31,10 @@ endfunction()
 
 # Sets <out> to TRUE when <target> is a first-party target: its SOURCE_DIR is the top-level source
 # directory or below it, but not in the build tree (FetchContent sources and patched copies live
-# there, and build trees may sit inside the checkout) and not under 3rdparty/.
+# there, and build trees may sit inside the checkout), not under 3rdparty/, and not under
+# KYTY_PREFETCHED_SOURCES_DIR (prefetched dependency sources may also sit inside the checkout; a
+# relative value is resolved against the top-level source directory, as cmake/KytyDependencies.cmake
+# does).
 function(kyty_is_first_party_target target out)
 	set(kyty_first_party FALSE)
 	get_target_property(kyty_dir ${target} SOURCE_DIR)
@@ -39,10 +42,17 @@ function(kyty_is_first_party_target target out)
 		string(FIND "${kyty_dir}/" "${CMAKE_SOURCE_DIR}/" kyty_in_source)
 		string(FIND "${kyty_dir}/" "${CMAKE_BINARY_DIR}/" kyty_in_binary)
 		string(FIND "${kyty_dir}/" "${CMAKE_SOURCE_DIR}/3rdparty/" kyty_in_third_party)
+		set(kyty_in_prefetched -1)
+		if(KYTY_PREFETCHED_SOURCES_DIR)
+			get_filename_component(kyty_prefetched "${KYTY_PREFETCHED_SOURCES_DIR}" ABSOLUTE
+				BASE_DIR "${CMAKE_SOURCE_DIR}")
+			string(FIND "${kyty_dir}/" "${kyty_prefetched}/" kyty_in_prefetched)
+		endif()
 		if(NOT CMAKE_BINARY_DIR STREQUAL CMAKE_SOURCE_DIR AND kyty_in_binary EQUAL 0)
 			set(kyty_in_source -1)
 		endif()
-		if(kyty_in_source EQUAL 0 AND NOT kyty_in_third_party EQUAL 0)
+		if(kyty_in_source EQUAL 0 AND NOT kyty_in_third_party EQUAL 0
+		   AND NOT kyty_in_prefetched EQUAL 0)
 			set(kyty_first_party TRUE)
 		endif()
 	endif()

@@ -453,6 +453,19 @@ kyty_add_test(NAME coverage_requires_clang
 	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
 	TIMEOUT 120
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+# The dependency registry (cmake/KytyDependencies.cmake, cmake/KytyTargets.cmake) in generated
+# projects that use local git repositories and prefetched directories, without network access.
+foreach(kyty_case IN ITEMS hidden_entries patched_root online_after_prefetched
+		prefetched_not_first_party)
+	kyty_add_test(NAME dependency_registry_${kyty_case}
+		COMMAND "${CMAKE_COMMAND}" -DCASE=${kyty_case} "-DMODULE_DIR=${CMAKE_SOURCE_DIR}/cmake"
+		        "-DPATCHES_DIR=${CMAKE_SOURCE_DIR}/3rdparty/patches"
+		        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}" "-DGENERATOR=${CMAKE_GENERATOR}"
+		        "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+		        "-DWORK_DIR=${kyty_selftests_dir}/dependency_registry_${kyty_case}"
+		        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DependencyRegistryTests.cmake"
+		TIMEOUT 120)
+endforeach()
 # property_harness_selftest_tests is defined in properties/.
 kyty_add_test(NAME property_harness_selftest
 	COMMAND "${CMAKE_COMMAND}" "-DEXE=$<TARGET_FILE:property_harness_selftest_tests>"

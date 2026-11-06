@@ -10,14 +10,19 @@
 #   kyty_check_prefetched_sources()
 #       Call once, before any FetchContent call. With KYTY_PREFETCHED_SOURCES_DIR set, it fails once,
 #       naming every dependency whose <dir>/<name> tree (or <dir>/<name>/<FILENAME> archive) or
-#       SUBMODULES path is missing, then sets FETCHCONTENT_FULLY_DISCONNECTED and
+#       SUBMODULES path is missing or holds only hidden entries (names starting with ".", such as
+#       the .git of an uninitialized submodule), then sets FETCHCONTENT_FULLY_DISCONNECTED and
 #       FETCHCONTENT_SOURCE_DIR_<NAME> in the caller's scope.
 #   kyty_make_dependency_available(<name>)
 #       GIT entries: FetchContent_Declare (GIT_TAG <sha>) and FetchContent_MakeAvailable, from the
 #       network or from the prefetched tree. Entries with PATCHES are never added unpatched: the tree
 #       is copied to ${CMAKE_BINARY_DIR}/_kyty_patched/<name> and patched there (kyty_patch_source_copy)
-#       in both modes, <name>_SOURCE_DIR names the copy, and <copy>/<SOURCE_SUBDIR> is added when it
-#       has a CMakeLists.txt. Sets <name>_SOURCE_DIR, <name>_BINARY_DIR and <name>_POPULATED.
+#       in both modes, <name>_SOURCE_DIR names the copy, and <copy>/<SOURCE_SUBDIR>, or <copy>
+#       itself without SOURCE_SUBDIR, is added when it has a CMakeLists.txt. In prefetched mode,
+#       the FETCHCONTENT_SOURCE_DIR_<NAME> cache entry that FetchContent makes from the registry's
+#       value is removed again, so a later configure without KYTY_PREFETCHED_SOURCES_DIR downloads;
+#       a value the user set is kept. Sets <name>_SOURCE_DIR, <name>_BINARY_DIR and
+#       <name>_POPULATED.
 #       URL entries: sets <name>_ARCHIVE (the prefetched archive; empty online, where the consumer
 #       downloads it) and <name>_SHA256.
 #   kyty_patch_source_copy(<name> SOURCE_DIR <dir> REVISION <text> PATCHES <file>... OUTPUT_VARIABLE <var>)
@@ -128,6 +133,8 @@ function(_kyty_dependency_dir_populated dir out)
 	set(kyty_dep_populated FALSE)
 	if(IS_DIRECTORY "${dir}")
 		file(GLOB kyty_dep_children LIST_DIRECTORIES true "${dir}/*")
+		# file(GLOB) also matches names that start with ".", so a lone .git would count as sources.
+		list(FILTER kyty_dep_children EXCLUDE REGEX "/\\.[^/]*$")
 		if(kyty_dep_children)
 			set(kyty_dep_populated TRUE)
 		endif()
@@ -408,6 +415,14 @@ function(kyty_make_dependency_available name)
 	endif()
 	FetchContent_MakeAvailable(${name})
 	kyty_dependency_set_source(${name} "${${name}_SOURCE_DIR}")
+	# FetchContent caches the override it was given. Left there, it would point a later configure
+	# without KYTY_PREFETCHED_SOURCES_DIR at the prefetched tree, which may be gone.
+	if(kyty_dep_prefetched)
+		set(kyty_dep_registry_dir "${kyty_dep_prefetched}/${name}")
+		if("$CACHE{FETCHCONTENT_SOURCE_DIR_${kyty_dep_upper}}" STREQUAL "${kyty_dep_registry_dir}")
+			unset(FETCHCONTENT_SOURCE_DIR_${kyty_dep_upper} CACHE)
+		endif()
+	endif()
 
 	if(kyty_dep_patches)
 		kyty_patch_source_copy(${name}
@@ -415,8 +430,12 @@ function(kyty_make_dependency_available name)
 			REVISION "${kyty_dep_url} ${kyty_dep_commit}"
 			PATCHES ${kyty_dep_patches}
 			OUTPUT_VARIABLE ${name}_SOURCE_DIR)
-		if(kyty_dep_subdir AND EXISTS "${${name}_SOURCE_DIR}/${kyty_dep_subdir}/CMakeLists.txt")
-			add_subdirectory("${${name}_SOURCE_DIR}/${kyty_dep_subdir}" "${${name}_BINARY_DIR}")
+		set(kyty_dep_added "${${name}_SOURCE_DIR}")
+		if(kyty_dep_subdir)
+			string(APPEND kyty_dep_added "/${kyty_dep_subdir}")
+		endif()
+		if(EXISTS "${kyty_dep_added}/CMakeLists.txt")
+			add_subdirectory("${kyty_dep_added}" "${${name}_BINARY_DIR}")
 		endif()
 	endif()
 	set(${name}_SOURCE_DIR "${${name}_SOURCE_DIR}" PARENT_SCOPE)
