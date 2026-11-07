@@ -168,6 +168,11 @@ option(KYTY_BUILD_LAUNCHER "Build the GTK launcher (kyty_launcher) and the Updat
 config_compiler_and_linker()
 
 add_subdirectory("${KYTY_THIRD_PARTY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/3rdparty")
+# The license files of Kyty and of every third-party component: licenses-manifest.txt now, and the
+# install rules in the fhs layout.
+include(KytyLicenses)
+kyty_register_third_party_licenses()
+kyty_install_licenses()
 # First-party targets only: the directories below see KYTY_FLATPAK, the dependencies above do not.
 if(KYTY_FLATPAK_BUILD)
 	add_compile_definitions(KYTY_FLATPAK)

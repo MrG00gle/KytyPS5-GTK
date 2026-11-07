@@ -7,7 +7,10 @@
 #             share/kyty/assets/cursors/<...>, and with the launcher bin/kyty_launcher,
 #             bin/kyty_updater, share/applications/<App_ID>.desktop,
 #             share/metainfo/<App_ID>.metainfo.xml, share/icons/hicolor/scalable/apps/<App_ID>.svg,
-#             and share/icons/hicolor/256x256/apps/<App_ID>.png.
+#             and share/icons/hicolor/256x256/apps/<App_ID>.png; with or without the launcher,
+#             share/licenses/<App_ID>/<path> for every path of BUILD_DIR/licenses-manifest.txt, from
+#             the file that BUILD_DIR/licenses-sources.txt names, and the manifest itself as
+#             share/kyty/licenses-manifest.txt (cmake/KytyLicenses.cmake).
 # A Flatpak build (FLATPAK=ON, fhs only) installs no kyty_updater (Requirement 13.4). Each data file
 # equals its source byte for byte, and each executable is executable. A missing or an extra
 # first-party file fails the test. The files that the dependency and license rules install under
@@ -66,6 +69,22 @@ if(LAUNCHER)
 			"share/icons/hicolor/scalable/apps/${APP_ID}.svg|${kyty_packaging}/icons/${APP_ID}.svg"
 			"share/icons/hicolor/256x256/apps/${APP_ID}.png|${kyty_packaging}/icons/${APP_ID}.png")
 	endif()
+endif()
+if(LAYOUT STREQUAL "fhs")
+	# "<path>|<component source dir>|<installed from>[|<notice source>|<lines>]" per manifest path.
+	set(kyty_license_sources "${BUILD_DIR}/licenses-sources.txt")
+	if(NOT EXISTS "${kyty_license_sources}")
+		message(FATAL_ERROR "InstallLayoutTest: ${kyty_license_sources} is missing (the configure "
+			"writes it, cmake/KytyLicenses.cmake)")
+	endif()
+	file(STRINGS "${kyty_license_sources}" kyty_license_lines)
+	foreach(kyty_license_line IN LISTS kyty_license_lines)
+		string(REPLACE "|" ";" kyty_license_fields "${kyty_license_line}")
+		list(GET kyty_license_fields 0 kyty_license_path)
+		list(GET kyty_license_fields 2 kyty_license_from)
+		list(APPEND kyty_expected "share/licenses/${APP_ID}/${kyty_license_path}|${kyty_license_from}")
+	endforeach()
+	list(APPEND kyty_expected "share/kyty/licenses-manifest.txt|${BUILD_DIR}/licenses-manifest.txt")
 endif()
 
 file(REMOVE_RECURSE "${WORK_DIR}")

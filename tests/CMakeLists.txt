@@ -476,6 +476,18 @@ kyty_add_test(NAME install_layout_tree
 	        "-DWORK_DIR=${kyty_selftests_dir}/install_layout_tree"
 	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/InstallLayoutTest.cmake"
 	TIMEOUT 120)
+# License files (tasks 26.3 and 26.5, cmake/KytyLicenses.cmake): the manifest that this configure wrote,
+# and the unit tests of tools/checks/check_licenses.py, which checks an installed licenses directory
+# against it.
+kyty_add_test(NAME licenses_manifest
+	COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LicensesManifestTest.cmake"
+	TIMEOUT 60)
+kyty_add_test(NAME check_licenses_tool
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/checks/tests"
+	        -p test_check_licenses.py -v
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 # The dependency registry (cmake/KytyDependencies.cmake, cmake/KytyTargets.cmake) in generated
 # projects that use local git repositories and prefetched directories, without network access.
 foreach(kyty_case IN ITEMS hidden_entries patched_root online_after_prefetched
