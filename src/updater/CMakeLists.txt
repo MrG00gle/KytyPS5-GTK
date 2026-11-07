@@ -19,5 +19,5 @@ if(KYTY_BUILD_LAUNCHER AND NOT KYTY_FLATPAK_BUILD)
 	target_link_libraries(kyty_updater PRIVATE kyty_updater_installer)
 	kyty_link_with_lld(kyty_updater)
 
-	install(TARGETS kyty_updater RUNTIME DESTINATION .)
+	install(TARGETS kyty_updater RUNTIME DESTINATION "${KYTY_INSTALL_BINDIR}")
 endif()

@@ -8,11 +8,16 @@
 #   coverage_requires_clang
 #                       coverage_requires_clang (Requirement 17.12): GCC and G++ as the compilers
 #                       with KYTY_ENABLE_COVERAGE=ON.
+#   install_layout_unknown
+#                       install_layout_rejects_unknown (task 26.1): KYTY_INSTALL_LAYOUT=flat.
+#   install_layout_flatpak_portable
+#                       install_layout_flatpak_requires_fhs (Requirement 13.4, task 26.1):
+#                       KYTY_FLATPAK_BUILD=ON with an explicit KYTY_INSTALL_LAYOUT=portable.
 # Each case configures SOURCE_DIR in a fresh WORK_DIR/build and expects the configure step to fail
 # with the guard's message before any build file is generated. WORK_DIR is deleted when the case
-# passes and kept for inspection when it fails. No case makes a network request: non_linux and
-# coverage_requires_clang stop before any dependency is declared, and the other two set
-# KYTY_PREFETCHED_SOURCES_DIR.
+# passes and kept for inspection when it fails. No case makes a network request: non_linux,
+# coverage_requires_clang, and the two install_layout cases stop before any dependency is
+# declared, and the other two set KYTY_PREFETCHED_SOURCES_DIR.
 #
 #   cmake -DCASE=<case> -DSOURCE_DIR=<repository> -DWORK_DIR=<dir> -DGENERATOR=<generator>
 #         -DMAKE_PROGRAM=<program> -DC_COMPILER=<cc> -DCXX_COMPILER=<c++>
@@ -104,9 +109,18 @@ elseif(CASE STREQUAL "coverage_requires_clang")
 	set(kyty_expected_text "coverage instrumentation requires Clang (found C: GNU, C++: GNU)")
 	# The check runs before any dependency is declared.
 	list(APPEND kyty_absent_paths "${kyty_build_dir}/_deps")
+elseif(CASE STREQUAL "install_layout_unknown")
+	list(APPEND kyty_arguments -DKYTY_INSTALL_LAYOUT=flat)
+	set(kyty_expected_text "KYTY_INSTALL_LAYOUT must be portable or fhs (got 'flat')")
+	# cmake/KytyInstallLayout.cmake runs before any dependency is declared.
+	list(APPEND kyty_absent_paths "${kyty_build_dir}/_deps")
+elseif(CASE STREQUAL "install_layout_flatpak_portable")
+	list(APPEND kyty_arguments -DKYTY_FLATPAK_BUILD=ON -DKYTY_INSTALL_LAYOUT=portable)
+	set(kyty_expected_text "KYTY_FLATPAK_BUILD=ON requires KYTY_INSTALL_LAYOUT=fhs (it is 'portable')")
+	list(APPEND kyty_absent_paths "${kyty_build_dir}/_deps")
 else()
 	message(FATAL_ERROR "ConfigureGuardTests: unknown CASE '${CASE}' (non_linux, sdl_backend, prefetched_missing, "
-		"coverage_requires_clang)")
+		"coverage_requires_clang, install_layout_unknown, install_layout_flatpak_portable)")
 endif()
 
 list(JOIN kyty_arguments " " kyty_arguments_text)

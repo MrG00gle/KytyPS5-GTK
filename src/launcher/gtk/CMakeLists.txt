@@ -96,7 +96,20 @@ if(TARGET kyty_updater)
 		VERBATIM)
 	add_dependencies(kyty_launcher stage_updater)
 endif()
-install(TARGETS kyty_launcher RUNTIME DESTINATION .)
+install(TARGETS kyty_launcher RUNTIME DESTINATION "${KYTY_INSTALL_BINDIR}")
+# The fhs layout (cmake/KytyInstallLayout.cmake) also installs the desktop entry, the metainfo, and
+# the icons, all named after the App_ID (Requirements 14.7, 14.14). The portable layout does not.
+if(KYTY_INSTALL_LAYOUT STREQUAL "fhs")
+	set(kyty_gtk_packaging_dir "${CMAKE_SOURCE_DIR}/packaging/linux")
+	install(FILES "${kyty_gtk_packaging_dir}/${KYTY_APP_ID}.desktop"
+		DESTINATION "${KYTY_INSTALL_DATADIR}/applications")
+	install(FILES "${kyty_gtk_packaging_dir}/${KYTY_APP_ID}.metainfo.xml"
+		DESTINATION "${KYTY_INSTALL_DATADIR}/metainfo")
+	install(FILES "${kyty_gtk_packaging_dir}/icons/${KYTY_APP_ID}.svg"
+		DESTINATION "${KYTY_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
+	install(FILES "${kyty_gtk_packaging_dir}/icons/${KYTY_APP_ID}.png"
+		DESTINATION "${KYTY_INSTALL_DATADIR}/icons/hicolor/256x256/apps")
+endif()
 
 # ---- update-pot
 set(kyty_gtk_potfiles "${CMAKE_SOURCE_DIR}/po/POTFILES.in")

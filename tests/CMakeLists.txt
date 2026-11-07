@@ -453,6 +453,29 @@ kyty_add_test(NAME coverage_requires_clang
 	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
 	TIMEOUT 120
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+# Install layouts (task 26.1, cmake/KytyInstallLayout.cmake): an unknown KYTY_INSTALL_LAYOUT and an
+# explicit portable layout with KYTY_FLATPAK_BUILD=ON stop the configure before any dependency is
+# declared; install_layout_tree installs this build tree and checks the first-party files of its
+# layout.
+kyty_add_test(NAME install_layout_rejects_unknown
+	COMMAND "${CMAKE_COMMAND}" -DCASE=install_layout_unknown
+	        "-DWORK_DIR=${kyty_selftests_dir}/install_layout_rejects_unknown"
+	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+kyty_add_test(NAME install_layout_flatpak_requires_fhs
+	COMMAND "${CMAKE_COMMAND}" -DCASE=install_layout_flatpak_portable
+	        "-DWORK_DIR=${kyty_selftests_dir}/install_layout_flatpak_requires_fhs"
+	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+kyty_add_test(NAME install_layout_tree
+	COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+	        "-DCONFIG=$<CONFIG>" "-DLAYOUT=${KYTY_INSTALL_LAYOUT}" "-DFLATPAK=${KYTY_FLATPAK_BUILD}"
+	        "-DLAUNCHER=${KYTY_BUILD_LAUNCHER}" "-DAPP_ID=${KYTY_APP_ID}"
+	        "-DWORK_DIR=${kyty_selftests_dir}/install_layout_tree"
+	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/InstallLayoutTest.cmake"
+	TIMEOUT 120)
 # The dependency registry (cmake/KytyDependencies.cmake, cmake/KytyTargets.cmake) in generated
 # projects that use local git repositories and prefetched directories, without network access.
 foreach(kyty_case IN ITEMS hidden_entries patched_root online_after_prefetched

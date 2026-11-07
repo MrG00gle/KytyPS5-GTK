@@ -76,6 +76,8 @@ endforeach()
 
 set(KYTY_RELEASE_TAG "" CACHE STRING "Release tag embedded in official builds")
 option(KYTY_FLATPAK_BUILD "Build for the Flatpak package" OFF)
+# KYTY_INSTALL_LAYOUT (portable or fhs; fhs with KYTY_FLATPAK_BUILD) and the install directories.
+include(KytyInstallLayout)
 # Sets KYTY_OFFICIAL_BUILD, which cmake_config.h defines for official builds.
 kyty_apply_build_classification()
 
@@ -353,7 +355,7 @@ add_custom_target(kyty_trophy_sound
 		"$<TARGET_FILE_DIR:kyty_emulator>/assets/sounds/trophy-unlock.wav"
 	VERBATIM)
 add_dependencies(kyty_emulator kyty_trophy_sound)
-install(FILES "${KYTY_TROPHY_UNLOCK_SOUND}" DESTINATION assets/sounds)
+install(FILES "${KYTY_TROPHY_UNLOCK_SOUND}" DESTINATION "${KYTY_INSTALL_ASSETSDIR}/sounds")
 
 add_custom_target(kyty_touch_cursors
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -361,7 +363,8 @@ add_custom_target(kyty_touch_cursors
 		"$<TARGET_FILE_DIR:kyty_emulator>/assets/cursors"
 	VERBATIM)
 add_dependencies(kyty_emulator kyty_touch_cursors)
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/cursors" DESTINATION assets)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/cursors"
+	DESTINATION "${KYTY_INSTALL_ASSETSDIR}")
 
 target_link_libraries(kyty_emulator kyty_emulator_options ${kyty_emulator_link_libraries})
 if (CLANG)
@@ -391,7 +394,7 @@ if(LINUX)
     )
 endif()
 
-install(TARGETS kyty_emulator DESTINATION .)
+install(TARGETS kyty_emulator DESTINATION "${KYTY_INSTALL_BINDIR}")
 if(KYTY_BUILD_LAUNCHER)
 	# The GTK launcher (kyty_launcher_gtk and the kyty_launcher executable).
 	add_subdirectory("${KYTY_SOURCE_DIR}/launcher/gtk" "${CMAKE_CURRENT_BINARY_DIR}/launcher/gtk")
