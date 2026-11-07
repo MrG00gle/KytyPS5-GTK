@@ -6,7 +6,7 @@
 // at the start of a line (kyty_add_ui_tests in cmake/KytyTesting.cmake finds the names there and
 // registers one CTest test per case and backend). main() (uiHarness.cpp):
 //   launcher_ui_tests --list                prints the case names, sorted, one per line; no display
-//   launcher_ui_tests --case <name> [--capture-dir <dir>]
+//   launcher_ui_tests --case <name> [--capture-dir <dir>] [--screenshot-out <file>]
 //                                           runs one case inside tests/ui/with-display.sh
 //   launcher_ui_tests --selftest <kind>     runs one harness self-test the same way (task 22.6;
 //                                           tests/cmake/UiHarnessSelfTest.cmake): critical,
@@ -18,6 +18,8 @@
 // declared message must then arrive exactly once. Lower levels go to GLib's default writer. The
 // exit status is 0 when the case passed and 1 otherwise; the last line of the output says which.
 // --capture-dir (or KYTY_UI_CAPTURE_DIR) makes Capture() (uiDriver.h) write PNG files there.
+// --screenshot-out names the PNG file that a case which makes a screenshot writes (only
+// docs_main_window_screenshot in DocsTests.cpp; phase 8 plan D21); the other cases ignore it.
 
 #include <filesystem>
 #include <glib.h>
@@ -70,6 +72,10 @@ void WatchLog(std::string_view domain, std::string_view prefix);
 
 // Where Capture() writes; empty without --capture-dir and KYTY_UI_CAPTURE_DIR.
 [[nodiscard]] const std::filesystem::path& CaptureDirectory();
+
+// The file a screenshot case writes, made absolute (the cases may change the working directory);
+// empty without --screenshot-out.
+[[nodiscard]] const std::filesystem::path& ScreenshotOutput();
 
 // The names of every registered case, sorted (what --list prints).
 [[nodiscard]] std::vector<std::string> CaseNames();

@@ -45,6 +45,7 @@ struct HarnessState {
 	std::vector<ExpectedLog>       expected;
 	std::vector<WatchedLog>        watched;
 	std::filesystem::path          capture_directory;
+	std::filesystem::path          screenshot_output;
 };
 
 HarnessState& State() {
@@ -145,7 +146,7 @@ GLogWriterOutput Writer(GLogLevelFlags level, const GLogField* fields, gsize cou
 int Usage() {
 	std::fprintf(stderr,
 	             "usage: %s --list\n"
-	             "       %s --case <name> [--capture-dir <directory>]\n"
+	             "       %s --case <name> [--capture-dir <directory>] [--screenshot-out <file>]\n"
 	             "       %s --selftest critical|warning|expected-warning|missing-expected|clean|"
 	             "accessible-untyped\n",
 	             kProgram, kProgram, kProgram);
@@ -281,6 +282,10 @@ const std::filesystem::path& CaptureDirectory() {
 	return State().capture_directory;
 }
 
+const std::filesystem::path& ScreenshotOutput() {
+	return State().screenshot_output;
+}
+
 std::vector<std::string> CaseNames() {
 	std::vector<std::string> names;
 	for (const auto& [name, run]: State().cases) {
@@ -301,6 +306,7 @@ int main(int argc, char** argv) {
 	std::string name;
 	std::string selftest;
 	std::string capture_directory;
+	std::string screenshot_output;
 	for (int i = 1; i < argc; i++) {
 		const std::string_view argument = argv[i];
 		if (argument == "--list") {
@@ -311,6 +317,8 @@ int main(int argc, char** argv) {
 			selftest = argv[++i];
 		} else if (argument == "--capture-dir" && i + 1 < argc) {
 			capture_directory = argv[++i];
+		} else if (argument == "--screenshot-out" && i + 1 < argc) {
+			screenshot_output = argv[++i];
 		} else {
 			return KytyUi::Usage();
 		}
@@ -354,6 +362,15 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 		state.capture_directory = std::filesystem::absolute(capture_directory, ec);
+	}
+	if (!screenshot_output.empty()) {
+		std::error_code ec;
+		state.screenshot_output = std::filesystem::absolute(screenshot_output, ec);
+		if (ec) {
+			std::fprintf(stderr, "%s: cannot resolve %s: %s\n", KytyUi::kProgram,
+			             screenshot_output.c_str(), ec.message().c_str());
+			return 1;
+		}
 	}
 	{
 		const std::lock_guard<std::mutex> lock(state.mutex);

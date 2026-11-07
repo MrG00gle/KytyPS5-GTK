@@ -646,6 +646,18 @@ if(TARGET launcher_ui_tests)
 		LABELS ui
 		SKIP_RETURN_CODE 77
 		TIMEOUT 300)
+	# The documentation screenshot (task 26.2, Requirement 14.8; phase 8 plan D21): the case
+	# docs_main_window_screenshot on Wayland writes docs/screenshots/kyty-launcher-main.png, which
+	# the metainfo's screenshot URL names. Not part of all: build the target after a visible change
+	# of the main window and commit the new file.
+	add_custom_target(update-docs-screenshot
+		COMMAND "${KYTY_UI_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh"
+		        --portal "$<TARGET_FILE:ui_fake_portal>" wayland --
+		        "$<TARGET_FILE:launcher_ui_tests>" --case docs_main_window_screenshot
+		        --screenshot-out "${CMAKE_SOURCE_DIR}/docs/screenshots/kyty-launcher-main.png"
+		COMMENT "Writing docs/screenshots/kyty-launcher-main.png"
+		VERBATIM)
+	add_dependencies(update-docs-screenshot launcher_ui_tests ui_fake_portal)
 endif()
 # The launcher without a display (task 22.6, Requirement 6.15; phase 7 plan D38): exit 1 within 5 s,
 # the message on stderr, the Settings_Store unchanged. It starts no display server: no label.

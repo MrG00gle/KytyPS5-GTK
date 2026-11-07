@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.MrG00gle.KytyPS5_GTK</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-only</project_license>
+
+  <name>KytyPS5-GTK</name>
+  <summary>Experimental PlayStation 5 emulator with a GTK launcher</summary>
+  <description>
+    <p>
+      KytyPS5-GTK is a Linux fork of the experimental KytyPS5 PlayStation 5 emulator. Its GTK
+      launcher lists the games in your game folders, keeps their settings, and starts them in the
+      emulator.
+    </p>
+    <p>
+      KytyPS5-GTK is not affiliated with or endorsed by Sony Interactive Entertainment. It includes
+      no games and no system software: you need game files that you obtained legally.
+    </p>
+  </description>
+
+  <developer id="io.github.mrg00gle">
+    <name>MrG00gle</name>
+  </developer>
+  <url type="homepage">https://github.com/MrG00gle/KytyPS5-GTK</url>
+  <url type="bugtracker">https://github.com/MrG00gle/KytyPS5-GTK/issues</url>
+
+  <launchable type="desktop-id">io.github.MrG00gle.KytyPS5_GTK.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>The game library in the grid view</caption>
+      <image>https://raw.githubusercontent.com/MrG00gle/KytyPS5-GTK/main/docs/screenshots/kyty-launcher-main.png</image>
+    </screenshot>
+  </screenshots>
+
+  <!-- One entry per GitHub release of the repository, newest first. -->
+  <releases/>
+</component>

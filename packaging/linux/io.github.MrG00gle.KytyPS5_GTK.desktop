@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=KytyPS5-GTK
+GenericName=PS5 Emulator
+Comment=Experimental PlayStation 5 emulator with a GTK launcher
+Exec=kyty_launcher
+Icon=io.github.MrG00gle.KytyPS5_GTK
+Terminal=false
+Categories=Game;Emulator;
+StartupNotify=true
