@@ -146,7 +146,8 @@ int Usage() {
 	std::fprintf(stderr,
 	             "usage: %s --list\n"
 	             "       %s --case <name> [--capture-dir <directory>]\n"
-	             "       %s --selftest critical|warning|expected-warning|missing-expected|clean\n",
+	             "       %s --selftest critical|warning|expected-warning|missing-expected|clean|"
+	             "accessible-untyped\n",
 	             kProgram, kProgram, kProgram);
 	return 1;
 }
@@ -181,6 +182,16 @@ void SelfTestMissingExpected() {
 // Nothing to report (exit 0).
 void SelfTestClean() {}
 
+// AccessibleProperty (uiDriver.h) on a property without a boolean, integer, number, string, or
+// token value (31: no GtkAccessibleProperty up to GTK 4.22): it fails the case instead of passing
+// GTK's test API a value of the wrong type (exit 1; phase 8 plan D17, p7-u2-2).
+void SelfTestAccessibleUntyped() {
+	GtkWidget* label = gtk_label_new("selftest");
+	g_object_ref_sink(label);
+	AccessibleProperty(label, static_cast<GtkAccessibleProperty>(31));
+	g_object_unref(label);
+}
+
 struct SelfTest {
 	std::string_view kind;
 	CaseFn           run;
@@ -192,6 +203,7 @@ constexpr SelfTest kSelfTests[] = {
     {"expected-warning", &SelfTestExpectedWarning},
     {"missing-expected", &SelfTestMissingExpected},
     {"clean", &SelfTestClean},
+    {"accessible-untyped", &SelfTestAccessibleUntyped},
 };
 
 CaseFn FindSelfTest(std::string_view kind) {

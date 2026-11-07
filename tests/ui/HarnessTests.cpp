@@ -16,6 +16,15 @@
 // - harness_keypress: KeyPress dispatches to a local shortcut of the focus widget, an alternative
 //   trigger of an ancestor, a global shortcut elsewhere in the window, the window's Tab binding,
 //   and a key controller; MoveFocus moves the focus both ways (plan D10).
+// - harness_locale (phase 8 plan D17, p7-u2-1): no LC_* or LANGUAGE variable reaches the session,
+//   LANG is C.UTF-8, and every locale category is C.UTF-8 (ui_harness_selftest runs it with the
+//   caller's LC_MESSAGES, LC_NUMERIC, and LC_TIME set).
+// - harness_accessible_property (phase 8 plan D17, p7-u2-2): AccessibleProperty reads boolean,
+//   integer, number, string, and token properties by their own type, set by hand and by GTK (a
+//   scale's range); a property the widget lacks gives nullopt. ui_harness_selftest checks that a
+//   property outside these types fails the case.
+// The loopback case also covers p7-u2-3: a scripted redirect is mapped to the server too, and one
+// to a URL that is neither https nor the server's ends the request.
 
 #include "launcher/gtk/dialogRegistry.h"
 #include "launcher/gtk/gameListModel.h"
@@ -29,6 +38,7 @@
 
 #include <adwaita.h>
 #include <chrono>
+#include <clocale>
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
@@ -38,6 +48,7 @@
 
 namespace {
 
+using kyty::gtk::GCharPtr;
 using kyty::gtk::GObjectPtr;
 using KytyUi::Check;
 using namespace std::chrono_literals;
@@ -182,6 +193,30 @@ KYTY_UI_CASE(harness_loopback_http) {
 	Check(unscripted.result.failure == kyty::core::HttpFailure::Status &&
 	          unscripted.result.status == 404,
 	      "an unscripted URL answers 404");
+
+	// p7-u2-3: SoupHttpClient follows redirects itself, and the loopback mapping covers them too.
+	KytyTests::LoopbackResponse moved;
+	moved.status  = 302;
+	moved.headers = {{"Location", kCompatibilityUrl}};
+	server.Script("https://example.invalid/moved", moved);
+	request.url           = "https://example.invalid/moved";
+	const auto redirected = Fetch(client, request);
+	Check(redirected.result.failure == kyty::core::HttpFailure::None &&
+	          redirected.body == KytyUi::kFixtureCompatibility &&
+	          server.Hits(kCompatibilityUrl) == 2,
+	      "a scripted redirect to an https URL is served by the loopback server");
+	KytyTests::LoopbackResponse away = moved;
+	const std::string           other_port =
+	    "http://127.0.0.1:" + std::to_string(server.Port() == 1 ? 2 : 1) + "/elsewhere";
+	away.headers = {{"Location", other_port}};
+	server.Script("https://example.invalid/away", away);
+	request.url        = "https://example.invalid/away";
+	const auto stopped = Fetch(client, request);
+	Check(stopped.result.failure == kyty::core::HttpFailure::Network &&
+	          stopped.result.status == 302 &&
+	          stopped.result.message == "No URL mapping for " + other_port,
+	      "a redirect that is neither https nor the server's ends with Network naming it (" +
+	          stopped.result.message + ")");
 
 	KytyTests::LoopbackResponse chunked;
 	chunked.body.assign(200000, 'k');
@@ -352,5 +387,106 @@ KYTY_UI_CASE(harness_keypress) {
 	Check(KytyUi::KeyPress(GTK_WIDGET(window), GDK_KEY_Tab) &&
 	          gtk_window_get_focus(window) == second,
 	      "Tab runs the window's own binding and moves the focus forward");
+	gtk_window_destroy(window);
+}
+
+KYTY_UI_CASE(harness_locale) {
+	std::string leaked;
+	gchar**     environment = g_get_environ();
+	for (gchar** entry = environment; *entry != nullptr; entry++) {
+		if (g_str_has_prefix(*entry, "LC_") || g_str_has_prefix(*entry, "LANGUAGE=")) {
+			leaked += (leaked.empty() ? "" : ", ") + std::string(*entry);
+		}
+	}
+	g_strfreev(environment);
+	std::printf("%s: LANG %s, leaked variables: %s\n", KytyUi::CaseName().c_str(),
+	            g_getenv("LANG") != nullptr ? g_getenv("LANG") : "(unset)",
+	            leaked.empty() ? "none" : leaked.c_str());
+	Check(leaked.empty(), "no LC_* or LANGUAGE variable reaches the session (" + leaked + ")");
+	Check(g_strcmp0(g_getenv("LANG"), "C.UTF-8") == 0, "LANG is C.UTF-8");
+	// setlocale(LC_ALL, "") ran before gtk_init (uiHarness.cpp): one name for every category.
+	const std::string all = std::setlocale(LC_ALL, nullptr);
+	std::printf("%s: setlocale(LC_ALL) %s\n", KytyUi::CaseName().c_str(), all.c_str());
+	Check(all == "C.UTF-8", "every locale category is C.UTF-8 (" + all + ")");
+	struct Category {
+		int         id;
+		const char* name;
+	};
+	for (const Category category:
+	     {Category {LC_MESSAGES, "LC_MESSAGES"}, Category {LC_NUMERIC, "LC_NUMERIC"},
+	      Category {LC_TIME, "LC_TIME"}}) {
+		const std::string locale = std::setlocale(category.id, nullptr);
+		Check(locale == "C.UTF-8", std::string(category.name) + " is C.UTF-8 (" + locale + ")");
+	}
+	// What the categories change: the decimal separator and the month names.
+	char number[16];
+	std::snprintf(number, sizeof number, "%.1f", 2.5);
+	GDateTime*     date = g_date_time_new_utc(2026, 1, 15, 12, 0, 0);
+	const GCharPtr month(g_date_time_format(date, "%B"));
+	g_date_time_unref(date);
+	std::printf("%s: 2.5 prints as %s, month 1 is %s\n", KytyUi::CaseName().c_str(), number,
+	            month.get() != nullptr ? month.get() : "(none)");
+	Check(std::string(number) == "2.5",
+	      "the decimal separator is a point (" + std::string(number) + ")");
+	Check(month.View() == "January", "month names are English (" + std::string(month.View()) + ")");
+}
+
+KYTY_UI_CASE(harness_accessible_property) {
+	auto*      window = GTK_WINDOW(adw_window_new());
+	GtkWidget* box    = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+	GtkWidget* typed  = gtk_label_new("Typed");
+	GtkWidget* scale  = gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL, 0, 10, 1);
+	GtkWidget* plain  = gtk_button_new_with_label("Plain");
+	gtk_range_set_value(GTK_RANGE(scale), 4);
+	gtk_box_append(GTK_BOX(box), typed);
+	gtk_box_append(GTK_BOX(box), scale);
+	gtk_box_append(GTK_BOX(box), plain);
+	adw_window_set_content(ADW_WINDOW(window), box);
+	// Values equal to the first value AccessibleProperty compares with (FALSE, 0, 0.0, the first
+	// token) and values that differ from it, of each type.
+	gtk_accessible_update_property(
+	    GTK_ACCESSIBLE(typed), GTK_ACCESSIBLE_PROPERTY_MODAL, TRUE,
+	    GTK_ACCESSIBLE_PROPERTY_READ_ONLY, FALSE, GTK_ACCESSIBLE_PROPERTY_LEVEL, 3,
+	    GTK_ACCESSIBLE_PROPERTY_VALUE_NOW, 2.5, GTK_ACCESSIBLE_PROPERTY_VALUE_MIN, 0.0,
+	    GTK_ACCESSIBLE_PROPERTY_SORT, GTK_ACCESSIBLE_SORT_DESCENDING,
+	    GTK_ACCESSIBLE_PROPERTY_AUTOCOMPLETE, GTK_ACCESSIBLE_AUTOCOMPLETE_NONE,
+	    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "A typed label", -1);
+	gtk_accessible_update_property(GTK_ACCESSIBLE(box), GTK_ACCESSIBLE_PROPERTY_LEVEL, 0, -1);
+	gtk_window_present(window);
+	if (!KytyUi::WaitFor([window]() { return gtk_widget_get_mapped(GTK_WIDGET(window)) != FALSE; },
+	                     5000, "the test window to be mapped")) {
+		gtk_window_destroy(window);
+		return;
+	}
+	struct Expected {
+		GtkWidget*            widget;
+		GtkAccessibleProperty property;
+		const char*           what;
+		const char*           value;
+	};
+	const Expected expected[] = {
+	    {typed, GTK_ACCESSIBLE_PROPERTY_MODAL, "MODAL (boolean, true)", "true"},
+	    {typed, GTK_ACCESSIBLE_PROPERTY_READ_ONLY, "READ_ONLY (boolean, false)", "false"},
+	    {typed, GTK_ACCESSIBLE_PROPERTY_LEVEL, "LEVEL (integer, 3)", "3"},
+	    {box, GTK_ACCESSIBLE_PROPERTY_LEVEL, "the box's LEVEL (integer, 0)", "0"},
+	    {typed, GTK_ACCESSIBLE_PROPERTY_VALUE_NOW, "VALUE_NOW (number, 2.5)", "2.5"},
+	    {typed, GTK_ACCESSIBLE_PROPERTY_VALUE_MIN, "VALUE_MIN (number, 0)", "0"},
+	    {typed, GTK_ACCESSIBLE_PROPERTY_SORT, "SORT (token, descending)", "descending"},
+	    {typed, GTK_ACCESSIBLE_PROPERTY_AUTOCOMPLETE, "AUTOCOMPLETE (token, none)", "none"},
+	    {typed, GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "DESCRIPTION (string)", "A typed label"},
+	    {scale, GTK_ACCESSIBLE_PROPERTY_VALUE_MAX, "the scale's VALUE_MAX (number)", "10"},
+	    {scale, GTK_ACCESSIBLE_PROPERTY_VALUE_NOW, "the scale's VALUE_NOW (number)", "4"},
+	    {scale, GTK_ACCESSIBLE_PROPERTY_ORIENTATION, "the scale's ORIENTATION (token)", "vertical"},
+	};
+	for (const auto& item: expected) {
+		const auto value = KytyUi::AccessibleProperty(item.widget, item.property);
+		std::printf("%s: %s: %s\n", KytyUi::CaseName().c_str(), item.what,
+		            value ? value->c_str() : "(none)");
+		Check(value && *value == item.value, std::string(item.what) + " reads \"" + item.value +
+		                                         "\" (" + value.value_or("none") + ")");
+	}
+	Check(!KytyUi::AccessibleProperty(plain, GTK_ACCESSIBLE_PROPERTY_LEVEL).has_value(),
+	      "a property the widget does not have gives nullopt");
+	Check(KytyUi::AccessibleName(plain) == "Plain", "AccessibleName still reads the label");
 	gtk_window_destroy(window);
 }

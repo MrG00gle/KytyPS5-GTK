@@ -28,6 +28,7 @@
 #include "launcher/gtk/gobjectPtr.h"
 
 #include <cstddef>
+#include <functional>
 #include <libsoup/soup.h>
 #include <map>
 #include <memory>
@@ -45,6 +46,12 @@ public:
 		// the system's, so that an https request can reach a loopback SoupServer with a test
 		// certificate. The session keeps its own reference. The launcher never sets it.
 		GTlsDatabase* tls_database = nullptr;
+		// Tests only (phase 8 plan D17): the URL that is sent instead of the URL of each hop, the
+		// requested one and every redirect target, so that no hop leaves a loopback server. The
+		// checks and Location headers use the URLs as requested and redirected; the mapped URL must
+		// pass the same scheme check. An empty result ends the request with HttpFailure::Network
+		// "No URL mapping for <url>" before anything is sent. The launcher never sets it.
+		std::function<std::string(const std::string& url)> rewrite_url;
 	};
 
 	static constexpr int         kMaxRedirects = 10;

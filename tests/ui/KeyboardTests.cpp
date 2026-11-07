@@ -11,7 +11,7 @@
 //   (UiContext::WriteGameContent: two local cheats, the remote file list), and Tab reaches its
 //   content controls (KytyUi::GameContentControls).
 // - keyboard_focus_visible: after Tab the focused control has GTK_STATE_FLAG_FOCUS_VISIBLE and the
-//   control's area of the rendering differs from the unfocused one (the focus indicator).
+//   control's area of the settled rendering differs from the unfocused one (the focus indicator).
 // - keyboard_accelerators: every accelerator of the D30 table resolves to its action
 //   (gtk_application_get_actions_for_accel) and, pressed where its action is enabled, has its
 //   effect (in an Official build, where Ctrl+U exists).
@@ -565,7 +565,9 @@ KYTY_UI_CASE(keyboard_focus_visible) {
 		GtkWindow* gtk_window = GTK_WINDOW(window);
 		gtk_window_set_focus(gtk_window, nullptr);
 		gtk_window_set_focus_visible(gtk_window, FALSE);
-		const auto before = KytyUi::Render(gtk_window, "before Tab");
+		// Settled renderings (p7-pr-4): the focus ring fades in through a CSS transition, which the
+		// first painted frame after Tab may still show at its start, the more so under CPU load.
+		const auto before = KytyUi::RenderSettled(gtk_window, "before Tab");
 		Check(KytyUi::KeyPress(GTK_WIDGET(window), GDK_KEY_Tab), "Tab is handled");
 		GtkWidget* focus = gtk_window_get_focus(gtk_window);
 		std::printf("%s: Tab focused %s\n", KytyUi::CaseName().c_str(), Describe(focus).c_str());
@@ -577,7 +579,7 @@ KYTY_UI_CASE(keyboard_focus_visible) {
 		Check(focus != nullptr &&
 		          (gtk_widget_get_state_flags(focus) & GTK_STATE_FLAG_FOCUS_VISIBLE) != 0,
 		      "the focused control has GTK_STATE_FLAG_FOCUS_VISIBLE");
-		const auto      after = KytyUi::Render(gtk_window, "after Tab");
+		const auto      after = KytyUi::RenderSettled(gtk_window, "after Tab");
 		graphene_rect_t bounds;
 		if (focus != nullptr && before && after &&
 		    gtk_widget_compute_bounds(focus, GTK_WIDGET(window), &bounds) != FALSE) {

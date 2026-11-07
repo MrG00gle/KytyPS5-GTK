@@ -1112,19 +1112,40 @@ KYTY_UI_CASE(settings_paths_display) {
 		GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(settings));
 		double      x       = 0;
 		double      y       = 0;
+		// A point in the editor's coordinates (p7-u6-9): the surface also holds the window's
+		// shadow margin, which is outside the editor's allocation.
+		const auto pointer_text = [root](double px, double py) -> std::string {
+			const int         width  = gtk_widget_get_width(root);
+			const int         height = gtk_widget_get_height(root);
+			const std::string at =
+			    std::to_string(std::lround(px)) + "," + std::to_string(std::lround(py));
+			if (px < 0 || py < 0 || px >= width || py >= height) {
+				return "the pointer is at " + at +
+				       ", in the window's shadow margin or beyond it, outside the editor's " +
+				       std::to_string(width) + "x" + std::to_string(height) + " allocation";
+			}
+			GtkWidget* hovered = gtk_widget_pick(root, px, py, GTK_PICK_DEFAULT);
+			return "the pointer is in the editor at " + at + ", over " +
+			       (hovered != nullptr ? KytyUi::WidgetPath(hovered) : std::string("nothing"));
+		};
 		if (pointer != nullptr && surface != nullptr &&
 		    gdk_surface_get_device_position(surface, pointer, &x, &y, nullptr) != FALSE) {
 			double dx = 0;
 			double dy = 0;
 			gtk_native_get_surface_transform(GTK_NATIVE(settings), &dx, &dy);
-			GtkWidget* hovered = gtk_widget_pick(root, x - dx, y - dy, GTK_PICK_DEFAULT);
-			g_print("settings_paths_display: %s: the pointer is in the editor at %.0f,%.0f, over "
-			        "%s\n",
-			        when.c_str(), x - dx, y - dy,
-			        hovered != nullptr ? KytyUi::WidgetPath(hovered).c_str() : "nothing");
+			g_print("settings_paths_display: %s: %s\n", when.c_str(),
+			        pointer_text(x - dx, y - dy).c_str());
 		} else {
 			g_print("settings_paths_display: %s: the pointer is not in the editor\n", when.c_str());
 		}
+		// The phase 7 run's point -1,34 lies in the shadow margin: its text never says "in the
+		// editor".
+		const std::string margin = pointer_text(-1, 34);
+		g_print("settings_paths_display: %s: for the point -1,34: %s\n", when.c_str(),
+		        margin.c_str());
+		Check(margin.find("in the editor") == std::string::npos &&
+		          margin.find("shadow margin") != std::string::npos,
+		      when + ": a point in the shadow margin is described as outside the editor");
 		CancelAndClose(settings, "the global settings");
 	};
 	KytyUi::RunWithLibrary(ui, [&](KytyApplication* application, KytyMainWindow* window) {

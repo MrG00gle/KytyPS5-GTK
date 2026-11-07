@@ -12,7 +12,8 @@
 //   asserted and min, median, and max printed (D15). With --capture-dir it writes each toplevel
 //   before (light) and after (dark) the switch.
 // A window's scheme is read from its rendering: the mean luminance of its opaque pixels is below
-// 0.5 in the dark scheme and above it in the light one.
+// 0.5 in the dark scheme and above it in the light one. The initial, start, and end checks read a
+// settled rendering (KytyUi::RenderSettled, p7-pr-4); the switch times read each painted frame.
 
 #include "launcher/gtk/dialogRegistry.h"
 #include "launcher/gtk/gobjectPtr.h"
@@ -112,7 +113,9 @@ Sample NextFrame(GtkWindow* window) {
 }
 
 bool IsDark(GtkWindow* window, const std::string& what) {
-	const auto   texture   = KytyUi::Render(window, what);
+	// A settled rendering (p7-pr-4): a scheme change may still be in a transition at the first
+	// painted frame. NextFrame() measures the switch time instead and takes every frame as it is.
+	const auto   texture   = KytyUi::RenderSettled(window, what);
 	const double luminance = texture ? MeanLuminance(texture.get()) : -1;
 	std::printf("%s: %s: mean luminance %.3f\n", KytyUi::CaseName().c_str(), what.c_str(),
 	            luminance);

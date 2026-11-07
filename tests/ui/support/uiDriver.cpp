@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <string>
+#include <utility>
 
 namespace KytyUi {
 
@@ -304,14 +305,78 @@ std::string AllText(GtkWidget* root) {
 
 // ---- Accessibility
 
+namespace {
+
+enum class AccessibleValue { Boolean, Integer, Number, String, Token, Other };
+
+// The value type that GTK declares for property (gtkenums.h). GTK 4.14 to 4.22 declare reference
+// and reference list values only for relations, so Other is a value outside the table.
+AccessibleValue ValueType(GtkAccessibleProperty property) {
+	switch (property) {
+		case GTK_ACCESSIBLE_PROPERTY_HAS_POPUP:
+		case GTK_ACCESSIBLE_PROPERTY_MODAL:
+		case GTK_ACCESSIBLE_PROPERTY_MULTI_LINE:
+		case GTK_ACCESSIBLE_PROPERTY_MULTI_SELECTABLE:
+		case GTK_ACCESSIBLE_PROPERTY_READ_ONLY:
+		case GTK_ACCESSIBLE_PROPERTY_REQUIRED: return AccessibleValue::Boolean;
+		case GTK_ACCESSIBLE_PROPERTY_LEVEL: return AccessibleValue::Integer;
+		case GTK_ACCESSIBLE_PROPERTY_VALUE_MAX:
+		case GTK_ACCESSIBLE_PROPERTY_VALUE_MIN:
+		case GTK_ACCESSIBLE_PROPERTY_VALUE_NOW: return AccessibleValue::Number;
+		case GTK_ACCESSIBLE_PROPERTY_DESCRIPTION:
+		case GTK_ACCESSIBLE_PROPERTY_KEY_SHORTCUTS:
+		case GTK_ACCESSIBLE_PROPERTY_LABEL:
+		case GTK_ACCESSIBLE_PROPERTY_PLACEHOLDER:
+		case GTK_ACCESSIBLE_PROPERTY_ROLE_DESCRIPTION:
+		case GTK_ACCESSIBLE_PROPERTY_VALUE_TEXT: return AccessibleValue::String;
+#if GTK_CHECK_VERSION(4, 16, 0)
+		case GTK_ACCESSIBLE_PROPERTY_HELP_TEXT: return AccessibleValue::String;
+#endif
+		case GTK_ACCESSIBLE_PROPERTY_AUTOCOMPLETE:
+		case GTK_ACCESSIBLE_PROPERTY_ORIENTATION:
+		case GTK_ACCESSIBLE_PROPERTY_SORT: return AccessibleValue::Token;
+	}
+	return AccessibleValue::Other;
+}
+
+// gtk_test_accessible_check_property reads its value argument by the property's type and returns
+// the actual value as text unless it equals that value: of two different values of that type, one
+// gives the text.
+template <typename T>
+std::string ActualValue(GtkAccessible* accessible, GtkAccessibleProperty property, T first,
+                        T second) {
+	GCharPtr actual(gtk_test_accessible_check_property(accessible, property, first));
+	if (!actual) {
+		actual = GCharPtr(gtk_test_accessible_check_property(accessible, property, second));
+	}
+	return std::string(actual.View());
+}
+
+} // namespace
+
 std::optional<std::string> AccessibleProperty(GtkWidget* widget, GtkAccessibleProperty property) {
-	if (gtk_test_accessible_has_property(GTK_ACCESSIBLE(widget), property) == FALSE) {
+	const AccessibleValue type = ValueType(property);
+	if (type == AccessibleValue::Other) {
+		Fail("AccessibleProperty: the accessible property " +
+		     std::to_string(static_cast<int>(property)) +
+		     " has no boolean, integer, number, string, or token value");
 		return std::nullopt;
 	}
-	// check_property returns the actual value as text unless it equals the one passed.
-	const GCharPtr actual(
-	    gtk_test_accessible_check_property(GTK_ACCESSIBLE(widget), property, "\x01"));
-	return std::string(actual.View());
+	auto* accessible = GTK_ACCESSIBLE(widget);
+	if (gtk_test_accessible_has_property(accessible, property) == FALSE) {
+		return std::nullopt;
+	}
+	switch (type) {
+		case AccessibleValue::Boolean:
+			return ActualValue<gboolean>(accessible, property, FALSE, TRUE);
+		case AccessibleValue::Integer: return ActualValue<int>(accessible, property, 0, 1);
+		case AccessibleValue::Number: return ActualValue<double>(accessible, property, 0.0, 1.0);
+		case AccessibleValue::String:
+			return ActualValue<const char*>(accessible, property, "\x01", "\x02");
+		case AccessibleValue::Token: return ActualValue<int>(accessible, property, 0, 1);
+		case AccessibleValue::Other: break;
+	}
+	return std::nullopt;
 }
 
 std::vector<GtkWidget*> LabelledBy(GtkWidget* widget) {
@@ -601,25 +666,39 @@ bool CloseAlert(GtkWindow* alert, std::string_view label) {
 
 // ---- Frames and captures
 
-bool WaitForPaintedFrame(GtkWidget* widget, int timeout_ms) {
+namespace {
+
+// WaitForPaintedFrame(); *frame_time (when given) is the frame clock's time of the last painted
+// frame, read in after-paint (the time that frame's CSS animations and transitions were at).
+bool WaitForPaint(GtkWidget* widget, int timeout_ms, gint64* frame_time) {
 	GdkFrameClock* clock = gtk_widget_get_frame_clock(widget);
 	if (clock == nullptr) {
 		Fail(std::string("a ") + G_OBJECT_TYPE_NAME(widget) +
 		     " without a frame clock (not realized)");
 		return false;
 	}
-	bool       painted = false;
-	const auto scope   = SignalScope::Connect(
-	    clock, "after-paint", G_CALLBACK(+[](GdkFrameClock* /*clock*/, gpointer data) {
-		    *static_cast<bool*>(data) = true;
+	struct Paint {
+		bool   painted    = false;
+		gint64 frame_time = 0;
+	} paint;
+	const auto scope = SignalScope::Connect(
+	    clock, "after-paint", G_CALLBACK(+[](GdkFrameClock* frame_clock, gpointer data) {
+		    auto* state       = static_cast<Paint*>(data);
+		    state->frame_time = gdk_frame_clock_get_frame_time(frame_clock);
+		    state->painted    = true;
 	    }),
-	    &painted);
+	    &paint);
 	gtk_widget_queue_draw(widget);
-	return WaitFor([&painted]() { return painted; }, timeout_ms,
-	               std::string("a painted frame of a ") + G_OBJECT_TYPE_NAME(widget));
+	const bool painted = WaitFor([&paint]() { return paint.painted; }, timeout_ms,
+	                             std::string("a painted frame of a ") + G_OBJECT_TYPE_NAME(widget));
+	if (frame_time != nullptr) {
+		*frame_time = paint.frame_time;
+	}
+	return painted;
 }
 
-GObjectPtr<GdkTexture> Render(GtkWindow* window, std::string_view what) {
+// Render(); *frame_time as in WaitForPaint().
+GObjectPtr<GdkTexture> RenderFrame(GtkWindow* window, std::string_view what, gint64* frame_time) {
 	const std::string name(what);
 	if (gtk_widget_get_mapped(GTK_WIDGET(window)) == FALSE) {
 		Fail(name + ": the window is not mapped");
@@ -632,7 +711,7 @@ GObjectPtr<GdkTexture> Render(GtkWindow* window, std::string_view what) {
 		               gtk_widget_get_height(GTK_WIDGET(window)) > 0;
 	        },
 	        2000, name + ": the window's first layout") ||
-	    !WaitForPaintedFrame(GTK_WIDGET(window))) {
+	    !WaitForPaint(GTK_WIDGET(window), 2000, frame_time)) {
 		return {};
 	}
 	auto paintable  = GObjectPtr<GdkPaintable>::Adopt(gtk_widget_paintable_new(GTK_WIDGET(window)));
@@ -660,6 +739,88 @@ GObjectPtr<GdkTexture> Render(GtkWindow* window, std::string_view what) {
 		Fail(name + ": the renderer made no texture");
 	}
 	return texture;
+}
+
+// a and b have the same size and the same pixels.
+bool SamePixels(GdkTexture* a, GdkTexture* b) {
+	const int width  = gdk_texture_get_width(a);
+	const int height = gdk_texture_get_height(a);
+	if (width != gdk_texture_get_width(b) || height != gdk_texture_get_height(b)) {
+		return false;
+	}
+	const gsize         stride = static_cast<gsize>(width) * 4;
+	std::vector<guint8> first(stride * static_cast<gsize>(height));
+	std::vector<guint8> second(first.size());
+	gdk_texture_download(a, first.data(), stride);
+	gdk_texture_download(b, second.data(), stride);
+	return first == second;
+}
+
+// How long, in frame-clock time, consecutive renderings must stay byte-identical before
+// RenderSettled() takes them as settled: three frames at 60 Hz. CSS transitions advance with the
+// frame time, so frames painted at the same frame time look the same while one is running.
+constexpr gint64 kSettledSpanUs = 50 * 1000;
+
+double Milliseconds(gint64 microseconds) {
+	return static_cast<double>(microseconds) / 1000.0;
+}
+
+} // namespace
+
+bool WaitForPaintedFrame(GtkWidget* widget, int timeout_ms) {
+	return WaitForPaint(widget, timeout_ms, nullptr);
+}
+
+GObjectPtr<GdkTexture> Render(GtkWindow* window, std::string_view what) {
+	return RenderFrame(window, what, nullptr);
+}
+
+GObjectPtr<GdkTexture> RenderSettled(GtkWindow* window, std::string_view what, int timeout_ms) {
+	const std::string name(what);
+	const gint64      start         = g_get_monotonic_time();
+	const gint64      deadline      = start + gint64 {timeout_ms} * 1000;
+	gint64            previous_time = 0;
+	auto              previous      = RenderFrame(window, what, &previous_time);
+	// The frame time of the first rendering of the current run of identical ones.
+	gint64 same_since = previous_time;
+	int    renders    = 1;
+	// Painted frames whose frame time did not advance past the previous one.
+	int repeated = 0;
+	while (previous) {
+		gint64 time = 0;
+		auto   next = RenderFrame(window, what, &time);
+		if (!next) {
+			return {};
+		}
+		renders++;
+		if (time <= previous_time) {
+			repeated++;
+		}
+		const bool same = SamePixels(previous.get(), next.get());
+		if (!same) {
+			same_since = time;
+		} else if (time - same_since >= kSettledSpanUs) {
+			std::printf("%s: %s: settled after %d renders, %.0f ms (unchanged for %.0f ms of frame "
+			            "time, %d repeated frame times)\n",
+			            CaseName().c_str(), name.c_str(), renders,
+			            Milliseconds(g_get_monotonic_time() - start),
+			            Milliseconds(time - same_since), repeated);
+			return next;
+		}
+		if (g_get_monotonic_time() >= deadline) {
+			Fail(name + ": the rendering did not settle within " + std::to_string(timeout_ms) +
+			     " ms (" + std::to_string(renders) + " renders, " +
+			     (same ? "unchanged for only " +
+			                 std::to_string(static_cast<int>(Milliseconds(time - same_since))) +
+			                 " ms of frame time"
+			           : std::string("the last two differ")) +
+			     ")");
+			return {};
+		}
+		previous      = std::move(next);
+		previous_time = time;
+	}
+	return {};
 }
 
 bool Capture(GtkWindow* window, std::string_view name) {

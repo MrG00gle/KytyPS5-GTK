@@ -175,7 +175,7 @@ SoupHttpClient::RequestRef SoupHttpClient::Take(gpointer data) {
 SoupHttpClient::SoupHttpClient(): SoupHttpClient(Options {}) {}
 
 SoupHttpClient::SoupHttpClient(Options options)
-    : m_options(options), m_session(GObjectPtr<SoupSession>::Adopt(soup_session_new())) {
+    : m_options(std::move(options)), m_session(GObjectPtr<SoupSession>::Adopt(soup_session_new())) {
 	if (m_options.tls_database != nullptr) {
 		soup_session_set_tls_database(m_session.get(), m_options.tls_database);
 		// The session holds the database; the client keeps no pointer of its own.
@@ -303,8 +303,27 @@ void SoupHttpClient::Begin(const RequestRef& request) {
 }
 
 void SoupHttpClient::Send(const RequestRef& request) {
-	request->message =
-	    GObjectPtr<SoupMessage>::Adopt(soup_message_new_from_uri("GET", request->current.get()));
+	GUri*  target = request->current.get();
+	UriPtr mapped;
+	if (m_options.rewrite_url) {
+		// The first hop maps the URL as the caller wrote it, a redirect its resolved target.
+		const std::string url =
+		    request->redirects == 0 ? request->request.url : UriText(request->current.get());
+		const std::string to = m_options.rewrite_url(url);
+		if (to.empty()) {
+			// Not translated: only tests set rewrite_url, so no user sees this message.
+			Finish(request->id, HttpFailure::Network, "No URL mapping for " + url);
+			return;
+		}
+		mapped.reset(g_uri_parse(to.c_str(), kUriFlags, nullptr));
+		if (!mapped || !Allowed(mapped.get())) {
+			Finish(request->id, HttpFailure::Network,
+			       Message(_("Only https URLs are allowed: %s"), to));
+			return;
+		}
+		target = mapped.get();
+	}
+	request->message     = GObjectPtr<SoupMessage>::Adopt(soup_message_new_from_uri("GET", target));
 	SoupMessage* message = request->message.get();
 	soup_message_add_flags(message, SOUP_MESSAGE_NO_REDIRECT);
 	SoupMessageHeaders* headers = soup_message_get_request_headers(message);

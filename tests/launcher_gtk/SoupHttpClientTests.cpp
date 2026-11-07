@@ -8,8 +8,10 @@
 // and Cancel() each give one Cancelled; Cancel() of a finished, unknown, or 0 id does nothing; a
 // non-https URL without the test option gives Network "Only https URLs are allowed"; a redirect to
 // another loopback port is followed under HttpsOnly and refused under SameOrigin, a relative
-// same-origin redirect is followed, and a redirect loop stops after 10 redirects; the request
-// headers are sent and no User-Agent of the client's own. One GMainLoop context serves both.
+// same-origin redirect is followed, and a redirect loop stops after 10 redirects; the test option
+// rewrite_url maps the requested URL and every redirect target, and an unmapped one ends with
+// Network naming it before anything is sent; the request headers are sent and no User-Agent of
+// the client's own. One GMainLoop context serves both.
 // https (phase 7 plan D12, p6-u3-5): a loopback SoupServer with the test certificate of
 // tests/fixtures/tls/ answers a client that trusts the test authority (Options::tls_database)
 // without allow_loopback_http; the system's authorities refuse that certificate (Network, nothing
@@ -592,6 +594,72 @@ void TestRedirects(Server& server) {
 	      "a redirect to a non-https URL is refused and named");
 }
 
+// Options::rewrite_url (phase 8 plan D17, p7-u2-3): https://mapped.example/<path> goes to the
+// loopback server's /<path>, and every other URL has no mapping. A redirect to a mapped URL, also a
+// relative one (resolved against the URL as requested), is served there; a request or a redirect to
+// an unmapped https URL ends with Network naming it, and nothing is sent.
+void TestRewrite(Server& server) {
+	const std::string        mapped_prefix = "https://mapped.example";
+	std::vector<std::string> mapped_urls;
+	auto                     options = Loopback();
+	options.rewrite_url              = [&](const std::string& url) -> std::string {
+		mapped_urls.push_back(url);
+		if (url.rfind(mapped_prefix + "/", 0) == 0) {
+			return server.Url(url.substr(mapped_prefix.size()));
+		}
+		return "";
+	};
+	SoupHttpClient client(std::move(options));
+
+	const int  ok_hits = server.Hits("/ok");
+	const auto direct  = Run(client, Request(mapped_prefix + "/ok"));
+	Check(direct.result.failure == HttpFailure::None && direct.body == "hello" &&
+	          server.Hits("/ok") == ok_hits + 1,
+	      "a mapped https URL is served by the URL it maps to");
+
+	server.SetRedirectTarget(mapped_prefix + "/ok");
+	mapped_urls.clear();
+	const auto redirected = Run(client, Request(mapped_prefix + "/redirect-other"));
+	Check(redirected.result.failure == HttpFailure::None && redirected.body == "hello" &&
+	          server.Hits("/ok") == ok_hits + 2,
+	      "a redirect to a mapped https URL is mapped too and served");
+	Check(mapped_urls ==
+	          std::vector<std::string> {mapped_prefix + "/redirect-other", mapped_prefix + "/ok"},
+	      "rewrite_url sees the requested URL and the redirect target as the server wrote it");
+
+	auto relative      = Request(mapped_prefix + "/redirect-same");
+	relative.redirects = RedirectPolicy::SameOrigin;
+	const auto local   = Run(client, relative);
+	Check(
+	    local.result.failure == HttpFailure::None && local.body == "hello" &&
+	        server.Hits("/ok") == ok_hits + 3,
+	    "a relative redirect resolves against the requested URL, keeps its origin, and is mapped");
+
+	const std::string unmapped = "https://unmapped.example/secret?x=1";
+	server.SetRedirectTarget(unmapped);
+	const int  secret_hits = server.Hits("/secret");
+	const auto refused     = Run(client, Request(mapped_prefix + "/redirect-other"));
+	Check(refused.result.failure == HttpFailure::Network && refused.result.status == 302 &&
+	          refused.result.message == "No URL mapping for " + unmapped && refused.chunks == 0,
+	      "a redirect to an unmapped https URL ends with Network naming it");
+	const auto unknown = Run(client, Request(unmapped));
+	Check(unknown.result.failure == HttpFailure::Network && unknown.result.status == 0 &&
+	          unknown.result.message == "No URL mapping for " + unmapped,
+	      "a request of an unmapped https URL ends with Network naming it");
+	Check(server.Hits("/secret") == secret_hits, "nothing is sent for an unmapped URL");
+
+	// A mapping must pass the scheme check like any URL.
+	SoupHttpClient production(SoupHttpClient::Options {
+	    .rewrite_url = [&server](const std::string&) { return server.Url("/ok"); }});
+	const int      before = server.Hits("/ok");
+	const auto     plain  = Run(production, Request(mapped_prefix + "/ok"));
+	Check(plain.result.failure == HttpFailure::Network &&
+	          plain.result.message == "Only https URLs are allowed: " + server.Url("/ok") &&
+	          server.Hits("/ok") == before,
+	      "a mapping to http without allow_loopback_http is refused and named");
+	Check(client.ActiveCount() == 0 && production.ActiveCount() == 0, "no request is left");
+}
+
 void TestHeaders(Server& server) {
 	SoupHttpClient client(Loopback());
 	auto           request = Request(server.Url("/headers"));
@@ -662,6 +730,7 @@ int main() {
 	TestLimits(server);
 	TestCancellation(server);
 	TestRedirects(server);
+	TestRewrite(server);
 	TestHeaders(server);
 	TestTls(server);
 	std::printf("SoupHttpClientTests: all tests passed\n");

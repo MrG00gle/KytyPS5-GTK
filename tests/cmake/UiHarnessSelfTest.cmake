@@ -1,8 +1,10 @@
 # ui_harness_selftest (task 22.6; Requirements 16.6, 17.11; phase 7 plan D38): the UI test harness
 # fails a case on a deliberate critical or warning and prints the message, passes a declared
-# expected warning, fails when a declared warning never arrives, and passes a clean run, on every
-# backend inside tests/ui/with-display.sh ("launcher_ui_tests --selftest <kind>"); and the wrapper
-# exits 77 when the display server executable it is told to use does not exist. Run as
+# expected warning, fails when a declared warning never arrives, passes a clean run, and fails a
+# case that reads an accessible property of no supported type (phase 8 plan D17), on every
+# backend inside tests/ui/with-display.sh ("launcher_ui_tests --selftest <kind>"); the case
+# harness_locale passes with the caller's LC_MESSAGES, LC_NUMERIC, and LC_TIME set (p7-u2-1); and
+# the wrapper exits 77 when the display server executable it is told to use does not exist. Run as
 #   cmake -DBASH=<bash> -DWRAPPER=<tests/ui/with-display.sh> -DPORTAL=<ui_fake_portal>
 #         -DEXE=<launcher_ui_tests> -DWORK_DIR=<scratch directory> -P UiHarnessSelfTest.cmake
 # The exit status is 0 when every check passed, 1 when one failed, and 77 (the ui label's skip code)
@@ -26,20 +28,22 @@ endforeach()
 set(kyty_failures "")
 set(kyty_missing_backends "")
 
-# Runs "launcher_ui_tests --selftest <kind>" inside with-display.sh for backend and sets
-# kyty_result and kyty_output (stdout and stderr, merged in order) in the caller.
-function(kyty_selftest_run backend kind)
+# Runs "launcher_ui_tests <arguments>" (--selftest <kind>, or --case <name>) inside with-display.sh
+# for backend and sets kyty_result and kyty_output (stdout and stderr, merged in order) in the
+# caller.
+function(kyty_selftest_run backend)
 	execute_process(
 		COMMAND "${BASH}" "${WRAPPER}" --portal "${PORTAL}" ${backend}
-		        -- "${EXE}" --selftest ${kind}
+		        -- "${EXE}" ${ARGN}
 		WORKING_DIRECTORY "${WORK_DIR}"
 		INPUT_FILE /dev/null
 		RESULT_VARIABLE kyty_run_result
 		OUTPUT_VARIABLE kyty_run_output
 		ERROR_VARIABLE kyty_run_output
 		TIMEOUT 60)
-	message(STATUS "UiHarnessSelfTest: ${backend} ${kind}: exit '${kyty_run_result}'\n"
-		"${kyty_run_output}")
+	list(JOIN ARGN " " kyty_run_arguments)
+	message(STATUS "UiHarnessSelfTest: ${backend} ${kyty_run_arguments}: "
+		"exit '${kyty_run_result}'\n${kyty_run_output}")
 	set(kyty_result "${kyty_run_result}" PARENT_SCOPE)
 	set(kyty_output "${kyty_run_output}" PARENT_SCOPE)
 endfunction()
@@ -82,12 +86,16 @@ string(CONCAT kyty_text_missing-expected "FAILED: the expected WARNING from kyty
 	"\"${kyty_declared}...\" arrived 0 time(s), not once")
 set(kyty_exit_clean 0)
 set(kyty_text_clean "PASS")
+set(kyty_exit_accessible-untyped 1)
+string(CONCAT kyty_text_accessible-untyped "FAILED: AccessibleProperty: the accessible property 31 "
+	"has no boolean, integer, number, string, or token value")
 
 foreach(kyty_backend IN ITEMS wayland x11)
-	foreach(kyty_kind IN ITEMS critical warning expected-warning missing-expected clean)
+	foreach(kyty_kind IN ITEMS critical warning expected-warning missing-expected clean
+		accessible-untyped)
 		set(kyty_expected_exit ${kyty_exit_${kyty_kind}})
 		set(kyty_expected_text "selftest-${kyty_kind}: ${kyty_text_${kyty_kind}}")
-		kyty_selftest_run(${kyty_backend} ${kyty_kind})
+		kyty_selftest_run(${kyty_backend} --selftest ${kyty_kind})
 		if(kyty_result STREQUAL "77")
 			# with-display.sh found no server executable: the remaining kinds cannot run either.
 			list(APPEND kyty_missing_backends ${kyty_backend})
@@ -108,6 +116,33 @@ foreach(kyty_backend IN ITEMS wayland x11)
 	endforeach()
 endforeach()
 
+# The caller's locale categories never reach the session (with-display.sh unsets every LC_*
+# variable; phase 8 plan D17, p7-u2-1): the case harness_locale passes with LC_MESSAGES,
+# LC_NUMERIC, and LC_TIME set here, on the first backend that this host has.
+set(kyty_locale_backend "")
+foreach(kyty_backend IN ITEMS wayland x11)
+	if(NOT kyty_backend IN_LIST kyty_missing_backends)
+		set(kyty_locale_backend ${kyty_backend})
+		break()
+	endif()
+endforeach()
+if(kyty_locale_backend)
+	set(kyty_locale_variables LC_MESSAGES LC_NUMERIC LC_TIME)
+	foreach(kyty_variable IN LISTS kyty_locale_variables)
+		set(ENV{${kyty_variable}} "de_DE.UTF-8")
+	endforeach()
+	kyty_selftest_run(${kyty_locale_backend} --case harness_locale)
+	foreach(kyty_variable IN LISTS kyty_locale_variables)
+		unset(ENV{${kyty_variable}})
+	endforeach()
+	set(kyty_what "${kyty_locale_backend} harness_locale with LC_MESSAGES, LC_NUMERIC, LC_TIME set")
+	kyty_expect_exit("${kyty_what}" "${kyty_result}" 0)
+	kyty_expect_text("${kyty_what}" "${kyty_output}"
+		"harness_locale: LANG C.UTF-8, leaked variables: none")
+	kyty_expect_text("${kyty_what}" "${kyty_output}" "harness_locale: PASS")
+	kyty_expect_no_text("${kyty_what}" "${kyty_output}" "FAILED")
+endif()
+
 # A display server executable that does not exist: with-display.sh exits 77 before anything runs.
 # A backend whose real runs already exited 77 is left out: with-display.sh would stop at the
 # executable that this host lacks (dbus-daemon, which it checks first, or the server) instead.
@@ -121,7 +156,7 @@ foreach(kyty_server IN ITEMS "wayland|KYTY_UI_WESTON|weston" "x11|KYTY_UI_XVFB|X
 	endif()
 	set(kyty_absent "${WORK_DIR}/no-such-${kyty_name}")
 	set(ENV{${kyty_variable}} "${kyty_absent}")
-	kyty_selftest_run(${kyty_backend} clean)
+	kyty_selftest_run(${kyty_backend} --selftest clean)
 	unset(ENV{${kyty_variable}})
 	set(kyty_what "${kyty_backend} with ${kyty_variable}=${kyty_absent}")
 	kyty_expect_exit("${kyty_what}" "${kyty_result}" 77)
@@ -145,4 +180,5 @@ if(kyty_missing_backends)
 	message(STATUS "${kyty_skip_text}; skipping with exit 77")
 	cmake_language(EXIT 77)
 endif()
-message(STATUS "UiHarnessSelfTest: PASS (5 kinds on wayland and x11; missing servers give 77)")
+message(STATUS "UiHarnessSelfTest: PASS (6 kinds on wayland and x11, harness_locale with the "
+	"caller's LC_* set; missing servers give 77)")

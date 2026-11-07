@@ -15,8 +15,9 @@
 #   WAYLAND_DISPLAY or DISPLAY, GDK_BACKEND, GSETTINGS_BACKEND=memory, GIO_USE_VFS=local,
 #   GIO_USE_VOLUME_MONITOR=unix, GIO_USE_PROXY_RESOLVER=dummy, GTK_A11Y=test (GTK's test
 #   accessibility backend: no accessibility bus is needed), GSK_RENDERER=cairo,
-#   SDL_AUDIO_DRIVER=dummy, NO_AT_BRIDGE=1, and LANG=C.UTF-8 (LC_ALL and LANGUAGE unset). Every other
-#   variable passes through (LLVM_PROFILE_FILE in coverage builds).
+#   SDL_AUDIO_DRIVER=dummy, NO_AT_BRIDGE=1, and LANG=C.UTF-8 with LANGUAGE and every LC_* variable
+#   unset, so no locale category of the caller (LC_MESSAGES, LC_NUMERIC, LC_TIME, ...) overrides
+#   it. Every other variable passes through (LLVM_PROFILE_FILE in coverage builds).
 # The exit status is the command's. Only a missing dbus-daemon, weston, or Xvfb executable gives 77
 # (the skip code of the ui tests; CI counts a skip as a failure); a server that exists but does not
 # start within 10 s is an error (exit 1, its log on stderr). KYTY_UI_DBUS_DAEMON, KYTY_UI_WESTON, and
@@ -111,7 +112,7 @@ wait_until() {
 mkdir -m 0700 "$root/runtime" && mkdir "$root/config" "$root/data" "$root/cache" "$root/home" || exit 1
 export XDG_RUNTIME_DIR="$root/runtime" XDG_CONFIG_HOME="$root/config" XDG_DATA_HOME="$root/data"
 export XDG_CACHE_HOME="$root/cache" HOME="$root/home"
-unset WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS GDK_BACKEND LC_ALL LANGUAGE
+unset WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS GDK_BACKEND LANGUAGE "${!LC_@}"
 
 cat > "$root/dbus.conf" << EOF
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"

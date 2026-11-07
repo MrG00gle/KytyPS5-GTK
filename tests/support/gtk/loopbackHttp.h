@@ -26,8 +26,9 @@ struct LoopbackResponse {
 	unsigned    status = 200;
 	std::string body;
 	std::string content_type = "application/json";
-	// Extra response headers, for example a Location of a redirect (to stay off the network, a
-	// redirect target is LoopbackServer::Rewrite(<https URL>)).
+	// Extra response headers, for example a Location of a redirect: LoopbackHttpClient sends an
+	// https target to this server too, and any target that is neither https nor this server's
+	// ends the request (HttpFailure::Network, "No URL mapping for <url>").
 	std::vector<std::pair<std::string, std::string>> headers;
 	// The response starts this many milliseconds after the request arrived.
 	unsigned delay_ms = 0;
@@ -89,10 +90,11 @@ private:
 	std::vector<std::unique_ptr<Pending>>   m_pending;
 };
 
-// The core::HttpClient of the UI tests: records each request (URL, method, headers), rewrites
-// https://<host>/<path> to the server (LoopbackServer::Rewrite), and hands it to a SoupHttpClient
-// with allow_loopback_http, whose results and request ids it passes on unchanged. The server must
-// outlive the client.
+// The core::HttpClient of the UI tests: records each request (URL, method, headers) and hands it to
+// a SoupHttpClient with allow_loopback_http, whose results and request ids it passes on unchanged.
+// That client's rewrite_url sends every hop to the server, the request and each redirect: an https
+// URL becomes LoopbackServer::Rewrite(url), a URL of the server itself stays, and any other URL has
+// no mapping, so nothing reaches the network. The server must outlive the client.
 class LoopbackHttpClient final: public kyty::core::HttpClient {
 public:
 	explicit LoopbackHttpClient(LoopbackServer& server);

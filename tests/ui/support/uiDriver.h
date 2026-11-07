@@ -54,7 +54,12 @@ std::string AllText(GtkWidget* root);
 
 // ---- Accessibility (GTK_A11Y=test, plan D9)
 
-// An accessible property as GTK's test API reports it, or nullopt when the widget has none.
+// An accessible property as GTK's test API prints it ("true", "3", "2.5", "vertical", the string),
+// or nullopt when the widget has none. GTK's test API reads the value it compares with by the
+// property's own type, so the helper passes one of that type: boolean, integer, number (double),
+// string, or token (an enum). A property without one of these types (GTK declares reference and
+// list values only for relations, see LabelledBy) fails the case and gives nullopt (phase 8 plan
+// D17, p7-u2-2).
 std::optional<std::string> AccessibleProperty(GtkWidget* widget, GtkAccessibleProperty property);
 // The widgets of the widget's LABELLED_BY relation that are in its window's widget tree, in
 // relation order (GTK's test API prints the relation as "<type><0x<address>>..."; the addresses
@@ -135,6 +140,18 @@ bool WaitForPaintedFrame(GtkWidget* widget, int timeout_ms = 2000);
 // its first layout and a painted frame; an empty pointer after a Fail when it is not mapped, gets
 // no size, or draws nothing.
 kyty::gtk::GObjectPtr<GdkTexture> Render(GtkWindow* window, std::string_view what);
+
+// Render() after each painted frame until consecutive renderings keep the same pixels over painted
+// frames that span at least 50 ms of frame-clock time, and the last one (phase 8 plan D15,
+// p7-pr-4): GTK animations stay on, so a state change (a focus ring, a hover) may still be in its
+// CSS transition at the first painted frame, the more so under CPU load. Two identical renderings
+// alone do not prove it ended: the frame clock can paint two frames at the same frame time (seen
+// under CPU load), at which a running transition looks the same. Prints "<case>: <what>: settled
+// after <n> renders, <ms> ms (unchanged for <ms> ms of frame time, <k> repeated frame times)". An
+// empty pointer after a Fail when a Render() fails or the rendering has not settled after
+// timeout_ms.
+kyty::gtk::GObjectPtr<GdkTexture> RenderSettled(GtkWindow* window, std::string_view what,
+                                                int timeout_ms = 3000);
 
 // Without a capture directory: renders window and checks that it draws something. With one
 // (uiHarness.h): writes <case>-<name>-light.png (ADW_COLOR_SCHEME_FORCE_LIGHT) and

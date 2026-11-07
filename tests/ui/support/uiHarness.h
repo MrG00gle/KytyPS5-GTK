@@ -10,7 +10,8 @@
 //                                           runs one case inside tests/ui/with-display.sh
 //   launcher_ui_tests --selftest <kind>     runs one harness self-test the same way (task 22.6;
 //                                           tests/cmake/UiHarnessSelfTest.cmake): critical,
-//                                           warning, expected-warning, missing-expected, clean
+//                                           warning, expected-warning, missing-expected, clean,
+//                                           accessible-untyped
 // A case runs on the main thread after gtk_init, adw_init, and the launcher's GResource bundle. A
 // GLib log writer, installed before anything else, prints every warning, critical, and error of
 // any domain to stderr at once and fails the case, unless the case declared it with ExpectLog(); a

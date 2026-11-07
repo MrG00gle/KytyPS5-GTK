@@ -206,18 +206,33 @@ void LoopbackServer::OnFinished(SoupServerMessage* /*message*/, gpointer data) {
 	pending->timer.Remove();
 }
 
-LoopbackHttpClient::LoopbackHttpClient(LoopbackServer& server)
-    : m_server(server), m_client(kyty::gtk::SoupHttpClient::Options {.allow_loopback_http = true}) {
+namespace {
+
+// p7-u2-3: every hop goes to server, the redirects that SoupHttpClient follows itself too.
+kyty::gtk::SoupHttpClient::Options LoopbackOptions(const LoopbackServer& server) {
+	kyty::gtk::SoupHttpClient::Options options;
+	options.allow_loopback_http = true;
+	options.rewrite_url         = [&server](const std::string& url) -> std::string {
+		if (url.starts_with(kHttps)) {
+			return server.Rewrite(url);
+		}
+		const std::string own = "http://127.0.0.1:" + std::to_string(server.Port()) + "/";
+		return url.starts_with(own) ? url : std::string();
+	};
+	return options;
 }
+
+} // namespace
+
+LoopbackHttpClient::LoopbackHttpClient(LoopbackServer& server)
+    : m_server(server), m_client(LoopbackOptions(server)) {}
 
 LoopbackHttpClient::~LoopbackHttpClient() = default;
 
 kyty::core::RequestId LoopbackHttpClient::Get(const kyty::core::HttpRequest& request,
                                               ChunkFn on_chunk, DoneFn on_done) {
-	kyty::core::HttpRequest rewritten = request;
-	rewritten.url                     = m_server.Rewrite(request.url);
-	m_requests.push_back({request.url, rewritten.url, "GET", request.headers});
-	return m_client.Get(rewritten, std::move(on_chunk), std::move(on_done));
+	m_requests.push_back({request.url, m_server.Rewrite(request.url), "GET", request.headers});
+	return m_client.Get(request, std::move(on_chunk), std::move(on_done));
 }
 
 void LoopbackHttpClient::Cancel(kyty::core::RequestId id) {
