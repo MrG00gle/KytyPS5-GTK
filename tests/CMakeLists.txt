@@ -488,6 +488,26 @@ kyty_add_test(NAME check_licenses_tool
 	        -p test_check_licenses.py -v
 	TIMEOUT 120
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+# Flatpak packaging checks (task 26.6, tools/checks/flatpak_checks.py): the manifest's pins against
+# the registry entries active with BUILD_TESTING=OFF (read through
+# tools/checks/dependency_registry.cmake), the manifest's structure and permission set, and the
+# metainfo, desktop entry, and icons; then the unit tests over mutated copies. PyYAML is required.
+# They need no build output, so they are registered with KYTY_BUILD_LAUNCHER OFF too.
+set(kyty_flatpak_checks pins manifest metainfo)
+set(kyty_flatpak_check_names flatpak_pins_match_registry flatpak_manifest_structure flatpak_metainfo_content)
+foreach(kyty_check kyty_check_name IN ZIP_LISTS kyty_flatpak_checks kyty_flatpak_check_names)
+	kyty_add_test(NAME ${kyty_check_name}
+		COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/flatpak_checks.py"
+		        --repo "${CMAKE_SOURCE_DIR}" --cmake "${CMAKE_COMMAND}" --check ${kyty_check}
+		LABELS source-check
+		TIMEOUT 120
+		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+endforeach()
+kyty_add_test(NAME flatpak_checks_tool
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/checks/tests"
+	        -p test_flatpak_checks.py -v
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1 "KYTY_CMAKE=${CMAKE_COMMAND}")
 # The dependency registry (cmake/KytyDependencies.cmake, cmake/KytyTargets.cmake) in generated
 # projects that use local git repositories and prefetched directories, without network access.
 foreach(kyty_case IN ITEMS hidden_entries patched_root online_after_prefetched
