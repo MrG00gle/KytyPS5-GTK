@@ -1,0 +1,124 @@
+# Flatpak manifest for KytyPS5-GTK. Build it from a directory outside the checkout, so that
+# flatpak-builder's state directory (.flatpak-builder/ in the working directory by default) and the
+# build directory do not land in it:
+#   mkdir -p ~/.cache/kyty-flatpak && cd ~/.cache/kyty-flatpak
+#   flatpak-builder --force-clean --state-dir=state build \
+#       <checkout>/packaging/flatpak/io.github.MrG00gle.KytyPS5_GTK.yml
+# Every downloaded source is pinned: git sources by commit, the FFmpeg archive by SHA-256. The kyty
+# module configures with the sources below in _prefetched, so it makes no network request.
+app-id: io.github.MrG00gle.KytyPS5_GTK
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.llvm20
+command: kyty_launcher
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=all
+  - --share=network
+build-options:
+  # Clang and lld come from the llvm20 SDK extension.
+  append-path: /usr/lib/sdk/llvm20/bin
+  prepend-ld-library-path: /usr/lib/sdk/llvm20/lib
+  env:
+    CC: clang
+    CXX: clang++
+  config-opts:
+    - -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
+cleanup:
+  - /include
+  - /lib/cmake
+  - /lib/pkgconfig
+  - '*.a'
+  - /share/doc
+  - /share/man
+modules:
+  # Only the build needs glslangValidator (it compiles the Emulator's shaders), so nothing of it is
+  # kept in the package. The shaders are compiled with -Os, which needs glslang's SPIR-V optimizer:
+  # SPIRV-Tools and SPIRV-Headers at the commits glslang's known_good.json names for 16.2.0.
+  - name: glslang
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DENABLE_OPT=ON
+      - -DGLSLANG_TESTS=OFF
+      - -DBUILD_SHARED_LIBS=OFF
+      - -DSPIRV_SKIP_EXECUTABLES=ON
+    cleanup:
+      - '*'
+    sources:
+      - type: git
+        url: https://github.com/KhronosGroup/glslang.git
+        tag: 16.2.0
+        commit: f0bd0257c308b9a26562c1a30c4748a0219cc951
+      - type: git
+        url: https://github.com/KhronosGroup/SPIRV-Tools.git
+        commit: fbe4f3ad913c44fe8700545f8ffe35d1382b7093
+        dest: External/spirv-tools
+      - type: git
+        url: https://github.com/KhronosGroup/SPIRV-Headers.git
+        commit: 04f10f650d514df88b76d25e83db360142c7b174
+        dest: External/spirv-tools/external/spirv-headers
+
+  - name: kyty
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DKYTY_FLATPAK_BUILD=ON
+      - -DBUILD_TESTING=OFF
+      # Typed, so CMake keeps the relative path and the registry resolves it against the source
+      # directory; an untyped value would be made absolute against the build directory.
+      - -DKYTY_PREFETCHED_SOURCES_DIR:PATH=_prefetched
+    sources:
+      # The checkout with its submodules. .git is kept so the version string matches native builds.
+      # Skipped: flatpak-builder's state directory and everything .gitignore lists.
+      - type: dir
+        path: ../..
+        skip:
+          - .flatpak-builder
+          - .vs
+          - .idea
+          - build
+          - _Build
+          - cmake-build-debug
+          - _PipelineCache
+          - CMakeUserPresets.json
+          - .kiro
+          - .agents
+      # One source per entry of cmake/KytyDependencies.cmake that is active with BUILD_TESTING=OFF,
+      # at the same commit or checksum.
+      - type: git
+        url: https://github.com/xiph/opus.git
+        commit: ddbe48383984d56acd9e1ab6a090c54ca6b735a6
+        dest: _prefetched/opus
+      - type: git
+        url: https://github.com/KhronosGroup/OpenXR-SDK.git
+        commit: f2448a8797c85814aa892efc1ab8707900fbcc78
+        dest: _prefetched/openxr
+      - type: git
+        url: https://github.com/herumi/xbyak.git
+        commit: 44a72f369268f7d552650891b296693e91db86bb
+        dest: _prefetched/xbyak
+      - type: git
+        url: https://github.com/zyantific/zydis.git
+        commit: 120e0e705f8e3b507dc49377ac2879979f0d545c
+        dest: _prefetched/zydis
+      - type: git
+        url: https://github.com/facebook/zstd.git
+        commit: f8745da6ff1ad1e7bab384bd1f9d742439278e99
+        dest: _prefetched/zstd
+      - type: git
+        url: https://github.com/Exzap/ZArchive.git
+        commit: d2c717730092c7bf8cbb033b12fd4001b7c4d932
+        dest: _prefetched/zarchive_source
+      - type: file
+        url: https://github.com/KytyPS5/ext-ffmpeg-core/releases/download/9ac4cfd195f1/ffmpeg-linux-x64.zip
+        sha256: f4659ad09e6f2b99ecf0227ca56fe4bbb34572cdd8d85ff85384f74ba38f23ef
+        dest: _prefetched/ffmpeg_core_prebuilt
+        dest-filename: ffmpeg-linux-x64.zip
