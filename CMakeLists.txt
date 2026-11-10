@@ -327,6 +327,9 @@ list(APPEND kyty_emulator_src
 list(REMOVE_DUPLICATES kyty_emulator_src)
 
 set(kyty_emulator_link_libraries common Vulkan::Headers spirv-tools-opt spirv-tools SDL3::SDL3-static imgui xxhash FFmpeg::ffmpeg fmt::fmt nlohmann_json::nlohmann_json LibAtrac9 kyty_git_version Zydis::Zydis xbyak::xbyak opus OpenXR::openxr_loader)
+# The system overlay finds its assets through Emulator::FindAssetFile, so the tests that build the
+# Emulator sources link the option library too.
+list(APPEND kyty_emulator_link_libraries kyty_emulator_options)
 
 # Linux system libraries.
 if(LINUX)

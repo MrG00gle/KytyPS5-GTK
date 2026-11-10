@@ -21,7 +21,8 @@ kyty_add_property_group(launcher_core_run_tests LINK kyty_launcher_core kyty_tes
 	ENVIRONMENT_MODIFICATION ${kyty_no_display})
 kyty_add_property_group(launcher_core_content_tests LINK kyty_launcher_core kyty_test_support
 	ENVIRONMENT_MODIFICATION ${kyty_no_display})
-kyty_add_property_group(launcher_core_paths_tests LINK kyty_launcher_core kyty_test_support
+kyty_add_property_group(launcher_core_paths_tests
+	LINK kyty_emulator_options kyty_launcher_core kyty_test_support
 	ENVIRONMENT_MODIFICATION ${kyty_no_display})
 kyty_add_property_group(archive_roundtrip_tests LINK common kyty_test_support)
 kyty_add_property_group(updater_core_tests LINK kyty_updater_core kyty_net_test_support)

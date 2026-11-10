@@ -6,6 +6,7 @@
 #include "common/localization.h"
 #include "common/logging/log.h"
 #include "common/stringUtils.h"
+#include "emulatorOptions.h"
 #include "gpu_blit_shaders/gpu_imgui_hdr_spv.h"
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/presentation/ddsImage.h"
@@ -932,7 +933,8 @@ struct SystemOverlay::Impl {
 				LOGF("[Trophy] could not locate sound: %s\n", SDL_GetError());
 				return;
 			}
-			const std::string path = std::string(base_path) + "assets/sounds/trophy-unlock.wav";
+			const std::string path = Common::PathToString(Emulator::FindAssetFile(
+			    base_path, std::filesystem::path("sounds") / "trophy-unlock.wav"));
 			SDL_AudioSpec     spec {};
 			if (!SDL_LoadWAV(path.c_str(), &spec, &trophy_sound_data, &trophy_sound_size)) {
 				LOGF("[Trophy] could not load %s: %s\n", path.c_str(), SDL_GetError());
@@ -964,8 +966,8 @@ struct SystemOverlay::Impl {
 			     SDL_GetError());
 			return nullptr;
 		}
-		const std::filesystem::path path =
-		    std::filesystem::path(base_path) / "assets" / "cursors" / std::string(filename);
+		const std::filesystem::path path = Emulator::FindAssetFile(
+		    base_path, std::filesystem::path("cursors") / std::string(filename));
 
 		Common::File file;
 		if (!file.Open(path, Common::File::Mode::Read)) {

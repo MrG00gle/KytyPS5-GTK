@@ -42,7 +42,7 @@ static int Main(int argc, char* argv[]) {
 	}
 
 	// Parse before any initialization, so help and errors start nothing.
-	const ParseOutcome outcome = ParseOptions(args);
+	ParseOutcome outcome = ParseOptions(args);
 
 	switch (outcome.status) {
 		case ParseOutcome::Help:
@@ -53,6 +53,13 @@ static int Main(int argc, char* argv[]) {
 			::printf("%s\n%s", GetBuildString().c_str(), UsageText().c_str());
 			return 1;
 		case ParseOutcome::Run: break;
+	}
+
+	// Inside the Flatpak_Sandbox the Data_Directory is $XDG_DATA_HOME/Kyty (Requirement 12.2).
+	if (const auto error = ApplyDataDirectory(outcome.options, CurrentDataDirectoryEnvironment());
+	    !error.empty()) {
+		::printf("%s\n", error.c_str());
+		return 1;
 	}
 
 	VirtualMemory::Init();

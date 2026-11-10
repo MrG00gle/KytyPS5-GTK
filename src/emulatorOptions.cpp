@@ -11,11 +11,14 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
-#include <iterator>
-#include <unistd.h>
 #include <fmt/format.h>
+#include <iterator>
 #include <magic_enum.hpp>
+#include <system_error>
+#include <unistd.h>
 
 namespace Emulator {
 
@@ -594,6 +597,113 @@ std::string UsageText() {
 		text += fmt::format("  {:<{}}  {}\n", OptionLabel(option), width, help);
 	}
 	return text;
+}
+
+namespace {
+
+constexpr char FLATPAK_MARKER[] = "/.flatpak-info";
+
+// Lexically normal, without a trailing separator ("/a/b/" is "/a/b"; "/" stays "/").
+std::filesystem::path Normal(const std::filesystem::path& path) {
+	std::filesystem::path normal = path.lexically_normal();
+	if (normal.has_relative_path() && !normal.has_filename()) {
+		normal = normal.parent_path();
+	}
+	return normal;
+}
+
+std::filesystem::path NormalAgainst(const std::filesystem::path& path,
+                                    const std::filesystem::path& base) {
+	return Normal(path.is_absolute() ? path : base / path);
+}
+
+std::optional<std::string> Variable(const char* name) {
+	const char* value = std::getenv(name);
+	return value != nullptr ? std::optional<std::string>(value) : std::nullopt;
+}
+
+void MakeAbsolute(std::filesystem::path& path, const std::filesystem::path& base) {
+	if (!path.empty() && path.is_relative()) {
+		path = base / path;
+	}
+}
+
+std::string DataDirectoryError(std::string_view action, const std::filesystem::path& dir,
+                               int error) {
+	return fmt::format("cannot {} the data directory {}: {}", action, Common::PathToString(dir),
+	                   std::strerror(error));
+}
+
+} // namespace
+
+DataDirectoryEnvironment CurrentDataDirectoryEnvironment() {
+	DataDirectoryEnvironment env;
+	std::error_code          ec;
+	env.flatpak            = std::filesystem::exists(FLATPAK_MARKER, ec);
+	env.xdg_data_home      = Variable("XDG_DATA_HOME");
+	env.home               = Variable("HOME");
+	env.cwd                = std::filesystem::current_path(ec);
+	env.create_directories = [](const std::filesystem::path& dir) {
+		std::error_code error;
+		std::filesystem::create_directories(dir, error);
+		return error.value();
+	};
+	env.change_directory = [](const std::filesystem::path& dir) {
+		return ::chdir(dir.c_str()) == 0 ? 0 : errno;
+	};
+	return env;
+}
+
+std::filesystem::path FlatpakDataDirectory(const DataDirectoryEnvironment& env) {
+	const auto cwd = NormalAgainst(env.cwd, "/");
+	const auto home =
+	    env.home && !env.home->empty() ? NormalAgainst(*env.home, cwd) : std::filesystem::path("/");
+	const auto base = env.xdg_data_home && env.xdg_data_home->starts_with('/')
+	                      ? Normal(*env.xdg_data_home)
+	                      : Normal(home / ".local/share");
+	return Normal(base / "Kyty");
+}
+
+std::string ApplyDataDirectory(RunOptions& options, const DataDirectoryEnvironment& env) {
+	if (!env.flatpak) {
+		return {};
+	}
+	const auto data_dir = FlatpakDataDirectory(env);
+	if (const int error = env.create_directories(data_dir); error != 0) {
+		return DataDirectoryError("create", data_dir, error);
+	}
+	if (const int error = env.change_directory(data_dir); error != 0) {
+		return DataDirectoryError("enter", data_dir, error);
+	}
+	const auto cwd = NormalAgainst(env.cwd, "/");
+	MakeAbsolute(options.app0_dir, cwd);
+	MakeAbsolute(options.game_patch, cwd);
+	MakeAbsolute(options.addcont_dir, cwd);
+	MakeAbsolute(options.config.printf_output_file, data_dir);
+	MakeAbsolute(options.config.shader_log_folder, data_dir);
+	MakeAbsolute(options.config.command_buffer_dump_folder, data_dir);
+	return {};
+}
+
+std::filesystem::path
+FindAssetFile(const std::filesystem::path& exe_dir, const std::filesystem::path& relative,
+              const std::function<bool(const std::filesystem::path&)>& exists) {
+	auto portable = exe_dir / "assets" / relative;
+	if (exists(portable)) {
+		return portable;
+	}
+	auto installed = exe_dir / ".." / "share" / "kyty" / "assets" / relative;
+	if (exists(installed)) {
+		return installed;
+	}
+	return portable;
+}
+
+std::filesystem::path FindAssetFile(const std::filesystem::path& exe_dir,
+                                    const std::filesystem::path& relative) {
+	return FindAssetFile(exe_dir, relative, [](const std::filesystem::path& path) {
+		return Common::File::IsFileExisting(path);
+	});
 }
 
 } // namespace Emulator
