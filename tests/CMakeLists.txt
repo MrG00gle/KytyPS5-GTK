@@ -488,6 +488,15 @@ kyty_add_test(NAME check_licenses_tool
 	        -p test_check_licenses.py -v
 	TIMEOUT 120
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+# The CI JUnit check (task 28.1, tools/checks/junit_check.py): its unit tests, which also run this
+# CMake and CTest on a generated scratch project to pin the JUnit format CTest writes. They need no
+# build output, so they are registered with KYTY_BUILD_LAUNCHER OFF too.
+kyty_add_test(NAME junit_check_tool
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/checks/tests"
+	        -p test_junit_check.py -v
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1 "KYTY_CMAKE=${CMAKE_COMMAND}" "KYTY_CTEST=${CMAKE_CTEST_COMMAND}"
+	            "KYTY_CMAKE_GENERATOR=${CMAKE_GENERATOR}" "KYTY_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}")
 # Flatpak packaging checks (task 26.6, tools/checks/flatpak_checks.py): the manifest's pins against
 # the registry entries active with BUILD_TESTING=OFF (read through
 # tools/checks/dependency_registry.cmake), the manifest's structure and permission set, and the
