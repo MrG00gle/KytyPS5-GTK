@@ -8,9 +8,12 @@
 #
 # Writes to COVERAGE_DIR: profraw/ (the raw profiles), ctest.xml (CTest JUnit report),
 # coverage.profdata, export.json (llvm-cov export -format=text -summary-only), coverage.lcov,
-# html/files/ (llvm-cov show -format=html), and summary.json and html/index.html (report.py). When a
-# test fails, the reports are still written and the script then fails.
+# html/files/ (llvm-cov show -format=html), and summary.json and html/index.html (report.py). The
+# llvm-cov outputs leave out the dependencies, the tests, and every file under BUILD_DIR
+# (cmake/KytyCoverageFilter.cmake). When a test fails, the reports are still written and the script
+# then fails.
 cmake_minimum_required(VERSION 3.21)
+include("${CMAKE_CURRENT_LIST_DIR}/KytyCoverageFilter.cmake")
 
 foreach(kyty_variable IN ITEMS COVERAGE_DIR BUILD_DIR SOURCE_DIR CTEST_COMMAND LLVM_PROFDATA LLVM_COV PYTHON
 		OBJECTS_FILE THREADS)
@@ -98,9 +101,11 @@ foreach(kyty_object IN LISTS kyty_objects)
 		list(APPEND kyty_object_arguments "${kyty_object}")
 	endif()
 endforeach()
+# Dependencies, tests, and the build tree (generated files, prebuilt headers) stay out of the reports.
+kyty_coverage_ignore_regex(kyty_ignore_regex "${BUILD_DIR}" "${SOURCE_DIR}")
 set(kyty_cov_arguments
 	"-instr-profile=${COVERAGE_DIR}/coverage.profdata"
-	"-ignore-filename-regex=(3rdparty|_deps|_kyty_patched|/tests/)"
+	"-ignore-filename-regex=${kyty_ignore_regex}"
 	${kyty_threads}
 	${kyty_object_arguments})
 _kyty_coverage_step("llvm-cov export -format=text -summary-only"

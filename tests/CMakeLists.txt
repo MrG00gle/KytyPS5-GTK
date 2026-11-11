@@ -453,6 +453,11 @@ kyty_add_test(NAME coverage_requires_clang
 	        ${kyty_configure_guard_arguments} -P "${kyty_configure_guard_script}"
 	TIMEOUT 120
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+# The file filter of the coverage reports (cmake/KytyCoverageFilter.cmake, Requirement 17.3).
+kyty_add_test(NAME coverage_ignore_regex
+	COMMAND "${CMAKE_COMMAND}" "-DFILTER_SCRIPT=${CMAKE_SOURCE_DIR}/cmake/KytyCoverageFilter.cmake"
+	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CoverageIgnoreRegexTest.cmake"
+	TIMEOUT 60)
 # Install layouts (task 26.1, cmake/KytyInstallLayout.cmake): an unknown KYTY_INSTALL_LAYOUT and an
 # explicit portable layout with KYTY_FLATPAK_BUILD=ON stop the configure before any dependency is
 # declared; install_layout_tree installs this build tree and checks the first-party files of its
