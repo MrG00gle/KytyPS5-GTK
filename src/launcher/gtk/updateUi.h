@@ -25,9 +25,10 @@
 // update's result (updater::ReadAndClearPreviousResult, which deletes the file), shown once as soon
 // as the parent window is mapped (HC-35, 13.14).
 // Every update alert has the window title "KytyPS5 Update" (the Qt launcher's message boxes). The
-// updater's fixed English messages are shown as translated texts, its other messages (reasons,
-// paths, a process's standard error) as they are, with invalid UTF-8 replaced (plan D46). Main
-// thread only; the parent window owns the UpdateUi and outlives it.
+// updater's messages are shown as the launcher's translated texts for their kind, with only the
+// dynamic parts (paths, reasons, a process's standard error) as they are and invalid UTF-8
+// replaced (plan D46, phase 9 V1). Main thread only; the parent window owns the UpdateUi and
+// outlives it.
 
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/launcherContext.h"
@@ -57,25 +58,9 @@ updater::UpdateSessionConfig UpdateSessionConfigFor(const LauncherContext& conte
 // The page of the release tag: updater::kReleasesPage + "/tag/" + updater::PercentEncode(tag).
 std::string ReleasePageUrl(std::string_view tag);
 
-// What UpdateMessageText shows for one of the updater's fixed sentences or for one of its sentences
-// with numbers (phase 7 plan D28): msgid, a literal of updateUi.cpp in the kyty-launcher domain,
-// with plural_msgid when the last number picks a plural form (NGettext), and the numbers of the
-// sentence in order, which the text's %llu conversions take.
-struct UpdateMessageKey {
-	const char*           msgid        = nullptr;
-	const char*           plural_msgid = nullptr;
-	std::vector<uint64_t> numbers;
-};
-
-// The key of message when it is a fixed message of the updater or one of its sentences with a
-// number (an HTTP status, seconds, bytes), copied word for word from src/updater/core; nullopt for
-// anything else (a reason, a path, a process's standard error).
-std::optional<UpdateMessageKey> UpdateMessageKeyFor(std::string_view message);
-
-// A session message (updater::SessionOutcome::message) as shown: the translated text of its key
-// (UpdateMessageKeyFor), "Could not verify the currently installed release. <reason>" with its
-// reason shown the same way, and anything else as it is, with invalid UTF-8 replaced (plan D46).
-std::string UpdateMessageText(std::string_view message);
+// A session message as shown: the launcher's text for outcome.detail (coreMessageText.h
+// SessionMessageText), which inserts only its dynamic parts with invalid UTF-8 replaced.
+std::string UpdateMessageText(const updater::SessionOutcome& outcome);
 
 // The body of the previous-result message (HC-35): the message without surrounding white space,
 // or the Qt launcher's default for the status when nothing is left ("The update was installed
@@ -170,7 +155,7 @@ private:
 	void OnChange(const updater::SessionOutcome& outcome);
 	void OnOfferAnswer(UpdateOfferResponse response);
 	void ShowMessage(const std::string& heading, const std::string& body);
-	void ShowInstallFailure(const std::string& message);
+	void ShowInstallFailure(const updater::SessionOutcome& outcome);
 	void ShowPreviousResult();
 	void OpenPage(const std::string& url, const std::string& error_heading);
 	void OpenProgress();

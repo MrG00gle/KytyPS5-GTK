@@ -220,7 +220,11 @@ public:
 
 	// The message, or "" without an error.
 	[[nodiscard]] std::string_view Message() const {
-		return m_error != nullptr && m_error->message != nullptr ? m_error->message : "";
+		if (m_error == nullptr) {
+			return "";
+		}
+		const char* message = m_error->message; // core text: GError's message (library text)
+		return message != nullptr ? message : "";
 	}
 
 	// For a GError** out parameter: frees the current error first.

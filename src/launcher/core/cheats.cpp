@@ -86,29 +86,38 @@ bool IsByteString(std::string_view text) {
 	return !text.empty() && text.size() % 2 == 0 && AllHex(text);
 }
 
+CheatProblem Problem(CheatProblemKind kind, std::string message, std::string detail = {},
+                     std::size_t entry = 0) {
+	return CheatProblem {kind, {}, entry, std::move(detail), std::move(message)};
+}
+
 // Qt's ValidateDocument: the reason why root is not a cheat document, or nothing.
-std::optional<std::string> CheckDocument(const OrderedJson& root) {
+std::optional<CheatProblem> CheckDocument(const OrderedJson& root) {
 	if (!root.is_object()) {
-		return "Invalid cheat JSON (the top-level value is not an object).";
+		return Problem(CheatProblemKind::NotAnObject,
+		               "Invalid cheat JSON (the top-level value is not an object).");
 	}
 	const auto* mods = Member(root, "mods");
 	if (mods == nullptr || !mods->is_array()) {
-		return "Cheat JSON has no \"mods\" array.";
+		return Problem(CheatProblemKind::NoModsArray, "Cheat JSON has no \"mods\" array.");
 	}
 	std::size_t number = 0;
 	for (const auto& mod: *mods) {
 		number++;
 		const auto entry = "Invalid cheat entry " + std::to_string(number);
 		if (!mod.is_object()) {
-			return entry + " (it is not an object).";
+			return Problem(CheatProblemKind::EntryNotAnObject, entry + " (it is not an object).",
+			               {}, number);
 		}
 		const auto* name = Member(mod, "name");
 		if (name == nullptr || !name->is_string() || name->get_ref<const std::string&>().empty()) {
-			return entry + " (it has no name).";
+			return Problem(CheatProblemKind::EntryWithoutName, entry + " (it has no name).", {},
+			               number);
 		}
 		const auto* enabled = Member(mod, "enabled");
 		if (enabled != nullptr && !enabled->is_boolean()) {
-			return entry + " (\"enabled\" is not true or false).";
+			return Problem(CheatProblemKind::EntryEnabledNotBool,
+			               entry + " (\"enabled\" is not true or false).", {}, number);
 		}
 	}
 	return std::nullopt;
@@ -145,11 +154,15 @@ CheatDocument MakeDocument(const OrderedJson& root) {
 }
 
 // The memory checks of Qt's ValidateImport for one mod.
-std::optional<std::string> CheckMemory(const OrderedJson& mod) {
-	const auto  name   = StringMember(mod, "name");
+std::optional<CheatProblem> CheckMemory(const OrderedJson& mod) {
+	const auto name        = StringMember(mod, "name");
+	const auto unsupported = [&name] {
+		return Problem(CheatProblemKind::UnsupportedMemory, kUnsupportedMemory + name + "\".",
+		               name);
+	};
 	const auto* memory = Member(mod, "memory");
 	if (memory == nullptr || !memory->is_array() || memory->empty()) {
-		return kUnsupportedMemory + name + "\".";
+		return unsupported();
 	}
 	for (const auto& write: *memory) {
 		const auto  offset   = StringMember(write, "offset");
@@ -168,18 +181,19 @@ std::optional<std::string> CheckMemory(const OrderedJson& mod) {
 			sections = sections || Member(write, key) != nullptr;
 		}
 		if (addressing || sections) {
-			return std::string(kAddressingFeatures);
+			return Problem(CheatProblemKind::AddressingFeatures, kAddressingFeatures);
 		}
 		if (!write.is_object() || !IsOffset(offset) || !IsByteString(off) || !IsByteString(on) ||
 		    off.size() != on.size()) {
-			return kUnsupportedMemory + name + "\".";
+			return unsupported();
 		}
 	}
 	return std::nullopt;
 }
 
-CheatSaveError SaveError(CheatSaveErrorKind kind, std::string message) {
-	return CheatSaveError {kind, std::move(message)};
+CheatSaveError SaveError(CheatSaveErrorKind kind, std::string message,
+                         CheatSaveFailure failure = CheatSaveFailure::None, IoError io = {}) {
+	return CheatSaveError {kind, std::move(message), failure, std::move(io)};
 }
 
 } // namespace
@@ -213,16 +227,21 @@ std::string CheatProcessName(std::string_view elf) {
 	return std::filesystem::path(elf).filename().string();
 }
 
-Expected<CheatDocument, std::string> ParseCheatDocument(std::string_view bytes,
-                                                        std::string_view file_name) {
-	const auto prefix = std::string(file_name) + ": ";
-	const auto root   = OrderedJson::parse(bytes.begin(), bytes.end(), nullptr, false);
+Expected<CheatDocument, CheatProblem> ParseCheatDocument(std::string_view bytes,
+                                                         std::string_view file_name) {
+	const auto root = OrderedJson::parse(bytes.begin(), bytes.end(), nullptr, false);
+	std::optional<CheatProblem> problem;
 	if (root.is_discarded()) {
-		return MakeUnexpected(prefix + "Invalid cheat JSON (" +
-		                      DescribeJsonError<OrderedJson>(bytes) + ").");
+		auto detail = DescribeJsonError<OrderedJson>(bytes);
+		problem =
+		    Problem(CheatProblemKind::InvalidJson, "Invalid cheat JSON (" + detail + ").", detail);
+	} else {
+		problem = CheckDocument(root);
 	}
-	if (auto problem = CheckDocument(root)) {
-		return MakeUnexpected(prefix + *problem);
+	if (problem) {
+		problem->file    = std::string(file_name);
+		problem->message = problem->file + ": " + problem->message;
+		return MakeUnexpected(std::move(*problem));
 	}
 	return MakeDocument(root);
 }
@@ -245,38 +264,46 @@ std::string SerializeCheatDocument(const CheatDocument& document) {
 	return root.dump(4, ' ', false, OrderedJson::error_handler_t::replace) + "\n";
 }
 
-std::optional<std::string> ValidateRemoteImport(const CheatDocument& document,
-                                                std::string_view title_id, std::string_view version,
-                                                std::string_view process) {
+std::optional<CheatProblem> ValidateRemoteImport(const CheatDocument& document,
+                                                 std::string_view     title_id,
+                                                 std::string_view     version,
+                                                 std::string_view     process) {
 	const auto root =
 	    OrderedJson::parse(document.json.begin(), document.json.end(), nullptr, false);
 	if (root.is_discarded()) {
-		return "Invalid cheat JSON.";
+		return Problem(CheatProblemKind::DocumentNotJson, "Invalid cheat JSON.");
 	}
 	if (auto problem = CheckDocument(root)) {
 		return problem;
 	}
 	if (!IsCheatTitleId(title_id) ||
 	    !EqualsIgnoreCase(StringMember(root, "id"), TrimWhitespace(title_id))) {
-		return "The cheat file does not match this game's title ID.";
+		return Problem(CheatProblemKind::TitleMismatch,
+		               "The cheat file does not match this game's title ID.");
 	}
 	if (version.empty() || StringMember(root, "version") != version) {
-		return "The cheat file does not match this game's version (" + std::string(version) + ").";
+		return Problem(CheatProblemKind::VersionMismatch,
+		               "The cheat file does not match this game's version (" +
+		                   std::string(version) + ").",
+		               std::string(version));
 	}
 	if (process.empty() || !EqualsIgnoreCase(StringMember(root, "process"), process)) {
-		return "The cheat file does not match this game's executable (" + std::string(process) +
-		       ").";
+		return Problem(CheatProblemKind::ProcessMismatch,
+		               "The cheat file does not match this game's executable (" +
+		                   std::string(process) + ").",
+		               std::string(process));
 	}
 	const auto& mods = *Member(root, "mods");
 	if (mods.empty()) {
-		return "The cheat file contains no cheats.";
+		return Problem(CheatProblemKind::NoCheats, "The cheat file contains no cheats.");
 	}
 	if (Member(root, "master") != nullptr) {
-		return "This JSON uses master codes, which are not supported yet.";
+		return Problem(CheatProblemKind::MasterCodes,
+		               "This JSON uses master codes, which are not supported yet.");
 	}
 	for (const auto& mod: mods) {
 		if (Member(mod, "module_name") != nullptr) {
-			return std::string(kModuleSpecificCheat);
+			return Problem(CheatProblemKind::ModuleSpecific, kModuleSpecificCheat);
 		}
 		if (auto problem = CheckMemory(mod)) {
 			return problem;
@@ -297,21 +324,26 @@ Expected<void, CheatSaveError> SaveIfUnchanged(const std::filesystem::path&    p
                                                std::optional<std::string_view> expected_bytes) {
 	const auto text = SerializeCheatDocument(document);
 	if (path.empty() || text.empty()) {
-		return MakeUnexpected(SaveError(CheatSaveErrorKind::Failed, kInvalidCheatFile));
+		return MakeUnexpected(SaveError(CheatSaveErrorKind::Failed, kInvalidCheatFile,
+		                                CheatSaveFailure::InvalidCheatFile));
 	}
 	auto current = ReadFileLimited(path, kMaxCheatFileBytes);
 	if (current) {
 		if (!expected_bytes) {
+			IoError existing;
+			existing.path = path;
 			return MakeUnexpected(
 			    SaveError(CheatSaveErrorKind::NeedsConfirmation,
-			              "The cheat file " + path.string() + " exists; confirm replacing it."));
+			              "The cheat file " + path.string() + " exists; confirm replacing it.",
+			              CheatSaveFailure::None, std::move(existing)));
 		}
 		if (*current != *expected_bytes) {
 			return MakeUnexpected(SaveError(CheatSaveErrorKind::ChangedOnDisk, kChangedOnDisk));
 		}
 	} else if (current.error().error_number != ENOENT) {
 		return MakeUnexpected(SaveError(CheatSaveErrorKind::Failed,
-		                                "Could not read cheat file: " + current.error().message));
+		                                "Could not read cheat file: " + current.error().message,
+		                                CheatSaveFailure::Read, current.error()));
 	} else if (expected_bytes) {
 		return MakeUnexpected(SaveError(CheatSaveErrorKind::ChangedOnDisk, kChangedOnDisk));
 	}
@@ -319,13 +351,22 @@ Expected<void, CheatSaveError> SaveIfUnchanged(const std::filesystem::path&    p
 	std::error_code ec;
 	std::filesystem::create_directories(path.parent_path(), ec);
 	if (ec) {
+		IoError directory;
+		directory.path         = path;
+		directory.error_number = ec.value();
+		directory.kind         = IoErrorKind::CreateDirectory;
+		directory.detail       = path.parent_path();
+		directory.message =
+		    "cannot create the directory " + path.parent_path().string() + ": " + ec.message();
 		return MakeUnexpected(SaveError(CheatSaveErrorKind::Failed,
 		                                "Could not create the local cheats directory " +
-		                                    path.parent_path().string() + ": " + ec.message()));
+		                                    path.parent_path().string() + ": " + ec.message(),
+		                                CheatSaveFailure::CreateDirectory, std::move(directory)));
 	}
 	if (auto written = WriteFileAtomically(path, text); !written) {
 		return MakeUnexpected(SaveError(CheatSaveErrorKind::Failed,
-		                                "Could not save cheat file: " + written.error().message));
+		                                "Could not save cheat file: " + written.error().message,
+		                                CheatSaveFailure::Write, written.error()));
 	}
 	return {};
 }
@@ -336,7 +377,8 @@ ImportRemoteCheats(const std::filesystem::path& data_dir, std::string_view title
                    std::optional<std::string_view> expected_local_bytes) {
 	auto path = CheatFilePath(data_dir, title_id);
 	if (path.empty()) {
-		return MakeUnexpected(SaveError(CheatSaveErrorKind::Failed, kUnsupportedTitleId));
+		return MakeUnexpected(SaveError(CheatSaveErrorKind::Failed, kUnsupportedTitleId,
+		                                CheatSaveFailure::UnsupportedTitleId));
 	}
 	if (auto saved = SaveIfUnchanged(path, WithAllDisabled(document), expected_local_bytes);
 	    !saved) {
@@ -358,8 +400,9 @@ LocalCheatFile LoadLocalCheats(const std::filesystem::path& data_dir, std::strin
 			local.readable = true;
 			local.message  = "No local cheat file: " + local.path.string();
 		} else {
-			local.reason  = std::generic_category().message(bytes.error().error_number);
-			local.message = "Could not read cheat file: " + bytes.error().message;
+			local.error_number = bytes.error().error_number;
+			local.reason       = std::generic_category().message(local.error_number);
+			local.message      = "Could not read cheat file: " + bytes.error().message;
 		}
 		return local;
 	}
@@ -367,7 +410,8 @@ LocalCheatFile LoadLocalCheats(const std::filesystem::path& data_dir, std::strin
 	local.bytes    = std::move(*bytes);
 	auto document  = ParseCheatDocument(*local.bytes, local.path.string());
 	if (!document) {
-		local.message = document.error();
+		local.message = document.error().message;
+		local.problem = std::move(document).error();
 		return local;
 	}
 	local.message  = "Loaded " + std::to_string(document->cheats.size()) + " cheat(s) from " +

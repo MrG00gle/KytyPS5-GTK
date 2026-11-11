@@ -428,7 +428,8 @@ void TestMissingFolders() {
 	CheckPaths(result, tree.Base(), {"f/Game"}, "the other folders are still scanned");
 	Check(result.warnings.size() == 3,
 	      "one warning per missing path: " + std::to_string(result.warnings.size()));
-	Check(result.warnings[0].path == missing1 && result.warnings[0].reason == ErrorText(ENOENT),
+	Check(result.warnings[0].path == missing1 && result.warnings[0].reason == ErrorText(ENOENT) &&
+	          result.warnings[0].kind == kyty::core::ScanWarningKind::Unreadable,
 	      "missing1 is named once, with the error text: " + result.warnings[0].reason);
 	Check(result.warnings[1].path == missing2 && result.warnings[1].reason == ErrorText(ENOENT),
 	      "missing2 is named");
@@ -663,7 +664,8 @@ void TestResolutionFailures() {
 	CheckPaths(result, tree.Base(), {"f/Kept", "f/sub/again.zar"},
 	           "an unresolvable game and a rejected archive are skipped");
 	Check(result.warnings.size() == 1 && result.warnings[0].path == f / "Game" &&
-	          result.warnings[0].reason == "cannot resolve the canonical path",
+	          result.warnings[0].reason == "cannot resolve the canonical path" &&
+	          result.warnings[0].kind == kyty::core::ScanWarningKind::NoCanonicalPath,
 	      "an unresolvable game gives one warning");
 	// Archives are checked once per canonical path, accepted or rejected.
 	Check(std::count(faults.ArchiveCalls().begin(), faults.ArchiveCalls().end(), f / "good.zar") ==

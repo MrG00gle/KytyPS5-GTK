@@ -181,9 +181,11 @@ ReadMember(const std::string& title, const Json& member, const std::string* repe
 	// Rules between fields of the member (an empty output path while its output is on) and the
 	// input mapping entries (when the member turns input_mapping_custom on).
 	if (auto error = Validate(ApplyPatch(GameConfiguration {}, patch), ValidationScope::Game)) {
-		return Fail(ImportErrorKind::InvalidValue, title, error->field,
-		            "Invalid value for game setting " + Quoted(error->field) + " for " + title +
-		                ": " + error->message);
+		auto failure = Fail(ImportErrorKind::InvalidValue, title, error->field,
+		                    "Invalid value for game setting " + Quoted(error->field) + " for " +
+		                        title + ": " + error->message);
+		failure.error().rule = error->rule;
+		return failure;
 	}
 	return patch;
 }
@@ -217,7 +219,8 @@ Expected<void, IoError> WriteGameSettingsFile(const std::filesystem::path& path,
 	if (!bytes) {
 		return MakeUnexpected(IoError {path, EINVAL,
 		                               "Cannot export game settings to " + path.string() +
-		                                   ": the game has no title ID"});
+		                                   ": the game has no title ID",
+		                               IoErrorKind::NoTitleId});
 	}
 	return WriteFileAtomically(path, *bytes);
 }
@@ -260,7 +263,9 @@ Expected<ImportResult, ImportError> ParseGameSettingsFile(std::string_view bytes
 Expected<ImportResult, ImportError> ReadGameSettingsFile(const std::filesystem::path& path) {
 	auto bytes = ReadFileLimited(path, kMaxGameSettingsFileBytes);
 	if (!bytes) {
-		return Fail(ImportErrorKind::Unreadable, {}, {}, bytes.error().message);
+		auto failure       = Fail(ImportErrorKind::Unreadable, {}, {}, bytes.error().message);
+		failure.error().io = std::move(bytes).error();
+		return failure;
 	}
 	return ParseGameSettingsFile(*bytes);
 }

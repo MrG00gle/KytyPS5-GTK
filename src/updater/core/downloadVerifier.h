@@ -27,6 +27,28 @@ inline constexpr std::string_view kDownloadDigestMessage =
     "The update failed its SHA-256 verification. Please try again.";
 inline constexpr std::string_view kDownloadAbortedMessage = "The download was cancelled.";
 
+// What the last failed Append() or Finish() said, with its parts (plan V1).
+enum class DownloadFailureKind {
+	None,
+	Create,   // "Cannot create <path>: <errno text>"
+	Write,    // "Cannot write <path>: <errno text>" (a write or the close)
+	TooLarge, // kDownloadTooLargeMessage
+	TooSmall, // "The downloaded file is smaller than the release asset (<received> of <size>
+	          // bytes)."
+	Digest,   // kDownloadDigestMessage
+	Aborted,  // kDownloadAbortedMessage
+	Finished, // "The download is already finished." (Append after a successful Finish)
+};
+
+struct DownloadFailure {
+	DownloadFailureKind kind         = DownloadFailureKind::None;
+	int                 error_number = 0; // Create, Write
+	uint64_t            received     = 0; // TooSmall
+	uint64_t            size         = 0; // TooSmall
+
+	friend bool operator==(const DownloadFailure&, const DownloadFailure&) = default;
+};
+
 class DownloadVerifier {
 public:
 	// Creates out with O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC and mode 0666 minus the umask. When
@@ -56,11 +78,15 @@ public:
 
 	[[nodiscard]] uint64_t                     Received() const { return m_received; }
 	[[nodiscard]] const std::filesystem::path& Path() const { return m_path; }
+	// The parts of the error that the last failed Append() or Finish() returned (kind None
+	// before any).
+	[[nodiscard]] const DownloadFailure& LastFailure() const { return m_last_failure; }
 
 private:
 	enum class State { Open, Failed, Finished };
 
-	Status Fail(std::string message);
+	Status Fail(std::string message, DownloadFailure failure);
+	Status Failing();
 	void   CloseAndRemove();
 
 	ReleaseAsset          m_asset;
@@ -69,6 +95,8 @@ private:
 	bool                  m_created = false;
 	State                 m_state   = State::Open;
 	std::string           m_error;
+	DownloadFailure       m_failure;      // the parts of m_error
+	DownloadFailure       m_last_failure; // of the last failed call
 	uint64_t              m_received = 0;
 	Sha256                m_hash;
 };

@@ -69,6 +69,10 @@ struct ImportError {
 	std::string     title; // the member's NormalizeTitleId key, when the error is about a member
 	std::string     field; // the field key, when the error is about a field
 	std::string     message;
+	// InvalidValue: the rule the value breaks (a value that does not parse breaks the field's own
+	// rule); Unreadable: the read error.
+	ValidationRule rule = ValidationRule::Field;
+	IoError        io;
 
 	friend bool operator==(const ImportError&, const ImportError&) = default;
 };

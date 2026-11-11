@@ -14,8 +14,10 @@
 // Every member, known or not, keeps its value and its place through a parse and a serialization
 // (nlohmann::ordered_json); a repeated key keeps its first place and its last value.
 
+#include "launcher/core/atomicFile.h"
 #include "launcher/core/expected.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -74,14 +76,45 @@ struct CheatDocument {
 	friend bool operator==(const CheatDocument&, const CheatDocument&) = default;
 };
 
+// Why a cheat document is not valid (ParseCheatDocument) or must not be imported
+// (ValidateRemoteImport), so that the GTK layer can say it in its own words (plan V1).
+enum class CheatProblemKind {
+	InvalidJson,         // "Invalid cheat JSON (<detail>)." (detail: the parser's message)
+	NotAnObject,         // "Invalid cheat JSON (the top-level value is not an object)."
+	NoModsArray,         // "Cheat JSON has no "mods" array."
+	EntryNotAnObject,    // "Invalid cheat entry <entry> (it is not an object)."
+	EntryWithoutName,    // "Invalid cheat entry <entry> (it has no name)."
+	EntryEnabledNotBool, // "Invalid cheat entry <entry> ("enabled" is not true or false)."
+	DocumentNotJson,     // "Invalid cheat JSON." (the document's json does not parse)
+	TitleMismatch,       // "The cheat file does not match this game's title ID."
+	VersionMismatch,     // "The cheat file does not match this game's version (<detail>)."
+	ProcessMismatch,     // "The cheat file does not match this game's executable (<detail>)."
+	NoCheats,            // "The cheat file contains no cheats."
+	MasterCodes,         // "This JSON uses master codes, which are not supported yet."
+	ModuleSpecific,      // "This JSON uses module-specific cheats, which are not supported yet."
+	AddressingFeatures,  // "This JSON uses memory addressing features that are not supported yet."
+	UnsupportedMemory,   // "Unsupported memory entries in cheat "<detail>"." (detail: the name)
+};
+
+struct CheatProblem {
+	CheatProblemKind kind = CheatProblemKind::InvalidJson;
+	std::string      file;      // ParseCheatDocument's file_name; empty for ValidateRemoteImport
+	std::size_t      entry = 0; // Entry*: the number of the mod, from 1
+	std::string      detail;    // see the kinds
+	// The English text: "<file>: <reason>" for ParseCheatDocument, the reason alone otherwise.
+	std::string message;
+
+	friend bool operator==(const CheatProblem&, const CheatProblem&) = default;
+};
+
 // Parses the bytes of a cheat file (Requirement 11.6). It fails when the bytes are not JSON, the
 // top-level value is not an object, it has no "mods" array, or a mod is not an object, has a
 // missing, empty, or non-string "name", or has an "enabled" that is not true or false (Qt's
-// ValidateDocument). The error starts with file_name (the path or name the user knows the file
-// by), then ": ", then the reason; for bytes that are not JSON the reason carries the parser's
-// message.
-Expected<CheatDocument, std::string> ParseCheatDocument(std::string_view bytes,
-                                                        std::string_view file_name);
+// ValidateDocument). The error's message starts with file_name (the path or name the user knows
+// the file by), then ": ", then the reason; for bytes that are not JSON the reason carries the
+// parser's message.
+Expected<CheatDocument, CheatProblem> ParseCheatDocument(std::string_view bytes,
+                                                         std::string_view file_name);
 
 // The cheat file text for document: its json with the "enabled" member of mod i set to
 // cheats[i].enabled for every i below both counts (a mod without "enabled" stays without it while
@@ -98,10 +131,11 @@ std::string SerializeCheatDocument(const CheatDocument& document);
 // non-empty "memory" array of objects with "offset" (hexadecimal, optionally 0x, 1-16 digits),
 // "on" and "off" (pairs of hexadecimal digits, the same length), no "absolute" other than false, no
 // "expected" other than "off" (ignoring letter case), and none of "section", "sectionName",
-// "sectionProtection", "logicalOffset", "sectionOffset". The messages are Qt's.
-std::optional<std::string> ValidateRemoteImport(const CheatDocument& document,
-                                                std::string_view title_id, std::string_view version,
-                                                std::string_view process);
+// "sectionProtection", "logicalOffset", "sectionOffset". The messages are Qt's (no file name).
+std::optional<CheatProblem> ValidateRemoteImport(const CheatDocument& document,
+                                                 std::string_view     title_id,
+                                                 std::string_view     version,
+                                                 std::string_view     process);
 
 // document with every cheat disabled: an import starts with every cheat off (Requirement 11.5).
 CheatDocument WithAllDisabled(CheatDocument document);
@@ -112,9 +146,23 @@ enum class CheatSaveErrorKind {
 	Failed             // the file could not be checked or written; message says why
 };
 
+// Why a Failed save failed (plan V1); None for the other kinds.
+enum class CheatSaveFailure {
+	None,
+	InvalidCheatFile,   // "Invalid cheat file." (an empty path or a document without JSON)
+	UnsupportedTitleId, // "Unsupported title ID." (ImportRemoteCheats)
+	Read,               // "Could not read cheat file: <io>"
+	CreateDirectory,    // "Could not create the local cheats directory <io.detail>: <errno>"
+	Write,              // "Could not save cheat file: <io>"
+};
+
 struct CheatSaveError {
 	CheatSaveErrorKind kind = CheatSaveErrorKind::Failed;
 	std::string        message;
+	CheatSaveFailure   failure = CheatSaveFailure::None;
+	// NeedsConfirmation: io.path is the file. Read and Write: the read or write error.
+	// CreateDirectory: io.detail is the directory, io.error_number the errno.
+	IoError io;
 
 	friend bool operator==(const CheatSaveError&, const CheatSaveError&) = default;
 };
@@ -154,9 +202,13 @@ struct LocalCheatFile {
 	std::optional<std::string> bytes;
 	// The parsed file; nullopt (zero cheats listed) when there is no file or it does not parse.
 	std::optional<CheatDocument> document;
-	// Why the file could not be read, the system's error text alone ("Is a directory"); empty
-	// when it was read or does not exist (p7-u7-1: the launcher frames it with the path).
+	// Why the file could not be read, the system's error text alone ("Is a directory"), and its
+	// errno; empty and 0 when it was read or does not exist (p7-u7-1: the launcher frames it with
+	// the path).
 	std::string reason;
+	int         error_number = 0;
+	// Why the bytes read do not parse; nullopt when there are none or they parsed.
+	std::optional<CheatProblem> problem;
 	// The status line, Qt's texts: "Unsupported title ID.", "No local cheat file: <path>",
 	// "Could not read cheat file: <reason>", the parse error (it names the path), or
 	// "Loaded <n> cheat(s) from <path>.".

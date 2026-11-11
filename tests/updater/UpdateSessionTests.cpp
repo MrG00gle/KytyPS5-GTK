@@ -41,7 +41,9 @@ namespace UpdaterGen = KytyTests::UpdaterGen;
 using kyty::core::HttpFailure;
 using kyty::core::HttpRequest;
 using kyty::core::HttpResult;
+using kyty::updater::ProcessError;
 using kyty::updater::ProcessResult;
+using kyty::updater::SessionMessage;
 using kyty::updater::SessionOutcome;
 using kyty::updater::SessionState;
 using kyty::updater::UpdateSession;
@@ -148,19 +150,19 @@ public:
 		return program == "/usr/bin/tar" ? tar : validate;
 	}
 
-	kyty::core::Expected<void, std::string> StartDetached(const fs::path&          program,
-	                                                      std::vector<std::string> args,
-	                                                      const fs::path&          cwd,
-	                                                      const fs::path& log_file) override {
+	kyty::core::Expected<void, ProcessError> StartDetached(const fs::path&          program,
+	                                                       std::vector<std::string> args,
+	                                                       const fs::path&          cwd,
+	                                                       const fs::path& log_file) override {
 		calls.push_back({program, std::move(args), cwd, log_file, true});
 		return detached;
 	}
 
-	std::vector<Call>                       calls;
-	ProcessResult                           tar {0, "", ""};
-	ProcessResult                           validate {0, "", ""};
-	kyty::core::Expected<void, std::string> detached;
-	std::function<void(const fs::path&)>    on_run;
+	std::vector<Call>                        calls;
+	ProcessResult                            tar {0, "", ""};
+	ProcessResult                            validate {0, "", ""};
+	kyty::core::Expected<void, ProcessError> detached;
+	std::function<void(const fs::path&)>     on_run;
 };
 
 class FakeGate final: public kyty::updater::InstallGate {
@@ -321,6 +323,10 @@ struct Harness {
 		      name + ": Failed, not " + StateName(Last().state));
 		Check(Last().message == message,
 		      name + ": message '" + Last().message + "', expected '" + message + "'");
+		// Phase 9 V1: every message has its kind (the launcher's text is checked against the
+		// message in launcher_gtk_update_message_text).
+		Check(message.empty() == (Last().detail.kind == SessionMessage::None),
+		      name + ": the message has a kind exactly when it is not empty");
 		Check(Workspaces().empty(), name + ": no workspace remains");
 		Check(gate.finished == gate.started, name + ": the gate is released");
 	}
@@ -766,8 +772,12 @@ void TestProcessFailures() {
 	          "The update was cancelled. Close the running game first.", 2},
 	         {"detached start",
 	          [](FakeRunner& runner, FakeGate&) {
-		          runner.detached = kyty::core::MakeUnexpected(
-		              std::string("Cannot start kyty_updater: ") + ErrorText(EACCES));
+		          ProcessError error;
+		          error.kind         = kyty::updater::ProcessErrorKind::Spawn;
+		          error.program      = "kyty_updater";
+		          error.error_number = EACCES;
+		          error.message      = "Cannot start kyty_updater: " + ErrorText(EACCES);
+		          runner.detached    = kyty::core::MakeUnexpected(std::move(error));
 	          },
 	          "Could not start the update installer: Cannot start kyty_updater: " +
 	              ErrorText(EACCES),
@@ -782,6 +792,57 @@ void TestProcessFailures() {
 		harness.CheckFailed(message, name);
 		Check(harness.runner.calls.size() == calls, name + ": the process calls");
 	}
+
+	// The parts of the step messages.
+	const auto detail_of = [](const std::function<void(FakeRunner&)>& setup) {
+		Harness harness;
+		harness.ScriptNewer();
+		harness.Asset(Ok(Package()));
+		setup(harness.runner);
+		harness.RunCheck();
+		harness.RunInstall();
+		return harness.Last().detail;
+	};
+	auto detail = detail_of([](FakeRunner& runner) {
+		runner.tar = {2 << 8, "", "tar: This does not look like a tar archive\n"};
+	});
+	Check(detail.kind == SessionMessage::StepExited && detail.text == "/usr/bin/tar" &&
+	          detail.number == 2 &&
+	          detail.standard_error == "tar: This does not look like a tar archive\n",
+	      "tar's exit: the step, the code, and the standard error");
+	detail = detail_of([](FakeRunner& runner) { runner.tar = {9, "", ""}; });
+	Check(detail.kind == SessionMessage::StepSignaled && detail.number == 9 &&
+	          detail.standard_error.empty(),
+	      "tar's signal");
+	detail = detail_of([](FakeRunner& runner) { runner.tar = {0x137f, "", ""}; });
+	Check(detail.kind == SessionMessage::StepWaitStatus && detail.number == 0x137f,
+	      "tar's wait status");
+	detail = detail_of([](FakeRunner& runner) {
+		runner.tar.wait_status          = -1;
+		runner.tar.error                = "Cannot start /usr/bin/tar: " + ErrorText(ENOENT);
+		runner.tar.failure.kind         = kyty::updater::ProcessErrorKind::Spawn;
+		runner.tar.failure.program      = "/usr/bin/tar";
+		runner.tar.failure.error_number = ENOENT;
+		runner.tar.failure.message      = runner.tar.error;
+	});
+	Check(detail.kind == SessionMessage::StepNotStarted &&
+	          detail.process.kind == kyty::updater::ProcessErrorKind::Spawn &&
+	          detail.process.error_number == ENOENT && detail.process.program == "/usr/bin/tar",
+	      "tar not started: the process error");
+	detail = detail_of([](FakeRunner& runner) {
+		ProcessError error;
+		error.kind         = kyty::updater::ProcessErrorKind::OpenLog;
+		error.program      = "/x/kyty_updater";
+		error.error_number = ENOSPC;
+		error.path         = "/x/helper.log";
+		error.message   = "Cannot start /x/kyty_updater: cannot open the log file /x/helper.log: " +
+		                  ErrorText(ENOSPC);
+		runner.detached = kyty::core::MakeUnexpected(error);
+	});
+	Check(detail.kind == SessionMessage::InstallerNotStarted &&
+	          detail.process.kind == kyty::updater::ProcessErrorKind::OpenLog &&
+	          detail.process.path == "/x/helper.log",
+	      "the installer not started: the process error");
 }
 
 void TestWorkspaceFaults() {
@@ -819,6 +880,26 @@ void TestWorkspaceFaults() {
 		harness.CheckFailed(expected, "workspace step " + std::to_string(static_cast<int>(step)));
 		Check(harness.AssetRequests() == 0 && harness.gate.started == 1,
 		      "no download after a workspace failure");
+		const auto& detail = harness.Last().detail;
+		Check(detail.error_number == EACCES, "the workspace step's errno");
+		switch (step) {
+			case WorkspaceStep::CreateWorkspace:
+				Check(detail.kind == SessionMessage::CreateWorkspace &&
+				          detail.path == harness.install,
+				      "CreateWorkspace: the installation directory");
+				break;
+			case WorkspaceStep::CopyHelper:
+				Check(detail.kind == SessionMessage::CopyHelper &&
+				          detail.path == harness.config.helper &&
+				          detail.other == workspace / "kyty_updater",
+				      "CopyHelper: the helper and its copy");
+				break;
+			case WorkspaceStep::CreatePayload:
+				Check(detail.kind == SessionMessage::CreatePayload &&
+				          detail.path == workspace / "payload",
+				      "CreatePayload: the payload directory");
+				break;
+		}
 	}
 
 	// Real failures: a missing helper and a missing installation directory.

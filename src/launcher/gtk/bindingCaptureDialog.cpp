@@ -83,14 +83,15 @@ void ShowRefusal(KytyBindingCaptureDialog* self, const char* text) {
 }
 
 void UpdatePadText(KytyBindingCaptureDialog* self) {
-	const auto& controller = self->state->context->services.controller.State();
-	std::string text;
+	const auto&        controller = self->state->context->services.controller.State();
+	const std::string& sdl_error  = controller.error; // core text: SDL's message (library text)
+	std::string        text;
 	if (controller.paused) {
 		text = _("Controller input is paused while a game is running.\nPress Esc to cancel.");
-	} else if (!controller.error.empty()) {
-		// TRANSLATORS: %s is SDL's message.
-		text = Format(_("The controller cannot be read: %s\nPress Esc to cancel."),
-		              controller.error.c_str());
+	} else if (!sdl_error.empty()) {
+		text = Format(
+		    // TRANSLATORS: %s is SDL's message.
+		    _("The controller cannot be read: %s\nPress Esc to cancel."), sdl_error.c_str());
 	} else if (controller.device_name.empty()) {
 		text = _("No controller connected.\nConnect one, or press Esc to cancel.");
 	} else {

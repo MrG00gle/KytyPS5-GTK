@@ -1,6 +1,7 @@
 #include "launcher/gtk/settingsWrite.h"
 
 #include "launcher/gtk/alerts.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
 
@@ -60,7 +61,7 @@ std::string SettingsRefusalText(const core::SettingsStoreFile& store) {
 	}
 	return Format(_("%s exists but could not be loaded:\n%s\n\nOverwrite replaces it with these "
 	                "settings."),
-	              store.path.c_str(), error.message.c_str());
+	              store.path.c_str(), Render(IoErrorText(error)).c_str());
 }
 
 std::string SettingsSaveErrorText(const core::IoError& error) {
@@ -68,7 +69,7 @@ std::string SettingsSaveErrorText(const core::IoError& error) {
 		return NotADirectoryText(error.path);
 	}
 	return Format(_("The settings file %s was not changed:\n%s"), error.path.c_str(),
-	              error.message.c_str());
+	              Render(IoErrorText(error)).c_str());
 }
 
 void SaveSettingsInteractively(GtkWindow* parent, LauncherContext& context,

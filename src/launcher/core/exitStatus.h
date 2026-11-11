@@ -12,6 +12,7 @@ struct ExitDescription {
 	int         code   = 0;     // the exit code when the process exited, else 0
 	int         signal = 0;     // the terminating signal number when a signal ended it, else 0
 	std::string text;           // "exit code 3", "signal SIGSEGV", or "wait status 0x<hex>"
+	std::string signal_name;    // the signal's name in text ("SIGSEGV"), "" without a signal
 };
 
 // Describes a waitpid() status:

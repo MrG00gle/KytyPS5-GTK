@@ -40,85 +40,197 @@ std::string ErrorText(int error_number) {
 	return std::generic_category().message(error_number);
 }
 
-std::string Seconds(std::chrono::milliseconds duration) {
-	return std::to_string(duration.count() / 1000);
+int64_t Seconds(std::chrono::milliseconds duration) {
+	return duration.count() / 1000;
 }
 
-std::string RefusedUrlMessage(const std::string& url) {
-	return "Refused to request " + url + ": it is not a release URL of " +
-	       std::string(kRepository) + ".";
+// A session message: the English text and its parts (SessionOutcome::message and detail).
+struct Reason {
+	std::string   message;
+	SessionDetail detail;
+};
+
+Reason Said(SessionMessage kind, std::string message) {
+	Reason reason;
+	reason.message     = std::move(message);
+	reason.detail.kind = kind;
+	return reason;
+}
+
+Reason Said(SessionMessage kind, std::string_view message) {
+	return Said(kind, std::string(message));
+}
+
+Reason Said(SessionMessage kind, const char* message) {
+	return Said(kind, std::string(message));
+}
+
+Reason RefusedUrl(const std::string& url) {
+	auto reason        = Said(SessionMessage::RefusedUrl, "Refused to request " + url +
+	                                                          ": it is not a release URL of " +
+	                                                          std::string(kRepository) + ".");
+	reason.detail.text = url;
+	return reason;
+}
+
+// "The update check ..." or "The download ...", with a number.
+Reason Numbered(SessionMessage kind, std::string message, int64_t number) {
+	auto reason          = Said(kind, std::move(message));
+	reason.detail.number = number;
+	return reason;
 }
 
 // The reason of a failed release metadata request (Requirement 13.12).
-std::string DescribeMetadataFailure(const HttpResult& result) {
+Reason DescribeMetadataFailure(const HttpResult& result) {
 	switch (result.failure) {
-		case HttpFailure::Network: return "The update check failed: " + result.message;
+		case HttpFailure::Network: {
+			auto reason =
+			    Said(SessionMessage::CheckNetwork, "The update check failed: " + result.message);
+			reason.detail.text = result.message;
+			return reason;
+		}
 		case HttpFailure::Status:
-			return "The update check failed with HTTP status " + std::to_string(result.status) +
-			       ".";
+			return Numbered(SessionMessage::CheckStatus,
+			                "The update check failed with HTTP status " +
+			                    std::to_string(result.status) + ".",
+			                result.status);
 		case HttpFailure::Stalled:
-			return "The update check received no data for " + Seconds(kMetadataStallTimeout) +
-			       " seconds.";
-		case HttpFailure::TimedOut: return "The update check timed out.";
-		case HttpFailure::Cancelled: return "The update check was cancelled.";
+			return Numbered(SessionMessage::CheckStalled,
+			                "The update check received no data for " +
+			                    std::to_string(Seconds(kMetadataStallTimeout)) + " seconds.",
+			                Seconds(kMetadataStallTimeout));
+		case HttpFailure::TimedOut:
+			return Said(SessionMessage::CheckTimedOut, "The update check timed out.");
+		case HttpFailure::Cancelled:
+			return Said(SessionMessage::CheckCancelled, "The update check was cancelled.");
 		case HttpFailure::None:
 		case HttpFailure::TooLarge: break;
 	}
-	return std::string(kMetadataTooLargeMessage);
+	return Said(SessionMessage::CheckTooLarge, kMetadataTooLargeMessage);
 }
 
 // The reason of a failed package download (Requirement 13.8).
-std::string DescribeDownloadFailure(const HttpResult& result) {
+Reason DescribeDownloadFailure(const HttpResult& result) {
 	switch (result.failure) {
-		case HttpFailure::Network: return "The download failed: " + result.message;
+		case HttpFailure::Network: {
+			auto reason =
+			    Said(SessionMessage::DownloadNetwork, "The download failed: " + result.message);
+			reason.detail.text = result.message;
+			return reason;
+		}
 		case HttpFailure::Status:
-			return "The download failed with HTTP status " + std::to_string(result.status) + ".";
+			return Numbered(SessionMessage::DownloadStatus,
+			                "The download failed with HTTP status " +
+			                    std::to_string(result.status) + ".",
+			                result.status);
 		case HttpFailure::Stalled:
-			return "The download received no data for " + Seconds(kAssetStallTimeout) + " seconds.";
-		case HttpFailure::TimedOut: return "The download timed out.";
-		case HttpFailure::Cancelled: return std::string(kDownloadAbortedMessage);
+			return Numbered(SessionMessage::DownloadStalled,
+			                "The download received no data for " +
+			                    std::to_string(Seconds(kAssetStallTimeout)) + " seconds.",
+			                Seconds(kAssetStallTimeout));
+		case HttpFailure::TimedOut:
+			return Said(SessionMessage::DownloadTimedOut, "The download timed out.");
+		case HttpFailure::Cancelled:
+			return Said(SessionMessage::DownloadCancelled, kDownloadAbortedMessage);
 		case HttpFailure::None:
 		case HttpFailure::TooLarge: break;
 	}
-	return std::string(kDownloadTooLargeMessage);
+	return Said(SessionMessage::DownloadTooLarge, kDownloadTooLargeMessage);
+}
+
+// The reason of a failed Append() or Finish() of the verifier: its message and its parts.
+Reason DescribeVerifierFailure(std::string message, const DownloadFailure& failure,
+                               const fs::path& path) {
+	SessionMessage kind = SessionMessage::DownloadCancelled;
+	switch (failure.kind) {
+		case DownloadFailureKind::None:
+		case DownloadFailureKind::Aborted: break;
+		case DownloadFailureKind::Create: kind = SessionMessage::DownloadCreate; break;
+		case DownloadFailureKind::Write: kind = SessionMessage::DownloadWrite; break;
+		case DownloadFailureKind::TooLarge: kind = SessionMessage::DownloadTooLarge; break;
+		case DownloadFailureKind::TooSmall: kind = SessionMessage::DownloadTooSmall; break;
+		case DownloadFailureKind::Digest: kind = SessionMessage::DownloadDigest; break;
+		case DownloadFailureKind::Finished: kind = SessionMessage::DownloadFinished; break;
+	}
+	auto reason                = Said(kind, std::move(message));
+	reason.detail.path         = path;
+	reason.detail.error_number = failure.error_number;
+	reason.detail.received     = failure.received;
+	reason.detail.size         = failure.size;
+	return reason;
+}
+
+// The reason of a release without a usable package or not to compare (releaseMetadata.h).
+Reason DescribeReleaseError(const std::string& error) {
+	const std::pair<std::string_view, SessionMessage> known[] = {
+	    {kInvalidReleaseMessage, SessionMessage::InvalidRelease},
+	    {kUnstableReleaseMessage, SessionMessage::UnstableRelease},
+	    {kInvalidAssetMessage, SessionMessage::InvalidAsset},
+	    {kMissingAssetMessage, SessionMessage::MissingAsset}};
+	for (const auto& [text, kind]: known) {
+		if (error == text) {
+			return Said(kind, error);
+		}
+	}
+	return Said(SessionMessage::None, error);
 }
 
 // nullopt when the process ran and exited 0; otherwise why the step failed, with the process's
 // standard error.
-std::optional<std::string> DescribeStepFailure(std::string_view step, const ProcessResult& result) {
+std::optional<Reason> DescribeStepFailure(std::string_view step, const ProcessResult& result) {
+	Reason      reason;
 	std::string what;
 	if (!result.error.empty()) {
-		what = result.error;
+		what                          = result.error;
+		reason.detail.kind            = SessionMessage::StepNotStarted;
+		reason.detail.process         = result.failure;
+		reason.detail.process.message = result.error;
 	} else if (WIFEXITED(result.wait_status)) {
 		if (WEXITSTATUS(result.wait_status) == 0) {
 			return std::nullopt;
 		}
 		what = std::string(step) + " exited with code " +
 		       std::to_string(WEXITSTATUS(result.wait_status));
+		reason.detail.kind   = SessionMessage::StepExited;
+		reason.detail.number = WEXITSTATUS(result.wait_status);
 	} else if (WIFSIGNALED(result.wait_status)) {
 		what = std::string(step) + " was ended by signal " +
 		       std::to_string(WTERMSIG(result.wait_status));
+		reason.detail.kind   = SessionMessage::StepSignaled;
+		reason.detail.number = WTERMSIG(result.wait_status);
 	} else {
 		what = std::string(step) + " ended with wait status " + std::to_string(result.wait_status);
+		reason.detail.kind   = SessionMessage::StepWaitStatus;
+		reason.detail.number = result.wait_status;
 	}
-	std::string message = "Could not prepare the update: " + what;
+	if (reason.detail.kind != SessionMessage::StepNotStarted) {
+		reason.detail.text = std::string(step);
+	}
+	reason.detail.standard_error = result.standard_error;
+	reason.message               = "Could not prepare the update: " + what;
 	if (result.standard_error.empty()) {
-		return message + ".";
+		reason.message += ".";
+	} else {
+		reason.message += ":\n" + result.standard_error;
 	}
-	return message + ":\n" + result.standard_error;
+	return reason;
 }
 
 // Why config cannot be used: the first of install_dir, helper, and working_dir that is not an
 // absolute path (an empty path is not one either); nullopt when all three are.
-std::optional<std::string> ConfigurationError(const UpdateSessionConfig& config) {
+std::optional<Reason> ConfigurationError(const UpdateSessionConfig& config) {
 	const std::pair<std::string_view, const fs::path*> fields[] = {
 	    {"install_dir", &config.install_dir},
 	    {"helper", &config.helper},
 	    {"working_dir", &config.working_dir}};
 	for (const auto& [name, path]: fields) {
 		if (!path->is_absolute()) {
-			return "The update configuration is invalid: " + std::string(name) +
-			       " must be an absolute path (" + path->string() + ").";
+			auto reason        = Said(SessionMessage::InvalidConfiguration,
+			                          "The update configuration is invalid: " + std::string(name) +
+			                              " must be an absolute path (" + path->string() + ").");
+			reason.detail.text = std::string(name);
+			reason.detail.path = *path;
+			return reason;
 		}
 	}
 	return std::nullopt;
@@ -144,7 +256,7 @@ bool IsRunning(SessionState state) {
 } // namespace
 
 struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
-	using ReleaseDone = void (Impl::*)(const ReleaseInfo* release, std::string error);
+	using ReleaseDone = void (Impl::*)(const ReleaseInfo* release, Reason error);
 	using Step        = void (Impl::*)();
 
 	Impl(UpdateSessionConfig session_config, kyty::core::HttpClient& http_client,
@@ -160,9 +272,10 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 	InstallGate&            gate;
 	ChangeFn                on_change;
 
-	SessionState state = SessionState::Idle;
-	std::string  message;
-	bool         user_activated = false;
+	SessionState  state = SessionState::Idle;
+	std::string   message;
+	SessionDetail detail;
+	bool          user_activated = false;
 	// Callbacks of requests and timers started before the last Stop() find a newer generation and
 	// do nothing.
 	uint64_t                          generation = 0;
@@ -175,7 +288,7 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 	bool                              installing = false; // between InstallStarted and the end
 	fs::path                          workspace;
 	std::unique_ptr<DownloadVerifier> verifier;
-	std::string                       download_error;
+	std::optional<Reason>             download_error;
 	uint64_t                          downloaded = 0;
 
 	void Notify() {
@@ -185,6 +298,7 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 		SessionOutcome outcome;
 		outcome.state   = state;
 		outcome.message = message;
+		outcome.detail  = detail;
 		if (offered) {
 			outcome.release = latest;
 		}
@@ -193,9 +307,10 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 	}
 
 	// A resting state, reported at once.
-	void Enter(SessionState next, std::string text = {}) {
+	void Enter(SessionState next, Reason reason = {}) {
 		state   = next;
-		message = std::move(text);
+		message = std::move(reason.message);
+		detail  = std::move(reason.detail);
 		Notify();
 	}
 
@@ -205,6 +320,7 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 	void Begin(SessionState next, Start start) {
 		state = next;
 		message.clear();
+		detail                        = {};
 		const auto started_generation = generation;
 		start();
 		if (generation == started_generation && state == next) {
@@ -236,7 +352,7 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 		}
 	}
 
-	void Fail(std::string reason) {
+	void Fail(Reason reason) {
 		Stop();
 		Enter(SessionState::Failed, std::move(reason));
 	}
@@ -262,7 +378,7 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 
 	void FetchRelease(const std::string& url, ReleaseDone done) {
 		if (!IsAllowedUpdateUrl(url)) {
-			(this->*done)(nullptr, RefusedUrlMessage(url));
+			(this->*done)(nullptr, RefusedUrl(url));
 			return;
 		}
 		body.clear();
@@ -303,7 +419,7 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 
 	void MetadataDone(const HttpResult& result, ReleaseDone done) {
 		if (body_too_large) {
-			(this->*done)(nullptr, std::string(kMetadataTooLargeMessage));
+			(this->*done)(nullptr, Said(SessionMessage::CheckTooLarge, kMetadataTooLargeMessage));
 			return;
 		}
 		if (result.failure != HttpFailure::None) {
@@ -315,14 +431,14 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 		(this->*done)(&release, {});
 	}
 
-	void LatestFetched(const ReleaseInfo* release, std::string error) {
+	void LatestFetched(const ReleaseInfo* release, Reason error) {
 		if (release == nullptr) {
 			Fail(std::move(error));
 			return;
 		}
 		// Not a published stable release (or not a release at all): nothing to compare.
 		if (release->error == kInvalidReleaseMessage || release->error == kUnstableReleaseMessage) {
-			Fail(release->error);
+			Fail(DescribeReleaseError(release->error));
 			return;
 		}
 		latest = *release;
@@ -336,34 +452,39 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 		});
 	}
 
-	void InstalledFetched(const ReleaseInfo* release, std::string error) {
-		std::string reason = std::move(error);
+	void InstalledFetched(const ReleaseInfo* release, Reason error) {
+		Reason reason = std::move(error);
 		if (release != nullptr) {
 			if (release->tag.empty() || !release->published_at) {
-				reason = release->error;
+				reason = DescribeReleaseError(release->error);
 			} else if (release->tag != config.installed_tag) {
-				reason = "GitHub answered with the release " + release->tag + ".";
+				reason             = Said(SessionMessage::OtherRelease,
+				                          "GitHub answered with the release " + release->tag + ".");
+				reason.detail.text = release->tag;
 			} else {
 				Decide(*release);
 				return;
 			}
 		}
-		Fail(std::string(kInstalledReleaseUnverifiedMessage) + " " + reason);
+		reason.message = std::string(kInstalledReleaseUnverifiedMessage) + " " + reason.message;
+		reason.detail.installed_unverified = true;
+		Fail(std::move(reason));
 	}
 
 	void Decide(const ReleaseInfo& installed) {
 		const auto relation = Compare(*latest, installed);
 		if (relation == Relation::NotNewer) {
-			Enter(SessionState::NoNewer, std::string(kNoNewerReleaseMessage));
+			Enter(SessionState::NoNewer,
+			      Said(SessionMessage::NoNewerRelease, kNoNewerReleaseMessage));
 			return;
 		}
 		if (relation == Relation::Unknown) {
-			Fail(std::string(kUnknownReleaseOrderMessage));
+			Fail(Said(SessionMessage::UnknownReleaseOrder, kUnknownReleaseOrderMessage));
 			return;
 		}
 		// A newer release without a usable package (Requirement 13.6).
 		if (!latest->asset) {
-			Fail(latest->error);
+			Fail(DescribeReleaseError(latest->error));
 			return;
 		}
 		offered = true;
@@ -383,23 +504,33 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 			return;
 		}
 		if (!gate.CanInstallUpdate()) {
-			message = kCloseGameMessage;
+			message     = kCloseGameMessage;
+			detail      = {};
+			detail.kind = SessionMessage::CloseGame;
 			Notify();
 			return;
 		}
 		gate.InstallStarted();
 		installing = true;
 		downloaded = 0;
-		if (auto error = CreateWorkspace(); !error.empty()) {
-			Fail(std::move(error));
+		if (auto error = CreateWorkspace()) {
+			Fail(std::move(*error));
 			return;
 		}
 		Begin(SessionState::Downloading, [this] { StartDownload(); });
 	}
 
-	// <install_dir>/.kyty-update-XXXXXX with the helper copy and an empty payload directory; ""
-	// or why it failed.
-	std::string CreateWorkspace() {
+	// <install_dir>/.kyty-update-XXXXXX with the helper copy and an empty payload directory;
+	// nullopt or why it failed.
+	std::optional<Reason> CreateWorkspace() {
+		const auto failed = [](SessionMessage kind, std::string message, const fs::path& path,
+		                       const fs::path& other, int error_number) {
+			auto reason                = Said(kind, std::move(message));
+			reason.detail.path         = path;
+			reason.detail.other        = other;
+			reason.detail.error_number = error_number;
+			return reason;
+		};
 		std::string pattern =
 		    (config.install_dir / (std::string(kWorkspacePrefix) + "XXXXXX")).string();
 		int error_number = InjectedFault(WorkspaceStep::CreateWorkspace);
@@ -407,26 +538,33 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 			error_number = errno;
 		}
 		if (error_number != 0) {
-			return "Cannot create an update folder in " + config.install_dir.string() + ": " +
-			       ErrorText(error_number);
+			return failed(SessionMessage::CreateWorkspace,
+			              "Cannot create an update folder in " + config.install_dir.string() +
+			                  ": " + ErrorText(error_number),
+			              config.install_dir, {}, error_number);
 		}
 		workspace = pattern;
 
 		const auto  helper = workspace / kHelperFileName;
 		std::string reason;
+		int         copy_errno = 0;
 		if (const int fault = InjectedFault(WorkspaceStep::CopyHelper); fault != 0) {
-			reason = ErrorText(fault);
+			reason     = ErrorText(fault);
+			copy_errno = fault;
 		} else {
 			// copy_file copies the permission bits too, so the copy stays executable.
 			std::error_code ec;
 			fs::copy_file(config.helper, helper, ec);
 			if (ec) {
-				reason = ec.message();
+				reason     = ec.message();
+				copy_errno = ec.value();
 			}
 		}
 		if (!reason.empty()) {
-			return "Cannot copy " + config.helper.string() + " to " + helper.string() + ": " +
-			       reason;
+			return failed(SessionMessage::CopyHelper,
+			              "Cannot copy " + config.helper.string() + " to " + helper.string() +
+			                  ": " + reason,
+			              config.helper, helper, copy_errno);
 		}
 
 		const auto payload = workspace / kPayloadFileName;
@@ -435,20 +573,22 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 			error_number = errno;
 		}
 		if (error_number != 0) {
-			return "Cannot create " + payload.string() + ": " + ErrorText(error_number);
+			return failed(SessionMessage::CreatePayload,
+			              "Cannot create " + payload.string() + ": " + ErrorText(error_number),
+			              payload, {}, error_number);
 		}
-		return {};
+		return std::nullopt;
 	}
 
 	void StartDownload() {
 		const auto& asset = *latest->asset;
 		const auto  url   = AssetDownloadUrl(latest->tag, asset.name);
 		if (!IsAllowedUpdateUrl(url)) {
-			Fail(RefusedUrlMessage(url));
+			Fail(RefusedUrl(url));
 			return;
 		}
 		verifier = std::make_unique<DownloadVerifier>(asset, workspace / kPackageFileName);
-		download_error.clear();
+		download_error.reset();
 		HttpRequest download;
 		download.url                   = url;
 		download.headers               = {{"User-Agent", std::string(kUpdateUserAgent)}};
@@ -473,7 +613,8 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 
 	bool DownloadChunk(std::span<const std::byte> chunk) {
 		if (const auto appended = verifier->Append(chunk); !appended) {
-			download_error = appended.error();
+			download_error = DescribeVerifierFailure(appended.error(), verifier->LastFailure(),
+			                                         verifier->Path());
 			return false;
 		}
 		downloaded                     = verifier->Received();
@@ -484,8 +625,8 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 	}
 
 	void DownloadDone(const HttpResult& result) {
-		if (!download_error.empty()) {
-			Fail(download_error);
+		if (download_error) {
+			Fail(std::move(*download_error));
 			return;
 		}
 		if (result.failure != HttpFailure::None) {
@@ -493,7 +634,8 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 			return;
 		}
 		if (const auto finished = verifier->Finish(); !finished) {
-			Fail(finished.error());
+			Fail(DescribeVerifierFailure(finished.error(), verifier->LastFailure(),
+			                             verifier->Path()));
 			return;
 		}
 		verifier.reset(); // keeps the verified package
@@ -540,7 +682,7 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 		}
 		// A game may have started while the release was prepared (as Qt's Restart() checked).
 		if (!gate.CanInstallUpdate()) {
-			Fail(std::string(kGameRunningCancelledMessage));
+			Fail(Said(SessionMessage::GameRunningCancelled, kGameRunningCancelledMessage));
 			return;
 		}
 		const auto started =
@@ -550,7 +692,10 @@ struct UpdateSession::Impl: std::enable_shared_from_this<Impl> {
 		                          std::to_string(config.launcher_pid), config.working_dir.string()},
 		                         workspace, workspace / kHelperLogFileName);
 		if (!started) {
-			Fail("Could not start the update installer: " + started.error());
+			auto reason = Said(SessionMessage::InstallerNotStarted,
+			                   "Could not start the update installer: " + started.error().message);
+			reason.detail.process = started.error();
+			Fail(std::move(reason));
 			return;
 		}
 		// The helper owns the workspace now, and the installation stays in progress at the gate

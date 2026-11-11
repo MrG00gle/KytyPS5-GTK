@@ -139,7 +139,9 @@ KYTY_PROPERTY(31, "Invalid cheat documents are rejected") {
 
 		const auto parsed = kyty::core::ParseCheatDocument(draw.bytes, "PPSA01234.json");
 		RC_ASSERT(!parsed.has_value());
-		RC_ASSERT(parsed.error().starts_with("PPSA01234.json: "));
+		RC_ASSERT(parsed.error().message.starts_with("PPSA01234.json: "));
+		// Phase 9 V1: the file is a part of its own, and the message is "<file>: <reason>".
+		RC_ASSERT(parsed.error().file == "PPSA01234.json");
 
 		// The local cheat file.
 		const KytyTests::TempDir temp("kyty_p31");
@@ -149,6 +151,11 @@ KYTY_PROPERTY(31, "Invalid cheat documents are rejected") {
 		RC_ASSERT(!local.document.has_value());
 		RC_ASSERT(local.readable && local.bytes == draw.bytes);
 		RC_ASSERT(local.message.starts_with(path.string() + ": "));
+		RC_ASSERT(local.problem.has_value());
+		if (local.problem.has_value()) {
+			RC_ASSERT(local.problem->file == path.string() &&
+			          local.problem->message == local.message);
+		}
 		const auto after = kyty::core::ReadFileLimited(path, kyty::core::kMaxCheatFileBytes);
 		// RC_ASSERT does not short-circuit &&: the value is checked before it is read.
 		RC_ASSERT(after.has_value());
@@ -170,6 +177,12 @@ KYTY_PROPERTY(31, "Invalid cheat documents are rejected") {
 		RC_ASSERT(results.size() == 1u);
 		RC_ASSERT(!results[0].document.has_value() && !results[0].importable);
 		RC_ASSERT(results[0].error.starts_with(file.name + ": "));
+		RC_ASSERT(results[0].fetch.failure == kyty::core::HttpFailure::None &&
+		          results[0].problem.has_value());
+		if (results[0].problem.has_value()) {
+			RC_ASSERT(results[0].problem->file == file.name &&
+			          results[0].problem->message == results[0].error);
+		}
 		RC_TAG(draw.kind);
 	});
 }

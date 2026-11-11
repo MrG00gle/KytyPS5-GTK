@@ -50,8 +50,10 @@ DownloadVerifier::DownloadVerifier(const ReleaseAsset& asset, std::filesystem::p
     : m_asset(asset), m_path(std::move(out)) {
 	m_fd = ::open(m_path.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0666);
 	if (m_fd < 0) {
-		m_state = State::Failed;
-		m_error = "Cannot create " + m_path.string() + ": " + ErrorText(errno);
+		const int error_number = errno;
+		m_state                = State::Failed;
+		m_error   = "Cannot create " + m_path.string() + ": " + ErrorText(error_number);
+		m_failure = {DownloadFailureKind::Create, error_number, 0, 0};
 		return;
 	}
 	m_created = true;
@@ -74,22 +76,31 @@ void DownloadVerifier::CloseAndRemove() {
 	}
 }
 
-Status DownloadVerifier::Fail(std::string message) {
+Status DownloadVerifier::Fail(std::string message, DownloadFailure failure) {
 	CloseAndRemove();
-	m_state = State::Failed;
-	m_error = std::move(message);
+	m_state   = State::Failed;
+	m_error   = std::move(message);
+	m_failure = failure;
+	return Failing();
+}
+
+// The stored failure again.
+Status DownloadVerifier::Failing() {
+	m_last_failure = m_failure;
 	return kyty::core::MakeUnexpected(m_error);
 }
 
 Status DownloadVerifier::Append(std::span<const std::byte> bytes) {
 	if (m_state == State::Failed) {
-		return kyty::core::MakeUnexpected(m_error);
+		return Failing();
 	}
 	if (m_state == State::Finished) {
+		m_last_failure = {DownloadFailureKind::Finished, 0, 0, 0};
 		return kyty::core::MakeUnexpected(std::string("The download is already finished."));
 	}
 	if (bytes.size() > m_asset.size - m_received) {
-		return Fail(std::string(kDownloadTooLargeMessage));
+		return Fail(std::string(kDownloadTooLargeMessage),
+		            {DownloadFailureKind::TooLarge, 0, 0, 0});
 	}
 	if (bytes.empty()) {
 		return {};
@@ -99,7 +110,8 @@ Status DownloadVerifier::Append(std::span<const std::byte> bytes) {
 		error_number = WriteAll(m_fd, bytes);
 	}
 	if (error_number != 0) {
-		return Fail("Cannot write " + m_path.string() + ": " + ErrorText(error_number));
+		return Fail("Cannot write " + m_path.string() + ": " + ErrorText(error_number),
+		            {DownloadFailureKind::Write, error_number, 0, 0});
 	}
 	m_hash.Update(bytes);
 	m_received += bytes.size();
@@ -111,21 +123,23 @@ Status DownloadVerifier::Finish() {
 		return {};
 	}
 	if (m_state == State::Failed) {
-		return kyty::core::MakeUnexpected(m_error);
+		return Failing();
 	}
 	const int result       = ::close(m_fd);
 	const int error_number = errno;
 	m_fd                   = -1;
 	if (result != 0) {
-		return Fail("Cannot write " + m_path.string() + ": " + ErrorText(error_number));
+		return Fail("Cannot write " + m_path.string() + ": " + ErrorText(error_number),
+		            {DownloadFailureKind::Write, error_number, 0, 0});
 	}
 	if (m_received != m_asset.size) {
 		return Fail("The downloaded file is smaller than the release asset (" +
-		            std::to_string(m_received) + " of " + std::to_string(m_asset.size) +
-		            " bytes).");
+		                std::to_string(m_received) + " of " + std::to_string(m_asset.size) +
+		                " bytes).",
+		            {DownloadFailureKind::TooSmall, 0, m_received, m_asset.size});
 	}
 	if (m_hash.Final() != m_asset.sha256) {
-		return Fail(std::string(kDownloadDigestMessage));
+		return Fail(std::string(kDownloadDigestMessage), {DownloadFailureKind::Digest, 0, 0, 0});
 	}
 	m_state = State::Finished;
 	return {};
@@ -136,8 +150,9 @@ void DownloadVerifier::Abort() {
 		return;
 	}
 	CloseAndRemove();
-	m_state = State::Failed;
-	m_error = kDownloadAbortedMessage;
+	m_state   = State::Failed;
+	m_error   = kDownloadAbortedMessage;
+	m_failure = {DownloadFailureKind::Aborted, 0, 0, 0};
 }
 
 void SetDownloadWriteFaultForTesting(std::function<int()> fault) {

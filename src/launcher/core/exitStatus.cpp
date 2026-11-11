@@ -44,8 +44,9 @@ ExitDescription DescribeWaitStatus(int status) {
 		description.normal = description.code == 0;
 		description.text   = "exit code " + std::to_string(description.code);
 	} else if (WIFSIGNALED(status)) {
-		description.signal = WTERMSIG(status);
-		description.text   = "signal " + SignalName(description.signal);
+		description.signal      = WTERMSIG(status);
+		description.signal_name = SignalName(description.signal);
+		description.text        = "signal " + description.signal_name;
 	} else {
 		char hex[16];
 		std::snprintf(hex, sizeof(hex), "%x", static_cast<unsigned>(status));

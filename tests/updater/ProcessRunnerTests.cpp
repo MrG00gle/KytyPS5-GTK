@@ -65,9 +65,13 @@ void CheckExit(const ProcessResult& result, int code, const std::string& name) {
 	          std::to_string(result.wait_status) + ")");
 }
 
-void CheckNotStarted(const ProcessResult& result, const std::string& error,
-                     const std::string& name) {
+void CheckNotStarted(const ProcessResult& result, const std::string& error, const std::string& name,
+                     kyty::updater::ProcessErrorKind kind, int error_number) {
 	Check(result.error == error, name + ": error '" + result.error + "', expected '" + error + "'");
+	// Phase 9 V1: the same error with its kind and parts.
+	Check(result.failure.message == error && result.failure.kind == kind &&
+	          result.failure.error_number == error_number && result.failure.program.is_absolute(),
+	      name + ": the failure's kind, errno, and program");
 	Check(result.wait_status == -1 && !WIFEXITED(result.wait_status) &&
 	          !WIFSIGNALED(result.wait_status),
 	      name + ": no wait status");
@@ -180,29 +184,35 @@ void TestWorkingDirectory() {
 	Check(fs::exists(work / "relative", ec), "the relative program ran in cwd");
 
 	const auto missing = temp.Path() / "missing";
-	CheckNotStarted(runner->Run(FakeEmulator(), {}, missing),
+	const auto result  = runner->Run(FakeEmulator(), {}, missing);
+	CheckNotStarted(result,
 	                "Cannot start " + FakeEmulator().string() + ": " + ErrorText(ENOENT) +
 	                    " (working directory " + missing.string() + ")",
-	                "a missing working directory");
+	                "a missing working directory", kyty::updater::ProcessErrorKind::Spawn, ENOENT);
+	Check(result.failure.path == missing && result.failure.program == FakeEmulator(),
+	      "the failure names the working directory and the program");
 }
 
 void TestSpawnFailures() {
 	const auto    runner = MakePosixProcessRunner();
 	const TempDir temp("kyty_runner");
 	const auto    missing = temp.Path() / "missing";
+	using kyty::updater::ProcessErrorKind;
 	CheckNotStarted(runner->Run(missing, {}, {}),
 	                "Cannot start " + missing.string() + ": " + ErrorText(ENOENT),
-	                "a missing program");
+	                "a missing program", ProcessErrorKind::Spawn, ENOENT);
 	const auto plain = temp.WriteFile("plain", "#!/bin/sh\nexit 0\n");
 	CheckNotStarted(runner->Run(plain, {}, {}),
 	                "Cannot start " + plain.string() + ": " + ErrorText(EACCES),
-	                "a file without execute permission");
+	                "a file without execute permission", ProcessErrorKind::Spawn, EACCES);
 	CheckNotStarted(runner->Run(temp.Path(), {}, {}),
 	                "Cannot start " + temp.Path().string() + ": " + ErrorText(EACCES),
-	                "a directory");
-	CheckNotStarted(runner->Run(FakeEmulator(), {"--stderr", std::string("a\0b", 3)}, {}),
+	                "a directory", ProcessErrorKind::Spawn, EACCES);
+	const auto nul = runner->Run(FakeEmulator(), {"--stderr", std::string("a\0b", 3)}, {});
+	CheckNotStarted(nul,
 	                "Cannot start " + FakeEmulator().string() + ": argument 2 contains a NUL byte",
-	                "a NUL byte");
+	                "a NUL byte", ProcessErrorKind::NulArgument, EINVAL);
+	Check(nul.failure.argument == 2, "the NUL byte's argument number");
 
 	// No descriptor left for the pipe (or the log file).
 	rlimit saved {};
@@ -216,11 +226,14 @@ void TestSpawnFailures() {
 	CheckNotStarted(no_pipe,
 	                "Cannot start " + FakeEmulator().string() +
 	                    ": cannot create a pipe: " + ErrorText(EMFILE),
-	                "no descriptors");
-	Check(!no_log && no_log.error() ==
+	                "no descriptors", ProcessErrorKind::Pipe, EMFILE);
+	Check(!no_log && no_log.error().message ==
 	                     "Cannot start " + FakeEmulator().string() + ": cannot open the log file " +
 	                         (temp.Path() / "log").string() + ": " + ErrorText(EMFILE),
-	      "no descriptor for the log file: " + (no_log ? std::string() : no_log.error()));
+	      "no descriptor for the log file: " + (no_log ? std::string() : no_log.error().message));
+	Check(no_log.error().kind == ProcessErrorKind::OpenLog &&
+	          no_log.error().error_number == EMFILE && no_log.error().path == temp.Path() / "log",
+	      "the log file failure's parts");
 }
 
 void TestDetached() {
@@ -236,7 +249,7 @@ void TestDetached() {
 	const auto started =
 	    runner->StartDetached("/bin/sh", {"-c", script, FakeEmulator().string()}, work, log);
 	unsetenv("TAR_OPTIONS");
-	Check(started.has_value(), "started: " + (started ? std::string() : started.error()));
+	Check(started.has_value(), "started: " + (started ? std::string() : started.error().message));
 
 	// The detached process is still a child of this one: wait for it, then read its log.
 	int         status = 0;
@@ -257,19 +270,26 @@ void TestDetached() {
 
 	const auto missing_log = temp.Path() / "missing" / "helper.log";
 	const auto no_log      = runner->StartDetached(FakeEmulator(), {}, work, missing_log);
-	Check(!no_log && no_log.error() == "Cannot start " + FakeEmulator().string() +
-	                                       ": cannot open the log file " + missing_log.string() +
-	                                       ": " + ErrorText(ENOENT),
+	Check(!no_log && no_log.error().message == "Cannot start " + FakeEmulator().string() +
+	                                               ": cannot open the log file " +
+	                                               missing_log.string() + ": " + ErrorText(ENOENT),
 	      "a log file that cannot be created");
 	const auto missing     = temp.Path() / "missing-program";
 	const auto not_started = runner->StartDetached(missing, {}, work, log);
-	Check(!not_started && not_started.error() == "Cannot start " + missing.string() + ": " +
-	                                                 ErrorText(ENOENT) + " (working directory " +
-	                                                 work.string() + ")",
-	      "a missing program: " + (not_started ? std::string() : not_started.error()));
+	Check(!not_started && not_started.error().message ==
+	                          "Cannot start " + missing.string() + ": " + ErrorText(ENOENT) +
+	                              " (working directory " + work.string() + ")",
+	      "a missing program: " + (not_started ? std::string() : not_started.error().message));
+	Check(not_started.error().kind == kyty::updater::ProcessErrorKind::Spawn &&
+	          not_started.error().error_number == ENOENT && not_started.error().path == work &&
+	          not_started.error().program == missing,
+	      "a missing program's parts");
 	const auto nul = runner->StartDetached(FakeEmulator(), {std::string("\0", 1)}, work, log);
-	Check(!nul && nul.error() == "Cannot start " + FakeEmulator().string() +
-	                                 ": argument 1 contains a NUL byte",
+	Check(!nul &&
+	          nul.error().message ==
+	              "Cannot start " + FakeEmulator().string() + ": argument 1 contains a NUL byte" &&
+	          nul.error().kind == kyty::updater::ProcessErrorKind::NulArgument &&
+	          nul.error().argument == 1,
 	      "a NUL byte");
 	Check(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD, "no other process was started");
 }

@@ -132,10 +132,11 @@ public:
 
 private:
 	// One warning per path and scan: the key is the canonical path, or the lexical one.
-	void Warn(const std::filesystem::path& path, std::string reason) {
+	void Warn(const std::filesystem::path& path, std::string reason,
+	          ScanWarningKind kind = ScanWarningKind::Unreadable) {
 		const auto canonical = m_fs.Canonical(path);
 		auto       key       = canonical ? canonical->native() : LexicalKey(path).native();
-		m_warnings.try_emplace(std::move(key), ScanWarning {path, std::move(reason)});
+		m_warnings.try_emplace(std::move(key), ScanWarning {path, std::move(reason), kind});
 	}
 
 	// Adds the entry at path unless its canonical path is known; false when cancelled.
@@ -146,7 +147,7 @@ private:
 		}
 		const auto canonical = m_fs.Canonical(path);
 		if (!canonical) {
-			Warn(path, std::string(kNoCanonical));
+			Warn(path, std::string(kNoCanonical), ScanWarningKind::NoCanonicalPath);
 			return true;
 		}
 		const auto& key = canonical->native();

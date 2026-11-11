@@ -291,6 +291,38 @@ void TestFaultAtEachStep() {
 		Check(result.error().message.find(std::generic_category().message(ENOSPC)) !=
 		          std::string::npos,
 		      name + ": the message has the error text: " + result.error().message);
+		// Phase 9 V1: the step's kind, and the file or directory the message names.
+		const auto& error = result.error();
+		switch (step) {
+			case AtomicFileStep::CreateTemp:
+				Check(error.kind == kyty::core::IoErrorKind::CreateTemp &&
+				          error.detail == dir.Path() &&
+				          error.message == "cannot create a temporary file in " +
+				                               dir.Path().string() + ": " +
+				                               std::generic_category().message(ENOSPC),
+				      name + ": the kind and the directory");
+				break;
+			case AtomicFileStep::Write:
+			case AtomicFileStep::Sync:
+			case AtomicFileStep::Close: {
+				const auto kind = step == AtomicFileStep::Write ? kyty::core::IoErrorKind::WriteTemp
+				                  : step == AtomicFileStep::Sync
+				                      ? kyty::core::IoErrorKind::SyncTemp
+				                      : kyty::core::IoErrorKind::CloseTemp;
+				Check(error.kind == kind && error.detail.parent_path() == dir.Path() &&
+				          error.detail.filename().string().starts_with(".settings.ini.tmp-") &&
+				          error.message.find(error.detail.string()) != std::string::npos,
+				      name + ": the kind and the temporary file");
+				break;
+			}
+			case AtomicFileStep::Rename:
+				Check(error.kind == kyty::core::IoErrorKind::Rename && error.other == target &&
+				          error.message == "cannot rename " + error.detail.string() + " to " +
+				                               target.string() + ": " +
+				                               std::generic_category().message(ENOSPC),
+				      name + ": the kind, the temporary file, and the target");
+				break;
+		}
 		Check(!seen.empty() && seen.back() == step, name + ": the steps stop at the fault");
 		Check(ReadAll(target) == "previous bytes", name + ": the target is unchanged");
 		Check(Mode(target) == 0640, name + ": the target's mode is unchanged");
@@ -356,6 +388,8 @@ void TestReadFileLimited() {
 	Check(over.error().path == ten, "the error names the file");
 	Check(over.error().message.find("limit 9 bytes") != std::string::npos,
 	      "the message names the limit: " + over.error().message);
+	Check(over.error().kind == kyty::core::IoErrorKind::TooLarge && over.error().limit == 9,
+	      "the kind and the limit");
 	Check(ReadFileLimited(ten, UINT64_MAX).value_or("") == "0123456789", "no practical limit");
 
 	const auto empty = dir.WriteFile("empty.bin", "");
@@ -373,6 +407,7 @@ void TestReadFileLimited() {
 	Check(!missing.has_value() && missing.error().error_number == ENOENT,
 	      "a missing file is ENOENT");
 	Check(missing.error().path == dir.Path() / "missing.bin", "the error names the missing file");
+	Check(missing.error().kind == kyty::core::IoErrorKind::Open, "a missing file: Open");
 
 	const auto directory = ReadFileLimited(dir.Path(), 100);
 	Check(!directory.has_value() && directory.error().error_number == EISDIR,

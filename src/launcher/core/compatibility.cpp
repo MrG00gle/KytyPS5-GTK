@@ -66,14 +66,28 @@ std::string_view CompatibilityStatusKey(CompatibilityStatus status) {
 	return "Unknown";
 }
 
-Expected<CompatibilityDatabase, std::string> ParseCompatibility(std::string_view json) {
+namespace {
+
+// ParseCompatibility with the kind of a failure: InvalidJson (detail: the parser's message) or
+// NotAnObject; message is ParseCompatibility's text.
+struct ParseFailure {
+	CompatibilityFileErrorKind kind = CompatibilityFileErrorKind::InvalidJson;
+	std::string                detail;
+	std::string                message;
+};
+
+Expected<CompatibilityDatabase, ParseFailure> ParseDatabase(std::string_view json) {
 	// No exceptions: a parse error gives a discarded value.
 	const auto root = Json::parse(json.begin(), json.end(), nullptr, false);
 	if (root.is_discarded()) {
-		return MakeUnexpected("the content is not valid JSON: " + DescribeJsonError<Json>(json));
+		auto detail = DescribeJsonError<Json>(json);
+		return MakeUnexpected(ParseFailure {CompatibilityFileErrorKind::InvalidJson, detail,
+		                                    "the content is not valid JSON: " + detail});
 	}
 	if (!root.is_object()) {
-		return MakeUnexpected(std::string("the top-level JSON value is not an object"));
+		return MakeUnexpected(ParseFailure {CompatibilityFileErrorKind::NotAnObject,
+		                                    {},
+		                                    "the top-level JSON value is not an object"});
 	}
 
 	CompatibilityDatabase database;
@@ -97,6 +111,16 @@ Expected<CompatibilityDatabase, std::string> ParseCompatibility(std::string_view
 		database.entries[std::move(title_id)] = std::move(entry);
 	}
 	return database;
+}
+
+} // namespace
+
+Expected<CompatibilityDatabase, std::string> ParseCompatibility(std::string_view json) {
+	auto database = ParseDatabase(json);
+	if (!database) {
+		return MakeUnexpected(std::move(database).error().message);
+	}
+	return std::move(*database);
 }
 
 CompatibilityEntry Lookup(const CompatibilityDatabase& database, std::string_view title_id) {
@@ -310,21 +334,32 @@ std::filesystem::path CompatibilityLoader::CachePath() const {
 
 // ---- --local maintainer mode
 
-Expected<CompatibilityDatabase, std::string>
+Expected<CompatibilityDatabase, CompatibilityFileError>
 LoadLocalCompatibility(const std::filesystem::path& path) {
 	auto bytes = ReadFileLimited(path, kMaxCompatibilityBytes);
 	if (!bytes) {
 		if (bytes.error().error_number == ENOENT) {
 			return CompatibilityDatabase {};
 		}
-		return MakeUnexpected("Cannot read the compatibility database: " + bytes.error().message);
+		CompatibilityFileError error;
+		error.kind    = CompatibilityFileErrorKind::Unreadable;
+		error.path    = path;
+		error.message = "Cannot read the compatibility database: " + bytes.error().message;
+		error.io      = std::move(bytes).error();
+		return MakeUnexpected(std::move(error));
 	}
-	auto database = ParseCompatibility(*bytes);
+	auto database = ParseDatabase(*bytes);
 	if (!database) {
-		return MakeUnexpected("The compatibility database " + path.string() +
-		                      " does not parse: " + database.error());
+		auto&                  failure = database.error();
+		CompatibilityFileError error;
+		error.kind   = failure.kind;
+		error.path   = path;
+		error.detail = std::move(failure.detail);
+		error.message =
+		    "The compatibility database " + path.string() + " does not parse: " + failure.message;
+		return MakeUnexpected(std::move(error));
 	}
-	return database;
+	return std::move(*database);
 }
 
 Expected<void, IoError> SaveLocalCompatibility(const std::filesystem::path& path,

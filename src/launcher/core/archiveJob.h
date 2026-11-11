@@ -45,6 +45,26 @@ enum class ArchiveOutcome {
 // ignored), next to the directory (Requirement 11.8).
 std::filesystem::path ArchivePathFor(const std::filesystem::path& game_dir);
 
+// Why Prepare or Run failed, so that the GTK layer can say it in its own words (plan V1).
+enum class ArchiveErrorKind {
+	None,
+	Exists,         // "<archive> already exists."
+	CheckFailed,    // "<archive>: cannot check whether it exists: <errno text>."
+	RemoveFailed,   // "cannot remove the partial archive <archive>: <errno text>." (Run only)
+	CompressFailed, // the packer failed: "Could not compress <source>." (Run only)
+};
+
+struct ArchiveError {
+	ArchiveErrorKind      kind = ArchiveErrorKind::None;
+	std::filesystem::path source; // Run: the directory ("Could not compress <source>: ..."); empty
+	                              // for Prepare
+	std::filesystem::path archive;
+	int                   error_number = 0; // CheckFailed, RemoveFailed
+	std::string           message;          // Prepare's error, or Run's Error()
+
+	friend bool operator==(const ArchiveError&, const ArchiveError&) = default;
+};
+
 class ArchiveJob {
 public:
 	// A job that packs game_dir into ArchivePathFor(game_dir) with packer (Common::PackArchive when
@@ -52,9 +72,10 @@ public:
 	// starting nothing, with "<archive> already exists." when anything exists at the archive path
 	// (std::filesystem::symlink_status, so a dangling symbolic link counts; Requirement 11.9), or
 	// with "<archive>: cannot check whether it exists: <reason>." when that cannot be determined.
-	static Expected<ArchiveJob, std::string> Prepare(const std::filesystem::path& game_dir,
-	                                                 ArchivePacker                packer   = {},
-	                                                 ArchiveVerifier              verifier = {});
+	// The error's message is that text, its source empty.
+	static Expected<ArchiveJob, ArchiveError> Prepare(const std::filesystem::path& game_dir,
+	                                                  ArchivePacker                packer   = {},
+	                                                  ArchiveVerifier              verifier = {});
 
 	// Packs the directory; call it once, on any thread. progress (may be empty) gets 0 first, then
 	// floor(100 * done / total) of the packer's progress calls whenever that is higher than the
@@ -73,8 +94,10 @@ public:
 	// keeps its archive when it can be opened (Completed), as in the Qt launcher.
 	void Run(const std::function<void(int percent)>& progress, const CancelToken& cancel);
 
-	[[nodiscard]] ArchiveOutcome               Outcome() const { return m_outcome; }
-	[[nodiscard]] const std::string&           Error() const { return m_error; } // Failed only
+	[[nodiscard]] ArchiveOutcome     Outcome() const { return m_outcome; }
+	[[nodiscard]] const std::string& Error() const { return m_error.message; } // Failed only
+	// Failed only: the error with its parts (its source is Source()); kind None otherwise.
+	[[nodiscard]] const ArchiveError&          Failure() const { return m_error; }
 	[[nodiscard]] const std::filesystem::path& Source() const { return m_source; }
 	[[nodiscard]] const std::filesystem::path& Archive() const { return m_archive; }
 
@@ -82,14 +105,14 @@ private:
 	ArchiveJob(std::filesystem::path source, std::filesystem::path archive, ArchivePacker packer,
 	           ArchiveVerifier verifier);
 
-	void Fail(std::string error);
+	void Fail(ArchiveError error);
 
 	std::filesystem::path m_source;
 	std::filesystem::path m_archive;
 	ArchivePacker         m_packer;
 	ArchiveVerifier       m_verifier;
 	ArchiveOutcome        m_outcome = ArchiveOutcome::Pending;
-	std::string           m_error;
+	ArchiveError          m_error;
 };
 
 } // namespace kyty::core

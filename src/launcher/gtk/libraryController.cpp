@@ -5,6 +5,7 @@
 #include "launcher/core/scanFileSystem.h"
 #include "launcher/core/settingsStore.h"
 #include "launcher/core/titleId.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/gameViewSupport.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/imageDecoding.h"
@@ -257,7 +258,7 @@ void LibraryController::ApplyScan(ScanTask& scan) {
 	    core::MigrateLegacyGamePaths(next, entries)) {
 		g_debug("scan %" G_GUINT64_FORMAT ": migrated legacy game paths", scan.generation);
 		if (const auto error = SaveSettingsAutomatically(m_context, std::move(next))) {
-			Notify(_("The settings could not be saved"), error->message);
+			Notify(_("The settings could not be saved"), Render(IoErrorText(*error)));
 		}
 	}
 
@@ -442,9 +443,9 @@ void LibraryController::StartCompatibility() {
 	m_stats.compatibility_finished_us = g_get_monotonic_time();
 	if (!loaded) {
 		m_stats.local_load_failed = true;
-		g_message("%s", loaded.error().c_str());
+		g_message("%s", loaded.error().message.c_str());
 		Notify(_("The compatibility list could not be loaded; edits are not saved"),
-		       loaded.error());
+		       Render(CompatibilityFileErrorText(loaded.error())));
 		return;
 	}
 	g_debug("compatibility database from %s: %zu entries", m_local_path.c_str(),
@@ -520,7 +521,7 @@ void LibraryController::SaveLocal() {
 	if (auto saved = core::SaveLocalCompatibility(m_local_path, m_context.compatibility.Database());
 	    !saved) {
 		g_message("%s", saved.error().message.c_str());
-		Notify(_("The compatibility list could not be saved"), saved.error().message);
+		Notify(_("The compatibility list could not be saved"), Render(IoErrorText(saved.error())));
 	}
 }
 

@@ -3,6 +3,7 @@
 #include "launcher/core/cancelToken.h"
 #include "launcher/gtk/alerts.h"
 #include "launcher/gtk/backgroundTask.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
 
@@ -188,9 +189,10 @@ void OnFinished(KytyCompressionDialog* self) {
 			std::string message =
 			    // TRANSLATORS: %s is the game folder that could not be compressed.
 			    Format(_("Could not compress %s."), job.Source().c_str());
-			const bool plain = job.Error() == "Could not compress " + job.Source().string() + ".";
-			if (job.Outcome() == core::ArchiveOutcome::Failed && !plain) {
-				message += "\n\n" + job.Error();
+			const auto& failure = job.Failure();
+			if (job.Outcome() == core::ArchiveOutcome::Failed &&
+			    failure.kind != core::ArchiveErrorKind::CompressFailed) {
+				message += "\n\n" + kyty::gtk::Render(kyty::gtk::ArchiveErrorText(failure));
 			}
 			g_message("compression of %s failed: %s", job.Source().c_str(),
 			          job.Error().empty() ? "the archive cannot be opened" : job.Error().c_str());
@@ -324,17 +326,14 @@ KytyCompressionDialog* kyty_compression_dialog_new(kyty::gtk::LauncherContext&  
 	auto prepared = core::ArchiveJob::Prepare(entry.path, std::move(packer));
 	if (!prepared) {
 		// 11.9: nothing is started and the existing file stays as it is.
-		const fs::path  archive = core::ArchivePathFor(entry.path);
-		std::error_code ec;
-		const auto      type = fs::symlink_status(archive, ec).type();
-		g_message("compression of %s: %s", entry.path.c_str(), prepared.error().c_str());
-		if (type != fs::file_type::not_found && type != fs::file_type::none) {
-			// TRANSLATORS: %s is the archive path.
-			const std::string exists = Format(_("%s already exists."), archive.c_str());
-			SetPage(self->warning_page, _("The archive already exists"), exists);
+		const auto& error = prepared.error();
+		g_message("compression of %s: %s", entry.path.c_str(), error.message.c_str());
+		// The text names the archive (and the reason when it cannot be checked).
+		const std::string text = kyty::gtk::Render(kyty::gtk::ArchiveErrorText(error));
+		if (error.kind == core::ArchiveErrorKind::Exists) {
+			SetPage(self->warning_page, _("The archive already exists"), text);
 		} else {
-			// The core's message names the archive and the reason.
-			SetPage(self->warning_page, _("The archive cannot be created"), prepared.error());
+			SetPage(self->warning_page, _("The archive cannot be created"), text);
 		}
 		ShowPage(self, "warning");
 		return self;

@@ -50,16 +50,28 @@ std::filesystem::path SaveDataDirectory(const std::filesystem::path& data_dir);
 // The working directory of the Emulator process: the Data_Directory (Requirement 12.7).
 std::filesystem::path SpawnWorkingDirectory(const ResolvedPaths& paths);
 
+// The steps of EnsureWritableDirectory, for fault injection in tests.
+enum class WritableProbeStep { CreateDirectories, Create, Write, Close, Remove };
+
+// Why EnsureWritableDirectory failed: the step, the probe file it was about (empty for
+// CreateDirectories), and the errno, so that the GTK layer can say it in its own words (plan V1).
+struct WritableDirectoryError {
+	WritableProbeStep     step = WritableProbeStep::CreateDirectories;
+	std::filesystem::path dir;
+	std::filesystem::path probe;
+	int                   error_number = 0;
+	std::string           message; // "<dir>: cannot <step>: <reason>"
+
+	friend bool operator==(const WritableDirectoryError&, const WritableDirectoryError&) = default;
+};
+
 // Creates dir and its parents when missing, then proves that it is writable: creates
 // .kyty-write-probe-<16 random hexadecimal digits> in it (O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC,
 // a name that exists is tried again with another suffix), writes one byte, closes it, and removes
-// it. Nothing else in dir is touched. On failure the error is "<dir>: cannot <step>: <reason>",
-// naming the failed step and the errno text (Requirement 12.4); a probe file that was created is
-// removed unless removing it is the step that failed.
-Expected<void, std::string> EnsureWritableDirectory(const std::filesystem::path& dir);
-
-// The steps of EnsureWritableDirectory, for fault injection in tests.
-enum class WritableProbeStep { CreateDirectories, Create, Write, Close, Remove };
+// it. Nothing else in dir is touched. On failure the error's message is "<dir>: cannot <step>:
+// <reason>", naming the failed step and the errno text (Requirement 12.4); a probe file that was
+// created is removed unless removing it is the step that failed.
+Expected<void, WritableDirectoryError> EnsureWritableDirectory(const std::filesystem::path& dir);
 
 // Tests only, not thread-safe: before each step, EnsureWritableDirectory calls fault(step); a
 // non-zero return value is the errno that the step then fails with, without performing it (Close

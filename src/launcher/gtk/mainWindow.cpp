@@ -5,6 +5,7 @@
 #include "launcher/gtk/alerts.h"
 #include "launcher/gtk/cheatsWindow.h"
 #include "launcher/gtk/compressionDialog.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/gameActions.h"
 #include "launcher/gtk/gameGridView.h"
 #include "launcher/gtk/gameListView.h"
@@ -199,7 +200,8 @@ void Toast(KytyMainWindow* self, const std::string& heading, const std::string& 
 void SaveAutomatically(KytyMainWindow* self, core::LauncherSettings next) {
 	if (const auto error =
 	        kyty::gtk::SaveSettingsAutomatically(*self->state->context, std::move(next))) {
-		Toast(self, _("The settings could not be saved"), error->message);
+		Toast(self, _("The settings could not be saved"),
+		      kyty::gtk::Render(kyty::gtk::IoErrorText(*error)));
 	}
 }
 
@@ -209,11 +211,12 @@ void UpdateSettingsBanner(KytyMainWindow* self) {
 	const auto& store = self->state->context->settings;
 	const bool  show  = store.load_error && !store.overwrite_confirmed;
 	if (show) {
-		adw_banner_set_title(self->settings_banner,
-		                     Format(_("The settings file could not be loaded (%s). Nothing is "
-		                              "saved until you allow it."),
-		                            store.load_error->message.c_str())
-		                         .c_str());
+		adw_banner_set_title(
+		    self->settings_banner,
+		    Format(_("The settings file could not be loaded (%s). Nothing is "
+		             "saved until you allow it."),
+		           kyty::gtk::Render(kyty::gtk::IoErrorText(*store.load_error)).c_str())
+		        .c_str());
 	}
 	adw_banner_set_revealed(self->settings_banner, show ? TRUE : FALSE);
 }
@@ -949,7 +952,8 @@ void OnScanDetails(AdwBanner* /*banner*/, gpointer data) {
 	auto*       self = KYTY_MAIN_WINDOW(data);
 	std::string body;
 	for (const auto& warning: self->state->library->Warnings()) {
-		body += (body.empty() ? "" : "\n") + warning.path.string() + ": " + warning.reason;
+		body += (body.empty() ? "" : "\n") + warning.path.string() + ": " +
+		        kyty::gtk::Render(kyty::gtk::ScanWarningReasonText(warning));
 	}
 	kyty::gtk::ShowError(GTK_WINDOW(self), _("Folders that could not be read"), body,
 	                     self->state->cancellable.get());

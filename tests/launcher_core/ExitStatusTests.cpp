@@ -23,9 +23,16 @@ void Check(bool value, const std::string& message) {
 }
 
 void CheckText(int status, const std::string& expected) {
-	const auto text = DescribeWaitStatus(status).text;
+	const auto description = DescribeWaitStatus(status);
+	const auto text        = description.text;
 	Check(text == expected,
 	      "status " + std::to_string(status) + ": '" + text + "', expected '" + expected + "'");
+	// Phase 9 V1: the signal's name alone, for the launcher's own sentence.
+	const std::string prefix = "signal ";
+	Check(description.signal_name ==
+	          (expected.starts_with(prefix) ? expected.substr(prefix.size()) : std::string()),
+	      "status " + std::to_string(status) + ": the signal name '" + description.signal_name +
+	          "'");
 }
 
 void TestExitCodes() {

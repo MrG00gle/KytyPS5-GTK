@@ -328,6 +328,11 @@ void TestWriteFile() {
 	Check(!missing.has_value() && missing.error().kind == ImportErrorKind::Unreadable &&
 	          missing.error().message.find("missing.json") != std::string::npos,
 	      "a missing file is unreadable, and the message names it");
+	// Phase 9 V1: the read error itself is kept.
+	Check(missing.error().io.kind == kyty::core::IoErrorKind::Open &&
+	          missing.error().io.error_number == ENOENT &&
+	          missing.error().io.message == missing.error().message,
+	      "the unreadable file's read error");
 	const auto directory = kyty::core::ReadGameSettingsFile(dir.Path());
 	Check(!directory.has_value() && directory.error().kind == ImportErrorKind::Unreadable,
 	      "a directory is unreadable");

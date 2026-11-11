@@ -46,7 +46,8 @@ void Check(bool value, const std::string& message) {
 CheatDocument Parse(std::string_view bytes, const std::string& what) {
 	auto document = ParseCheatDocument(bytes, "test.json");
 	Check(document.has_value(),
-	      what + ": parses (" + (document.has_value() ? std::string() : document.error()) + ")");
+	      what + ": parses (" + (document.has_value() ? std::string() : document.error().message) +
+	          ")");
 	return *document;
 }
 
@@ -143,46 +144,68 @@ void TestParse() {
 }
 
 void TestParseErrors() {
+	using Kind = kyty::core::CheatProblemKind;
 	struct Case {
 		std::string_view bytes;
 		std::string_view reason;
+		Kind             kind;
+		std::size_t      entry;
 	};
-	for (const auto& [bytes, reason]: std::vector<Case> {
-	         {"", "Invalid cheat JSON ("},
-	         {"{", "Invalid cheat JSON ("},
-	         {"{\"mods\":[]} x", "Invalid cheat JSON ("},
-	         {"{\"mods\":[{\"name\":\"\xFF\"}]}", "Invalid cheat JSON ("},
-	         {"[]", "Invalid cheat JSON (the top-level value is not an object)."},
-	         {"\"text\"", "Invalid cheat JSON (the top-level value is not an object)."},
-	         {"{}", "Cheat JSON has no \"mods\" array."},
-	         {"{\"mods\":{}}", "Cheat JSON has no \"mods\" array."},
-	         {"{\"mods\":null}", "Cheat JSON has no \"mods\" array."},
-	         {"{\"mods\":[1]}", "Invalid cheat entry 1 (it is not an object)."},
-	         {"{\"mods\":[{\"name\":\"a\"},[]]}", "Invalid cheat entry 2 (it is not an object)."},
-	         {"{\"mods\":[{}]}", "Invalid cheat entry 1 (it has no name)."},
-	         {"{\"mods\":[{\"name\":\"\"}]}", "Invalid cheat entry 1 (it has no name)."},
-	         {"{\"mods\":[{\"name\":7}]}", "Invalid cheat entry 1 (it has no name)."},
+	for (const auto& [bytes, reason, kind, entry]: std::vector<Case> {
+	         {"", "Invalid cheat JSON (", Kind::InvalidJson, 0},
+	         {"{", "Invalid cheat JSON (", Kind::InvalidJson, 0},
+	         {"{\"mods\":[]} x", "Invalid cheat JSON (", Kind::InvalidJson, 0},
+	         {"{\"mods\":[{\"name\":\"\xFF\"}]}", "Invalid cheat JSON (", Kind::InvalidJson, 0},
+	         {"[]", "Invalid cheat JSON (the top-level value is not an object).", Kind::NotAnObject,
+	          0},
+	         {"\"text\"", "Invalid cheat JSON (the top-level value is not an object).",
+	          Kind::NotAnObject, 0},
+	         {"{}", "Cheat JSON has no \"mods\" array.", Kind::NoModsArray, 0},
+	         {"{\"mods\":{}}", "Cheat JSON has no \"mods\" array.", Kind::NoModsArray, 0},
+	         {"{\"mods\":null}", "Cheat JSON has no \"mods\" array.", Kind::NoModsArray, 0},
+	         {"{\"mods\":[1]}", "Invalid cheat entry 1 (it is not an object).",
+	          Kind::EntryNotAnObject, 1},
+	         {"{\"mods\":[{\"name\":\"a\"},[]]}", "Invalid cheat entry 2 (it is not an object).",
+	          Kind::EntryNotAnObject, 2},
+	         {"{\"mods\":[{}]}", "Invalid cheat entry 1 (it has no name).", Kind::EntryWithoutName,
+	          1},
+	         {"{\"mods\":[{\"name\":\"\"}]}", "Invalid cheat entry 1 (it has no name).",
+	          Kind::EntryWithoutName, 1},
+	         {"{\"mods\":[{\"name\":7}]}", "Invalid cheat entry 1 (it has no name).",
+	          Kind::EntryWithoutName, 1},
 	         {"{\"mods\":[{\"name\":\"a\",\"enabled\":\"true\"}]}",
-	          "Invalid cheat entry 1 (\"enabled\" is not true or false)."},
+	          "Invalid cheat entry 1 (\"enabled\" is not true or false).",
+	          Kind::EntryEnabledNotBool, 1},
 	         {"{\"mods\":[{\"name\":\"a\",\"enabled\":null}]}",
-	          "Invalid cheat entry 1 (\"enabled\" is not true or false)."},
+	          "Invalid cheat entry 1 (\"enabled\" is not true or false).",
+	          Kind::EntryEnabledNotBool, 1},
 	         {"{\"mods\":[{\"name\":\"a\",\"enabled\":1}]}",
-	          "Invalid cheat entry 1 (\"enabled\" is not true or false)."},
+	          "Invalid cheat entry 1 (\"enabled\" is not true or false).",
+	          Kind::EntryEnabledNotBool, 1},
 	     }) {
 		const auto document = ParseCheatDocument(bytes, "/data/_Patches/PPSA01234.json");
 		Check(!document.has_value(), "'" + std::string(bytes) + "' is refused");
 		const auto& error = document.error();
-		Check(error.starts_with("/data/_Patches/PPSA01234.json: " + std::string(reason)),
-		      "the error names the file and the reason: " + error);
+		Check(error.message.starts_with("/data/_Patches/PPSA01234.json: " + std::string(reason)),
+		      "the error names the file and the reason: " + error.message);
+		// Phase 9 V1: the kind and the parts of the message.
+		Check(error.kind == kind && error.file == "/data/_Patches/PPSA01234.json" &&
+		          error.entry == entry,
+		      "the kind, the file, and the entry of: " + error.message);
+		Check(kind != Kind::InvalidJson ||
+		          error.message == error.file + ": Invalid cheat JSON (" + error.detail + ").",
+		      "the parser's message is the detail: " + error.message);
 	}
 	const auto not_json = ParseCheatDocument("{", "f.json");
-	Check(not_json.error().find("parse error") != std::string::npos,
-	      "the parser's message is carried: " + not_json.error());
+	Check(not_json.error().message.find("parse error") != std::string::npos &&
+	          not_json.error().detail.find("parse error") == 0,
+	      "the parser's message is carried: " + not_json.error().message);
 	// Phase 8 plan D9: the parser's reason without nlohmann's "[json.exception...]" prefix.
 	const auto not_text = ParseCheatDocument("this is not JSON at all", "f.json");
-	Check(not_text.error().starts_with("f.json: Invalid cheat JSON (parse error at line 1, ") &&
-	          not_text.error().find("[json.exception") == std::string::npos,
-	      "the reason has no exception prefix: " + not_text.error());
+	Check(not_text.error().message.starts_with(
+	          "f.json: Invalid cheat JSON (parse error at line 1, ") &&
+	          not_text.error().message.find("[json.exception") == std::string::npos,
+	      "the reason has no exception prefix: " + not_text.error().message);
 }
 
 void TestSerialize() {
@@ -247,32 +270,46 @@ void TestValidateRemoteImport() {
 	Check(!ValidateRemoteImport(valid, " ppsa01234 ", "01.000", "EBOOT.BIN"),
 	      "title ID and process ignore letter case and the title ID is trimmed");
 
+	using Kind              = kyty::core::CheatProblemKind;
+	const auto problem_text = [](const std::optional<kyty::core::CheatProblem>& problem) {
+		return problem ? problem->message : std::string("(accepted)");
+	};
+	// The message, and (phase 9 V1) the kind and detail without a file name.
 	const auto mismatch = [&](std::string_view title, std::string_view version,
-	                          std::string_view process, std::string_view expected) {
+	                          std::string_view process, std::string_view expected, Kind kind,
+	                          std::string_view detail) {
 		const auto error = ValidateRemoteImport(valid, title, version, process);
-		Check(error && *error == expected,
-		      "refused with '" + std::string(expected) + "': " + error.value_or("(accepted)"));
+		Check(error && error->message == expected && error->kind == kind &&
+		          error->detail == detail && error->file.empty(),
+		      "refused with '" + std::string(expected) + "': " + problem_text(error));
 	};
 	mismatch("PPSA01235", "01.000", "eboot.bin",
-	         "The cheat file does not match this game's title ID.");
+	         "The cheat file does not match this game's title ID.", Kind::TitleMismatch, "");
 	mismatch("CUSA01234", "01.000", "eboot.bin",
-	         "The cheat file does not match this game's title ID.");
-	mismatch("", "01.000", "eboot.bin", "The cheat file does not match this game's title ID.");
+	         "The cheat file does not match this game's title ID.", Kind::TitleMismatch, "");
+	mismatch("", "01.000", "eboot.bin", "The cheat file does not match this game's title ID.",
+	         Kind::TitleMismatch, "");
 	mismatch("PPSA01234", "01.001", "eboot.bin",
-	         "The cheat file does not match this game's version (01.001).");
-	mismatch("PPSA01234", "", "eboot.bin", "The cheat file does not match this game's version ().");
+	         "The cheat file does not match this game's version (01.001).", Kind::VersionMismatch,
+	         "01.001");
+	mismatch("PPSA01234", "", "eboot.bin", "The cheat file does not match this game's version ().",
+	         Kind::VersionMismatch, "");
 	mismatch("PPSA01234", " 01.000", "eboot.bin",
-	         "The cheat file does not match this game's version ( 01.000).");
+	         "The cheat file does not match this game's version ( 01.000).", Kind::VersionMismatch,
+	         " 01.000");
 	mismatch("PPSA01234", "01.000", "game.elf",
-	         "The cheat file does not match this game's executable (game.elf).");
-	mismatch("PPSA01234", "01.000", "", "The cheat file does not match this game's executable ().");
+	         "The cheat file does not match this game's executable (game.elf).",
+	         Kind::ProcessMismatch, "game.elf");
+	mismatch("PPSA01234", "01.000", "", "The cheat file does not match this game's executable ().",
+	         Kind::ProcessMismatch, "");
 
-	const auto check = [](const std::string& text, std::string_view expected) {
+	const auto check = [&](const std::string& text, std::string_view expected, Kind kind) {
 		auto document = ParseCheatDocument(text, "remote.json");
 		Check(document.has_value(), "parses: " + text);
 		const auto error = ValidateRemoteImport(*document, "PPSA01234", "01.000", "eboot.bin");
-		Check(error && *error == expected, "'" + text + "' refused with '" + std::string(expected) +
-		                                       "': " + error.value_or("(accepted)"));
+		Check(error && error->message == expected && error->kind == kind,
+		      "'" + text + "' refused with '" + std::string(expected) +
+		          "': " + problem_text(error));
 	};
 	const auto with_mod = [](const std::string& mod, std::string_view extra = "") {
 		return R"({"id":"ppsa01234","version":"01.000","process":"eboot.bin",)" +
@@ -281,17 +318,23 @@ void TestValidateRemoteImport() {
 	const std::string memory_unsupported = "Unsupported memory entries in cheat \"m\".";
 	const std::string addressing =
 	    "This JSON uses memory addressing features that are not supported yet.";
-	check(with_mod(""), "The cheat file contains no cheats.");
+	check(with_mod(""), "The cheat file contains no cheats.", Kind::NoCheats);
 	check(with_mod(R"({"name":"m","memory":[{"offset":"1","on":"90","off":"0F"}]})",
 	               R"("master":{},)"),
-	      "This JSON uses master codes, which are not supported yet.");
+	      "This JSON uses master codes, which are not supported yet.", Kind::MasterCodes);
 	check(with_mod(
 	          R"({"name":"m","module_name":"x","memory":[{"offset":"1","on":"90","off":"0F"}]})"),
-	      "This JSON uses module-specific cheats, which are not supported yet.");
-	check(with_mod(R"({"name":"m"})"), memory_unsupported);
-	check(with_mod(R"({"name":"m","memory":[]})"), memory_unsupported);
-	check(with_mod(R"({"name":"m","memory":{}})"), memory_unsupported);
-	check(with_mod(R"({"name":"m","memory":[1]})"), memory_unsupported);
+	      "This JSON uses module-specific cheats, which are not supported yet.",
+	      Kind::ModuleSpecific);
+	check(with_mod(R"({"name":"m"})"), memory_unsupported, Kind::UnsupportedMemory);
+	check(with_mod(R"({"name":"m","memory":[]})"), memory_unsupported, Kind::UnsupportedMemory);
+	check(with_mod(R"({"name":"m","memory":{}})"), memory_unsupported, Kind::UnsupportedMemory);
+	check(with_mod(R"({"name":"m","memory":[1]})"), memory_unsupported, Kind::UnsupportedMemory);
+	{
+		auto document = ParseCheatDocument(with_mod(R"({"name":"m"})"), "remote.json");
+		Check(ValidateRemoteImport(*document, "PPSA01234", "01.000", "eboot.bin")->detail == "m",
+		      "the unsupported cheat's name is the detail");
+	}
 	for (const std::string_view write: {
 	         R"({"on":"90","off":"0F"})",
 	         R"({"offset":"","on":"90","off":"0F"})",
@@ -307,8 +350,8 @@ void TestValidateRemoteImport() {
 	         R"({"offset":"1","on":"90","off":"0g"})",
 	         R"({"offset":"1","on":90,"off":"0F"})",
 	     }) {
-		check(with_mod(R"({"name":"m","memory":[)" + std::string(write) + "]}"),
-		      memory_unsupported);
+		check(with_mod(R"({"name":"m","memory":[)" + std::string(write) + "]}"), memory_unsupported,
+		      Kind::UnsupportedMemory);
 	}
 	for (const std::string_view write: {
 	         R"({"offset":"1","on":"90","off":"0F","absolute":true})",
@@ -322,7 +365,8 @@ void TestValidateRemoteImport() {
 	         R"({"offset":"1","on":"90","off":"0F","logicalOffset":"1"})",
 	         R"({"offset":"1","on":"90","off":"0F","sectionOffset":"1"})",
 	     }) {
-		check(with_mod(R"({"name":"m","memory":[)" + std::string(write) + "]}"), addressing);
+		check(with_mod(R"({"name":"m","memory":[)" + std::string(write) + "]}"), addressing,
+		      Kind::AddressingFeatures);
 	}
 	// Accepted variants: 0X prefix, 16 digits, "absolute": false, "expected" equal to "off".
 	for (const std::string_view write: {
@@ -336,18 +380,20 @@ void TestValidateRemoteImport() {
 		      "accepted: " + std::string(write));
 	}
 
-	Check(ValidateRemoteImport(CheatDocument {}, "PPSA01234", "01.000", "eboot.bin") ==
-	          std::optional<std::string>("Invalid cheat JSON."),
+	const auto no_json = ValidateRemoteImport(CheatDocument {}, "PPSA01234", "01.000", "eboot.bin");
+	Check(no_json && no_json->message == "Invalid cheat JSON." &&
+	          no_json->kind == Kind::DocumentNotJson,
 	      "a document without JSON");
 	CheatDocument bad;
-	bad.json = R"({"mods":[{"name":""}]})";
-	Check(ValidateRemoteImport(bad, "PPSA01234", "01.000", "eboot.bin") ==
-	          std::optional<std::string>("Invalid cheat entry 1 (it has no name)."),
+	bad.json         = R"({"mods":[{"name":""}]})";
+	const auto again = ValidateRemoteImport(bad, "PPSA01234", "01.000", "eboot.bin");
+	Check(again && again->message == "Invalid cheat entry 1 (it has no name)." &&
+	          again->kind == Kind::EntryWithoutName && again->entry == 1 && again->file.empty(),
 	      "an invalid document is checked again");
 	// SDL_strcasecmp stops at a NUL byte; such an id must not match the title ID.
 	check(R"({"id":"PPSA01234\u0000x","version":"01.000","process":"eboot.bin","mods":[)"
 	      R"({"name":"m","memory":[{"offset":"1","on":"90","off":"0F"}]}]})",
-	      "The cheat file does not match this game's title ID.");
+	      "The cheat file does not match this game's title ID.", Kind::TitleMismatch);
 }
 
 void TestSaveIfUnchanged() {
@@ -365,7 +411,8 @@ void TestSaveIfUnchanged() {
 	auto other = kyty::core::WithAllDisabled(document);
 	auto saved = SaveIfUnchanged(path, other, std::nullopt);
 	Check(!saved && saved.error().kind == CheatSaveErrorKind::NeedsConfirmation &&
-	          saved.error().message.find(path.string()) != std::string::npos,
+	          saved.error().message.find(path.string()) != std::string::npos &&
+	          saved.error().io.path == path,
 	      "an existing file needs confirmation: " + saved.error().message);
 	Check(ReadBytes(path) == text, "unchanged before the confirmation");
 	saved = SaveIfUnchanged(path, other, std::string_view("something else"));
@@ -389,7 +436,8 @@ void TestSaveIfUnchanged() {
 	// Failures.
 	saved = SaveIfUnchanged({}, document, std::nullopt);
 	Check(!saved && saved.error().kind == CheatSaveErrorKind::Failed &&
-	          saved.error().message == "Invalid cheat file.",
+	          saved.error().message == "Invalid cheat file." &&
+	          saved.error().failure == kyty::core::CheatSaveFailure::InvalidCheatFile,
 	      "an empty path");
 	saved = SaveIfUnchanged(temp.Path() / "x.json", CheatDocument {}, std::nullopt);
 	Check(!saved && saved.error().message == "Invalid cheat file." &&
@@ -400,6 +448,10 @@ void TestSaveIfUnchanged() {
 	Check(!saved && saved.error().kind == CheatSaveErrorKind::Failed &&
 	          saved.error().message.starts_with("Could not read cheat file: "),
 	      "a directory at the path: " + saved.error().message);
+	Check(saved.error().failure == kyty::core::CheatSaveFailure::Read &&
+	          saved.error().io.error_number == EISDIR &&
+	          saved.error().message == "Could not read cheat file: " + saved.error().io.message,
+	      "the read error is kept: " + saved.error().io.message);
 	temp.WriteFile("file", "not a directory");
 	saved =
 	    SaveIfUnchanged(temp.Path() / "file" / "sub" / "PPSA01234.json", document, std::nullopt);
@@ -423,6 +475,12 @@ void TestSaveIfUnchanged() {
 	          saved.error().message.starts_with("Could not create the local cheats directory " +
 	                                            (blocked.Path() / "_Patches").string() + ": "),
 	      "the directory cannot be created: " + saved.error().message);
+	Check(saved.error().failure == kyty::core::CheatSaveFailure::CreateDirectory &&
+	          saved.error().io.detail == blocked.Path() / "_Patches" &&
+	          saved.error().io.error_number != 0 &&
+	          saved.error().message.ends_with(
+	              ": " + std::generic_category().message(saved.error().io.error_number)),
+	      "the directory and its errno");
 
 	// Injected write faults leave the file unchanged.
 	for (const auto step: {kyty::core::AtomicFileStep::CreateTemp,
@@ -435,6 +493,9 @@ void TestSaveIfUnchanged() {
 		Check(!saved && saved.error().kind == CheatSaveErrorKind::Failed &&
 		          saved.error().message.starts_with("Could not save cheat file: "),
 		      "a write fault: " + (saved ? std::string() : saved.error().message));
+		Check(saved.error().failure == kyty::core::CheatSaveFailure::Write &&
+		          saved.error().io.error_number == EIO,
+		      "the write error is kept");
 		Check(ReadBytes(path) == before, "a write fault leaves the file unchanged");
 	}
 }
@@ -468,7 +529,8 @@ void TestImport() {
 
 	const auto unsupported =
 	    kyty::core::ImportRemoteCheats(data, "CUSA01234", remote, std::nullopt);
-	Check(!unsupported && unsupported.error().message == "Unsupported title ID.",
+	Check(!unsupported && unsupported.error().message == "Unsupported title ID." &&
+	          unsupported.error().failure == kyty::core::CheatSaveFailure::UnsupportedTitleId,
 	      "no import for a title without cheats");
 }
 
@@ -492,6 +554,10 @@ void TestLoadLocalCheats() {
 	Check(local.readable && local.bytes == invalid && !local.document &&
 	          local.message == path.string() + ": Invalid cheat entry 1 (it has no name).",
 	      "a file that does not parse: " + local.message);
+	Check(local.problem && local.problem->kind == kyty::core::CheatProblemKind::EntryWithoutName &&
+	          local.problem->file == path.string() && local.problem->message == local.message &&
+	          local.error_number == 0,
+	      "the parse problem's kind and file");
 	Check(ReadBytes(path) == invalid, "the file is left unchanged");
 
 	temp.WriteFile("_Patches/PPSA01234.json", ValidRemote());
@@ -509,6 +575,7 @@ void TestLoadLocalCheats() {
 	// p7-u7-1: the reason alone, for the launcher's own sentence with the path.
 	Check(local.reason == std::generic_category().message(EISDIR),
 	      "an unreadable file's reason is the system's text alone: " + local.reason);
+	Check(local.error_number == EISDIR && !local.problem, "an unreadable file's errno");
 	Check(local.message.find(local.reason) != std::string::npos,
 	      "the message carries the same reason: " + local.message);
 

@@ -376,6 +376,10 @@ void CheckSpawnError(const fs::path& executable, SpawnErrorKind kind, int error_
 	Check(error.reason == reason, what + ": reason '" + error.reason + "'");
 	Check(error.message == "Cannot start " + absolute.string() + ": " + reason,
 	      what + ": message '" + error.message + "'");
+	// Phase 9 V1: "not a regular file" has a kind of its own; the others are the errno text.
+	Check(error.cause == (reason == "not a regular file" ? kyty::core::SpawnCause::NotRegularFile
+	                                                     : kyty::core::SpawnCause::ErrorNumber),
+	      what + ": the reason's cause");
 	Check(OpenDescriptors().size() == before, what + ": no descriptor is left");
 }
 
@@ -416,6 +420,9 @@ void TestRealSpawnFailures() {
 	Check(result.error().reason ==
 	          ErrorText(ENOENT) + " (working directory " + missing_cwd.string() + ")",
 	      "the reason names the working directory: " + result.error().reason);
+	Check(result.error().cause == kyty::core::SpawnCause::Spawn &&
+	          result.error().cwd == missing_cwd,
+	      "the spawn cause with the working directory");
 
 	// An executable file that is not a program.
 	const auto        garbage = temp.Path() / "not-a-program";
@@ -435,26 +442,32 @@ void TestRealSpawnFailures() {
 	result = SpawnEmulator(SpawnRequest {ArgvEcho(), {"ok", std::string("a\0b", 3)}, temp.Path()});
 	Check(!result.has_value() && result.error().kind == SpawnErrorKind::SpawnFailed &&
 	          result.error().error_number == EINVAL &&
-	          result.error().reason == "argument 2 contains a NUL byte",
+	          result.error().reason == "argument 2 contains a NUL byte" &&
+	          result.error().cause == kyty::core::SpawnCause::NulArgument &&
+	          result.error().argument == 2,
 	      "an argument with a NUL byte is refused");
 	Check(OpenDescriptors().size() == before, "no descriptor is left after a failed spawn");
 }
 
 struct SpawnFault {
-	SpawnStep   step;
-	int         occurrence; // 1 = the first time the step is asked
-	int         error_number;
-	const char* reason_prefix;
+	SpawnStep              step;
+	int                    occurrence; // 1 = the first time the step is asked
+	int                    error_number;
+	const char*            reason_prefix;
+	kyty::core::SpawnCause cause;
 };
 
 void TestInjectedSpawnFaults() {
+	using kyty::core::SpawnCause;
 	const TempDir    temp("kyty_emulator_process");
 	const SpawnFault faults[] = {
-	    {SpawnStep::Pipe, 1, EMFILE, "cannot create a pipe: "},
-	    {SpawnStep::Pipe, 2, ENFILE, "cannot create a pipe: "},
-	    {SpawnStep::FileActions, 1, ENOMEM, "cannot prepare the spawn file actions: "},
-	    {SpawnStep::Attributes, 1, EINVAL, "cannot prepare the spawn attributes: "},
-	    {SpawnStep::Spawn, 1, EAGAIN, ""},
+	    {SpawnStep::Pipe, 1, EMFILE, "cannot create a pipe: ", SpawnCause::Pipe},
+	    {SpawnStep::Pipe, 2, ENFILE, "cannot create a pipe: ", SpawnCause::Pipe},
+	    {SpawnStep::FileActions, 1, ENOMEM,
+	     "cannot prepare the spawn file actions: ", SpawnCause::FileActions},
+	    {SpawnStep::Attributes, 1, EINVAL,
+	     "cannot prepare the spawn attributes: ", SpawnCause::Attributes},
+	    {SpawnStep::Spawn, 1, EAGAIN, "", SpawnCause::Spawn},
 	};
 	for (const auto& fault: faults) {
 		const auto               before = OpenDescriptors();
@@ -477,6 +490,10 @@ void TestInjectedSpawnFaults() {
 		Check(error.reason == reason, what + "reason '" + error.reason + "'");
 		Check(error.message == "Cannot start " + ArgvEcho().string() + ": " + reason,
 		      what + "message '" + error.message + "'");
+		// Phase 9 V1: the reason's kind and, for the spawn, the working directory.
+		Check(error.cause == fault.cause &&
+		          error.cwd == (fault.step == SpawnStep::Spawn ? temp.Path() : fs::path()),
+		      what + "the cause and the working directory");
 		Check(OpenDescriptors() == before, what + "every descriptor was closed");
 		int status = 0;
 		Check(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD, what + "no child started");

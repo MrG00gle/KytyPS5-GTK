@@ -30,6 +30,12 @@ std::string CannotStart(const fs::path& program, const std::string& reason) {
 	return "Cannot start " + program.string() + ": " + reason;
 }
 
+ProcessError Error(ProcessErrorKind kind, const fs::path& program, int error_number,
+                   std::string message, size_t argument = 0, fs::path path = {}) {
+	return ProcessError {kind,     program,         error_number,
+	                     argument, std::move(path), std::move(message)};
+}
+
 // posix_spawn() changes the directory before it executes program, so a relative program would be
 // resolved against cwd.
 fs::path Absolute(const fs::path& program) {
@@ -38,11 +44,15 @@ fs::path Absolute(const fs::path& program) {
 	return ec ? program : absolute;
 }
 
-// Why args cannot be passed intact, if they cannot.
-std::optional<std::string> CheckArguments(const std::vector<std::string>& args) {
+// Why args cannot be passed intact, if they cannot (NulArgument).
+std::optional<ProcessError> CheckArguments(const fs::path&                 program,
+                                           const std::vector<std::string>& args) {
 	for (size_t i = 0; i < args.size(); i++) {
 		if (args[i].find('\0') != std::string::npos) {
-			return "argument " + std::to_string(i + 1) + " contains a NUL byte";
+			return Error(
+			    ProcessErrorKind::NulArgument, program, EINVAL,
+			    CannotStart(program, "argument " + std::to_string(i + 1) + " contains a NUL byte"),
+			    i + 1);
 		}
 	}
 	return std::nullopt;
@@ -169,12 +179,25 @@ private:
 	bool                       m_attributes_ready = false;
 };
 
-std::string SpawnFailure(const fs::path& program, int error_number, const fs::path& cwd) {
+ProcessError SpawnFailure(const fs::path& program, int error_number, const fs::path& cwd) {
 	std::string reason = ErrorText(error_number);
 	if (!cwd.empty()) {
 		reason += " (working directory " + cwd.string() + ")";
 	}
-	return CannotStart(program, reason);
+	return Error(ProcessErrorKind::Spawn, program, error_number, CannotStart(program, reason), 0,
+	             cwd);
+}
+
+ProcessError PrepareFailure(const fs::path& program, int error_number) {
+	return Error(ProcessErrorKind::Prepare, program, error_number,
+	             CannotStart(program, "cannot prepare the spawn: " + ErrorText(error_number)));
+}
+
+// result with failure as its error.
+ProcessResult& Failed(ProcessResult& result, ProcessError failure) {
+	result.error   = failure.message;
+	result.failure = std::move(failure);
+	return result;
 }
 
 class PosixProcessRunner final: public ProcessRunner {
@@ -183,17 +206,18 @@ public:
 	                  const fs::path& cwd) override {
 		ProcessResult  result;
 		const fs::path absolute = Absolute(program);
-		if (auto problem = CheckArguments(args)) {
-			result.error = CannotStart(absolute, *problem);
-			return result;
+		if (auto problem = CheckArguments(absolute, args)) {
+			return Failed(result, std::move(*problem));
 		}
 
 		Descriptor read_end;
 		Descriptor write_end;
 		int        fds[2] = {-1, -1};
 		if (::pipe2(fds, O_CLOEXEC) != 0) {
-			result.error = CannotStart(absolute, "cannot create a pipe: " + ErrorText(errno));
-			return result;
+			const int error_number = errno;
+			return Failed(result, Error(ProcessErrorKind::Pipe, absolute, error_number,
+			                            CannotStart(absolute, "cannot create a pipe: " +
+			                                                      ErrorText(error_number))));
 		}
 		read_end.fd  = fds[0];
 		write_end.fd = fds[1];
@@ -202,14 +226,11 @@ public:
 		pid_t pid          = -1;
 		int   error_number = spawn.Prepare(-1, write_end.fd, cwd, false);
 		if (error_number != 0) {
-			result.error =
-			    CannotStart(absolute, "cannot prepare the spawn: " + ErrorText(error_number));
-			return result;
+			return Failed(result, PrepareFailure(absolute, error_number));
 		}
 		error_number = spawn.Start(absolute, std::move(args), pid);
 		if (error_number != 0) {
-			result.error = SpawnFailure(absolute, error_number, cwd);
-			return result;
+			return Failed(result, SpawnFailure(absolute, error_number, cwd));
 		}
 		// The child holds its own copy; reading ends when it and its children close theirs.
 		write_end.Close();
@@ -231,36 +252,40 @@ public:
 		int status = 0;
 		while (::waitpid(pid, &status, 0) < 0) {
 			if (errno != EINTR) {
-				result.error = "Cannot wait for " + absolute.string() + ": " + ErrorText(errno);
-				return result;
+				const int wait_errno = errno;
+				return Failed(result, Error(ProcessErrorKind::Wait, absolute, wait_errno,
+				                            "Cannot wait for " + absolute.string() + ": " +
+				                                ErrorText(wait_errno)));
 			}
 		}
 		result.wait_status = status;
 		return result;
 	}
 
-	kyty::core::Expected<void, std::string> StartDetached(const fs::path&          program,
-	                                                      std::vector<std::string> args,
-	                                                      const fs::path&          cwd,
-	                                                      const fs::path& log_file) override {
+	kyty::core::Expected<void, ProcessError> StartDetached(const fs::path&          program,
+	                                                       std::vector<std::string> args,
+	                                                       const fs::path&          cwd,
+	                                                       const fs::path& log_file) override {
 		const fs::path absolute = Absolute(program);
-		if (auto problem = CheckArguments(args)) {
-			return kyty::core::MakeUnexpected(CannotStart(absolute, *problem));
+		if (auto problem = CheckArguments(absolute, args)) {
+			return kyty::core::MakeUnexpected(std::move(*problem));
 		}
 		Descriptor log;
 		log.fd = ::open(log_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
 		if (log.fd < 0) {
-			return kyty::core::MakeUnexpected(CannotStart(absolute, "cannot open the log file " +
-			                                                            log_file.string() + ": " +
-			                                                            ErrorText(errno)));
+			const int error_number = errno;
+			return kyty::core::MakeUnexpected(
+			    Error(ProcessErrorKind::OpenLog, absolute, error_number,
+			          CannotStart(absolute, "cannot open the log file " + log_file.string() + ": " +
+			                                    ErrorText(error_number)),
+			          0, log_file));
 		}
 
 		Spawn spawn;
 		pid_t pid          = -1;
 		int   error_number = spawn.Prepare(log.fd, log.fd, cwd, true);
 		if (error_number != 0) {
-			return kyty::core::MakeUnexpected(
-			    CannotStart(absolute, "cannot prepare the spawn: " + ErrorText(error_number)));
+			return kyty::core::MakeUnexpected(PrepareFailure(absolute, error_number));
 		}
 		error_number = spawn.Start(absolute, std::move(args), pid);
 		if (error_number != 0) {

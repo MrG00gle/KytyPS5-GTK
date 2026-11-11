@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Repository content checks for the removed platforms (task 8.3), the GTK settings rule, and the
-Qt removal and GTK launcher rules (task 23.2).
+"""Repository content checks for the removed platforms (task 8.3), the GTK settings rule, the
+Qt removal and GTK launcher rules (task 23.2), and the launcher's own texts for core errors (phase
+9 V1).
 
 Usage:
     content_checks.py --repo DIR --check ID
@@ -72,6 +73,23 @@ match is printed as `path:line: text`. The checks mirror the phase 2 scans:
                      unless its line or the call's first line ends with
                      "// not translated: <reason>". A heuristic: text built
                      elsewhere and passed in a variable is not seen.
+    core_text        Requirement 6.12, phase 9 V1: no fixed English text of
+                     Launcher_Core or the Updater reaches a GTK widget as it
+                     is. In the C++ files of src/launcher/gtk/ (outside
+                     services/, the library adapters, and coreMessageText.cpp,
+                     which maps every core kind to the launcher's own texts),
+                     no read of a .message, .reason, or .error member (also
+                     through ->; a call such as .error() and an assignment are
+                     not reads), no .error().c_str() (a core error string), no
+                     .Error() (ArchiveJob's English error), no RefusalMessage(
+                     call, and no core::k...Message or updater::k...Message
+                     constant, unless it is inside the arguments of a log call
+                     (g_debug, g_info, g_message, g_warning, g_critical) or its
+                     line ends with "// core text: <why it is dynamic or not
+                     shown>" (a GError's or SDL's text, a callback). Comments
+                     and string literals are not read. A heuristic over names:
+                     a core text copied into a variable of another name is not
+                     seen.
     dialog_registry  Requirement 17.10: every G_DECLARE_FINAL_TYPE window
                      or dialog type in src/launcher/gtk/ (parent AdwWindow,
                      AdwApplicationWindow, GtkWindow, or AdwDialog) has each
@@ -216,6 +234,20 @@ NOT_TRANSLATED_COMMENT = re.compile(r"//\s*not translated:\s*\S.*$")
 # Escape sequences and printf conversions carry no words.
 NON_TEXT_PARTS = re.compile(r"\\(?:x[0-9A-Fa-f]+|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[0-7]{1,3}|.)"
                             r"|%(?:%|[-+ #0]*[0-9*]*(?:\.[0-9*]+)?(?:hh|h|ll|l|z|j|t|L)?[a-zA-Z])")
+
+# core_text
+CORE_TEXT_MAPPING = "src/launcher/gtk/coreMessageText.cpp"
+# The adapters of SDL, libsoup, GIO, and the GTK dialogs: they handle library texts only.
+CORE_TEXT_SKIPPED = ("src/launcher/gtk/services",)
+CORE_TEXT_READ = re.compile(
+    rf"(?:\.|->)(?:message|reason|error)(?![{WORD_CHARS}])(?!\s*\()(?!\s*=(?!=))"
+    r"|\.error\s*\(\s*\)\s*\.\s*c_str\s*\("
+    rf"|\.Error\s*\(\s*\)"
+    rf"|(?<![{WORD_CHARS}])RefusalMessage\s*\("
+    rf"|(?<![{WORD_CHARS}])(?:core|updater)::k\w*Message(?![{WORD_CHARS}])")
+LOG_CALL = re.compile(
+    rf"(?<![{WORD_CHARS}])(?:g_debug|g_info|g_message|g_warning|g_critical)\s*\(")
+CORE_TEXT_COMMENT = re.compile(r"//\s*core text:\s*\S.*$")
 
 # dialog_registry
 REGISTRY_SOURCE = "src/launcher/gtk/dialogRegistry.cpp"
@@ -692,6 +724,44 @@ def check_dialog_registry(repo, files):
     return violations, scanned
 
 
+def core_text_violations(path, text):
+    """The violations of the core_text rule in the C++ text of path."""
+    masked, _ = mask_cpp(text)
+    starts = line_starts(text)
+    lines = text.split("\n")
+    logged = []
+    for match in LOG_CALL.finditer(masked):
+        _, end = split_arguments(masked, match.end() - 1)
+        logged.append((match.end(), end))
+    violations = []
+    for match in CORE_TEXT_READ.finditer(masked):
+        if any(start <= match.start() < end for start, end in logged):
+            continue
+        number = line_of(starts, match.start())
+        line = lines[number - 1].rstrip("\r")
+        if CORE_TEXT_COMMENT.search(line):
+            continue
+        what = " ".join(match.group(0).split())
+        violations.append(f"{path}:{number}: {display(line)} (core text {what} shown as it is; "
+                          f"use {CORE_TEXT_MAPPING}, a log call, or // core text: <why>)")
+    return violations
+
+
+def check_core_text(repo, files):
+    violations = []
+    scanned = 0
+    for path in files:
+        if (not under(GTK_DIR)(path) or under(*CORE_TEXT_SKIPPED)(path)
+                or path == CORE_TEXT_MAPPING or not path.endswith((".cpp", ".h"))):
+            continue
+        lines = read_text_lines(repo, path)
+        if lines is None:
+            continue
+        scanned += 1
+        violations.extend(core_text_violations(path, "\n".join(lines)))
+    return violations, scanned
+
+
 # Check id -> (requirement, description, function(repo, files) -> (violations, files scanned)).
 FUNCTION_CHECKS = {
     "qt_remnants": (
@@ -699,6 +769,9 @@ FUNCTION_CHECKS = {
         check_qt_remnants),
     "translatable": (
         "6.12", "untranslated user-visible strings in the GTK launcher", check_translatable),
+    "core_text": (
+        "6.12", "core message, reason, or error texts shown as they are in the GTK launcher",
+        check_core_text),
     "dialog_registry": (
         "17.10", "window, dialog, or alert types missing from the dialog registry",
         check_dialog_registry),

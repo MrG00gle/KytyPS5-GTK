@@ -14,10 +14,35 @@
 
 namespace kyty::core {
 
+// The step that failed, so that the GTK layer can say it in its own words (plan V1); message says
+// the same in English for the log. The paths of the sentences are path, detail, and other.
+enum class IoErrorKind {
+	Open,            // "cannot open <path>"
+	Read,            // "cannot read <path>"
+	TooLarge,        // "cannot read <path> (limit <limit> bytes)"
+	ReadLink,        // "cannot read the symbolic link <detail>"
+	ResolveLinks,    // "cannot resolve <path>" (too many symbolic links)
+	NoFileName,      // "cannot write <path>" (the target names no file)
+	CreateTemp,      // "cannot create a temporary file in <detail>" (the target's directory)
+	WriteTemp,       // "cannot write <detail>" (the temporary file)
+	SyncTemp,        // "cannot sync <detail>"
+	CloseTemp,       // "cannot close <detail>"
+	Rename,          // "cannot rename <detail> to <other>"
+	CreateDirectory, // "cannot create the directory <detail>" (SaveSettingsStore)
+	NotLoaded,       // SaveSettingsStore refused to replace a file that could not be loaded
+	NoTitleId,       // WriteGameSettingsFile for a game without a title ID
+};
+
 struct IoError {
 	std::filesystem::path path;             // the file the operation was about
 	int                   error_number = 0; // errno value
 	std::string           message;          // names the failed step, the path, and the error text
+	IoErrorKind           kind = IoErrorKind::Open;
+	std::filesystem::path detail;    // the step's file or directory when it is not path
+	std::filesystem::path other;     // Rename: the file the temporary file replaces
+	uint64_t              limit = 0; // TooLarge: the byte limit
+
+	friend bool operator==(const IoError&, const IoError&) = default;
 };
 
 // Replaces target with bytes: a temporary file .<name>.tmp-<16 random hexadecimal digits> in the

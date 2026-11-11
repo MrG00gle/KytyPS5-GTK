@@ -21,24 +21,26 @@ struct RemoteCheats::State {
 	}
 
 	void Done(const RemoteCheatFile& file, const CheatGame& game, const std::string& body,
-	          std::string error) {
+	          CheatFetchError fetch) {
 		request = 0;
 		RemoteCheatResult result;
 		result.file = file;
-		if (error.empty()) {
+		if (fetch.failure == HttpFailure::None) {
 			if (auto document = ParseCheatDocument(body, file.name)) {
-				if (auto problem = ValidateRemoteImport(*document, game.title_id, game.version,
-				                                        game.process)) {
-					error = std::move(*problem);
-				} else {
-					result.importable = true;
-				}
-				result.document = std::move(*document);
+				result.problem =
+				    ValidateRemoteImport(*document, game.title_id, game.version, game.process);
+				result.importable = !result.problem;
+				result.document   = std::move(*document);
 			} else {
-				error = std::move(document).error();
+				result.problem = std::move(document).error();
 			}
+			if (result.problem) {
+				result.error = result.problem->message;
+			}
+		} else {
+			result.error = fetch.message;
+			result.fetch = std::move(fetch);
 		}
-		result.error = std::move(error);
 		if (on_loaded) {
 			on_loaded(result);
 		}
@@ -65,7 +67,7 @@ Expected<void, std::string> RemoteCheats::Fetch(const RemoteCheatFile& file, Che
 	state.request =
 	    StartCheatDownload(state.http, RemoteCheatFileUrl(file), kMaxRemoteCheatFileBytes,
 	                       [weak, generation, file, game = std::move(game)](const std::string& body,
-	                                                                        std::string error) {
+	                                                                        CheatFetchError error) {
 		                       const auto locked = weak.lock();
 		                       if (locked && locked->generation == generation) {
 			                       locked->Done(file, game, body, std::move(error));

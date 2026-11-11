@@ -185,14 +185,18 @@ kyty::updater::ProcessResult FakeProcessRunner::Run(const std::filesystem::path&
 	return PopFront(run_results, kyty::updater::ProcessResult {0, "", ""});
 }
 
-kyty::core::Expected<void, std::string>
+kyty::core::Expected<void, kyty::updater::ProcessError>
 FakeProcessRunner::StartDetached(const std::filesystem::path& program,
                                  std::vector<std::string> args, const std::filesystem::path& cwd,
                                  const std::filesystem::path& log_file) {
 	calls.push_back({program, std::move(args), cwd, log_file, true});
 	std::string error = PopFront(detached_errors, std::string());
 	if (!error.empty()) {
-		return kyty::core::MakeUnexpected(std::move(error));
+		// A runner's text without a kind (processRunner.h), shown as it is.
+		kyty::updater::ProcessError failure;
+		failure.program = program;
+		failure.message = std::move(error);
+		return kyty::core::MakeUnexpected(std::move(failure));
 	}
 	return {};
 }

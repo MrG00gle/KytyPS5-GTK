@@ -41,6 +41,10 @@ struct RemoteCheatResult {
 	// Why the file cannot be imported: the download failure (DescribeCheatFetchFailure), the parse
 	// error (it names the file), or ValidateRemoteImport's reason; "" when importable.
 	std::string error;
+	// The same with its parts: the download failure (fetch.failure is not None), else the parse
+	// error or ValidateRemoteImport's reason (problem); neither when importable.
+	CheatFetchError             fetch;
+	std::optional<CheatProblem> problem;
 };
 
 // One download at a time: a new Fetch or Cancel cancels the previous request, whose result is

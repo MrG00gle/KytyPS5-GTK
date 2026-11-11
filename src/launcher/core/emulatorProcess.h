@@ -6,6 +6,7 @@
 
 #include "launcher/core/expected.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -32,12 +33,26 @@ enum class SpawnErrorKind {
 	SpawnFailed,   // pipes, spawn attributes, or posix_spawn itself failed
 };
 
+// What reason says, so that the GTK layer can say it in its own words (plan V1).
+enum class SpawnCause {
+	ErrorNumber,    // the errno text alone
+	NotRegularFile, // "not a regular file"
+	NulArgument,    // "argument <argument> contains a NUL byte"
+	Pipe,           // "cannot create a pipe: <errno text>"
+	FileActions,    // "cannot prepare the spawn file actions: <errno text>"
+	Attributes,     // "cannot prepare the spawn attributes: <errno text>"
+	Spawn, // posix_spawn: "<errno text>", with " (working directory <cwd>)" when cwd is set
+};
+
 struct SpawnError {
 	SpawnErrorKind        kind = SpawnErrorKind::SpawnFailed;
 	std::filesystem::path executable;       // absolute
 	int                   error_number = 0; // errno value
 	std::string           reason;           // the errno text or what was wrong
 	std::string           message; // "Cannot start <executable>: <reason>" (Requirement 10.9)
+	SpawnCause            cause    = SpawnCause::ErrorNumber;
+	std::size_t           argument = 0; // NulArgument: the argument's number, from 1
+	std::filesystem::path cwd;          // Spawn: the requested working directory
 };
 
 // Starts executable with argv = {absolute executable path, args...} through posix_spawn() (no

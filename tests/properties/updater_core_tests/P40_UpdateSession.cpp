@@ -159,9 +159,9 @@ public:
 		runs++;
 		return {0, "", ""};
 	}
-	kyty::core::Expected<void, std::string> StartDetached(const fs::path&, std::vector<std::string>,
-	                                                      const fs::path&,
-	                                                      const fs::path&) override {
+	kyty::core::Expected<void, kyty::updater::ProcessError>
+	StartDetached(const fs::path&, std::vector<std::string>, const fs::path&,
+	              const fs::path&) override {
 		detached++;
 		return {};
 	}

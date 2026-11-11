@@ -165,12 +165,31 @@ private:
 	std::shared_ptr<State> m_state;
 };
 
+// Why LoadLocalCompatibility failed, so that the GTK layer can say it in its own words (plan V1).
+enum class CompatibilityFileErrorKind {
+	Unreadable,  // "Cannot read the compatibility database: <io>"
+	InvalidJson, // "The compatibility database <path> does not parse: the content is not valid
+	             // JSON: <detail>" (detail: the parser's message)
+	NotAnObject, // "The compatibility database <path> does not parse: the top-level JSON value is
+	             // not an object"
+};
+
+struct CompatibilityFileError {
+	CompatibilityFileErrorKind kind = CompatibilityFileErrorKind::Unreadable;
+	std::filesystem::path      path;
+	IoError                    io; // Unreadable
+	std::string                detail;
+	std::string                message;
+
+	friend bool operator==(const CompatibilityFileError&, const CompatibilityFileError&) = default;
+};
+
 // The --local maintainer mode (design.md, "Gaps against the approved requirements" 2, LFI-21): the
 // launcher reads and writes ./compatibility_db.json (kLocalCompatibilityFileName) in the Qt format
 // and downloads nothing. A missing file gives an empty database (as the Qt launcher); an
 // unreadable file, one over kMaxCompatibilityBytes, or content that does not parse is an error
-// naming the path and the reason.
-Expected<CompatibilityDatabase, std::string>
+// whose message names the path and the reason.
+Expected<CompatibilityDatabase, CompatibilityFileError>
 LoadLocalCompatibility(const std::filesystem::path& path);
 
 // Writes SerializeCompatibility(database) to path through WriteFileAtomically.

@@ -6,6 +6,7 @@
 #include "launcher/core/exitStatus.h"
 #include "launcher/core/gameConfiguration.h"
 #include "launcher/core/settingsStore.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/services/controllerService.h"
 #include "launcher/gtk/services/titleSoundPlayer.h"
@@ -57,14 +58,11 @@ std::string ExitText(int wait_status, const core::ExitDescription& description) 
 		return Format(_("The emulator exited with exit code %d."), description.code);
 	}
 	if (WIFSIGNALED(wait_status)) {
-		constexpr std::string_view kPrefix = "signal ";
-		std::string_view           name    = description.text;
-		if (name.starts_with(kPrefix)) {
-			name.remove_prefix(kPrefix.size());
-		}
-		return Format(_("The emulator was ended by signal %s."), std::string(name).c_str());
+		return Format(_("The emulator was ended by signal %s."), description.signal_name.c_str());
 	}
-	return Format(_("The emulator ended with %s."), description.text.c_str());
+	// TRANSLATORS: %x is a waitpid() status in hexadecimal.
+	return Format(_("The emulator ended with wait status 0x%x."),
+	              static_cast<unsigned>(wait_status));
 }
 
 bool HasBackslash(const fs::path& path) {
@@ -94,7 +92,7 @@ void RunController::Refuse(const std::string& body) {
 	m_stats.runs_refused++;
 	m_stats.last_error = body;
 	g_message("run: %s", body.c_str());
-	if (m_callbacks.error) {
+	if (m_callbacks.error) { // core text: a callback, not a text
 		m_callbacks.error(_("The game cannot start"), body);
 	}
 }
@@ -116,7 +114,8 @@ bool RunController::Run(KytyGame* game) {
 	// 2. The Data_Directory exists and is writable (12.4).
 	const fs::path& data_dir = m_context.paths.data_dir;
 	if (auto writable = core::EnsureWritableDirectory(data_dir); !writable) {
-		Refuse(Format(_("The data directory cannot be used: %s"), writable.error().c_str()));
+		Refuse(Format(_("The data directory cannot be used: %s"),
+		              Render(WritableDirectoryErrorText(writable.error())).c_str()));
 		return false;
 	}
 	// 3. The Emulator can be started (10.9).
@@ -193,8 +192,8 @@ bool RunController::Run(KytyGame* game) {
 	if (!spawned) {
 		m_context.services.title_sound.GameExited();
 		const auto&       error = spawned.error();
-		const std::string body =
-		    Format(_("Cannot start %s: %s"), error.executable.c_str(), error.reason.c_str());
+		const std::string body  = Format(_("Cannot start %s: %s"), error.executable.c_str(),
+		                                 Render(SpawnReasonText(error)).c_str());
 		kyty_log_model_append_line(m_log.get(), body);
 		Refuse(body);
 		return false;
@@ -259,7 +258,7 @@ void RunController::OnExit(int wait_status) {
 		m_stats.last_error     = text;
 		g_message("run: %s", text.c_str());
 		kyty_log_model_append_line(m_log.get(), text);
-		if (m_callbacks.error) {
+		if (m_callbacks.error) { // core text: a callback, not a text
 			m_callbacks.error(_("The game ended unexpectedly"), text);
 		}
 	}

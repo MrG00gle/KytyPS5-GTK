@@ -560,10 +560,11 @@ kyty_add_test_directory(tests/source_check LINK kyty_source_check LABELS source-
 # Repository content checks (Requirements 2.3, 3.7, 3.9, 4.1, 4.2, 4.8, 4.9; gtk_settings_save: the
 # GTK launcher saves Kyty.ini only through SaveSettingsStore; task 23.2: qt_remnants 6.1 and 6.3,
 # translatable 6.12, dialog_registry 17.10, and layering 6.7 as source_check_layering, the design's
-# name) and license and copyright preservation checks (Requirements 21.1, 21.6) over this source
-# tree. They need no build output, so they are registered with KYTY_BUILD_LAUNCHER OFF too.
+# name; core_text 6.12: no core message reaches a GTK widget as it is) and license and copyright
+# preservation checks (Requirements 21.1, 21.6) over this source tree. They need no build output, so
+# they are registered with KYTY_BUILD_LAUNCHER OFF too.
 foreach(kyty_check IN ITEMS nix_terms windows_terms macos_terms cmake_apple bundle_strings deleted_paths
-		vscode_patterns gtk_settings_save qt_remnants translatable dialog_registry layering)
+		vscode_patterns gtk_settings_save qt_remnants translatable core_text dialog_registry layering)
 	set(kyty_check_name content_check_${kyty_check})
 	if(kyty_check STREQUAL "layering")
 		set(kyty_check_name source_check_layering)
@@ -575,6 +576,12 @@ foreach(kyty_check IN ITEMS nix_terms windows_terms macos_terms cmake_apple bund
 		TIMEOUT 120
 		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 endforeach()
+# The unit tests of tools/checks/content_checks.py, on scratch trees.
+kyty_add_test(NAME content_checks_tool
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/checks/tests"
+	        -p test_content_checks.py -v
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 foreach(kyty_check IN ITEMS license copyright)
 	kyty_add_test(NAME preservation_${kyty_check}
 		COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/check_preservation.py"

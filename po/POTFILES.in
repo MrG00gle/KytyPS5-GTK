@@ -5,6 +5,7 @@ src/launcher/gtk/application.cpp
 src/launcher/gtk/bindingCaptureDialog.cpp
 src/launcher/gtk/cheatsWindow.cpp
 src/launcher/gtk/compressionDialog.cpp
+src/launcher/gtk/coreMessageText.cpp
 src/launcher/gtk/dialogRegistry.cpp
 src/launcher/gtk/dualsenseWidget.cpp
 src/launcher/gtk/gameActions.cpp

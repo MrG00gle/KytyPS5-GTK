@@ -134,7 +134,7 @@ fs::path WriteFixtures(const fs::path& root) {
 	}
 	auto job = kyty::core::ArchiveJob::Prepare(staging);
 	if (!job) {
-		Fail("cannot prepare the archive of " + staging.string() + ": " + job.error());
+		Fail("cannot prepare the archive of " + staging.string() + ": " + job.error().message);
 		return {};
 	}
 	kyty::core::CancelToken cancel;

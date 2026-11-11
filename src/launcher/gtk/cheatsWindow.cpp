@@ -7,6 +7,7 @@
 #include "launcher/core/settingsStore.h"
 #include "launcher/core/titleId.h"
 #include "launcher/gtk/alerts.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/focusSupport.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
@@ -137,13 +138,15 @@ std::string LocalStatusText(const core::LocalCheatFile& local) {
 		// One sentence with the path once (p6-u10-2) and the system's reason alone (p7-u7-1).
 		// TRANSLATORS: the local cheat file's path, then the system's reason ("Is a directory").
 		return Format(_("Could not read the local cheat file %s: %s"), local.path.c_str(),
-		              local.reason.c_str());
+		              kyty::gtk::OsErrorText(local.error_number).c_str());
 	}
 	if (!local.bytes) {
 		return Format(_("No local cheat file: %s"), local.path.c_str());
 	}
 	if (!local.document) {
-		return Format(_("The local cheat file is not valid:\n%s"), local.message.c_str());
+		const std::string problem =
+		    local.problem ? kyty::gtk::Render(kyty::gtk::CheatProblemText(*local.problem)) : "";
+		return Format(_("The local cheat file is not valid:\n%s"), problem.c_str());
 	}
 	const auto count = static_cast<unsigned long>(local.document->cheats.size());
 	return Format(
@@ -272,7 +275,8 @@ void OnApply(GtkButton* /*button*/, gpointer data) {
 		const std::string text =
 		    error.kind == core::CheatSaveErrorKind::ChangedOnDisk
 		        ? std::string(_("Cheat file changed; reload the dialog."))
-		        : Format(_("The cheat selection could not be saved:\n%s"), error.message.c_str());
+		        : Format(_("The cheat selection could not be saved:\n%s"),
+		                 kyty::gtk::Render(kyty::gtk::CheatSaveErrorText(error)).c_str());
 		gtk_label_set_text(self->local_status, text.c_str());
 		return;
 	}
@@ -426,19 +430,18 @@ void OnCatalogLoaded(KytyCheatsWindow* self, const core::CheatCatalogResult& res
 	gtk_spinner_stop(self->files_spinner);
 	gtk_stack_set_visible_child_name(self->files_stack, state.files.empty() ? "empty" : "files");
 	const auto  count  = static_cast<unsigned long>(state.files.size());
-	std::string status = count == 0 && result.error.empty()
+	std::string status = count == 0 && result.failures.empty()
 	                         ? Format(_("No remote cheats found for %s."), state.title_id.c_str())
 	                         : Format(kyty::gtk::NGettext("%d remote file for %s.",
 	                                                      "%d remote files for %s.", count),
 	                                  static_cast<int>(count), state.title_id.c_str());
-	if (!result.error.empty()) {
-		// The core's lines "<FORMAT>: <reason>", one per index that failed (D46: dynamic messages
-		// inside the launcher's text).
+	if (!result.failures.empty()) {
+		// One line "<FORMAT>: <reason>" per index that failed (coreMessageText.h).
 		g_message("cheats: the remote list of %s is incomplete: %s", state.title_id.c_str(),
 		          result.error.c_str());
 		status +=
 		    "\n" + Format(_("Could not load the complete collection: %s\nUse Refresh to retry."),
-		                  result.error.c_str());
+		                  kyty::gtk::CheatCatalogErrorText(result).c_str());
 	}
 	gtk_label_set_text(self->remote_status, status.c_str());
 	SetSensitive(self->refresh_button, true);
@@ -471,13 +474,13 @@ void OnFileSelected(GtkListBox* /*list*/, GtkListBoxRow* row, gpointer data) {
 void OnPreviewLoaded(KytyCheatsWindow* self, const core::RemoteCheatResult& result) {
 	auto& state = *self->state;
 	if (!result.document) {
-		// The download failure or the parse error (it names the file), as the core says it.
+		// The download failure or the parse error (it names the file).
 		g_message("cheats: cannot preview %s: %s", result.file.name.c_str(), result.error.c_str());
 		gtk_label_set_text(
 		    self->preview_status,
 		    Format(_("Could not preview this file: %s\nSelect another file or refresh "
 		             "to retry."),
-		           result.error.c_str())
+		           kyty::gtk::Render(kyty::gtk::RemoteCheatErrorText(result)).c_str())
 		        .c_str());
 		return;
 	}
@@ -505,10 +508,11 @@ void OnPreviewLoaded(KytyCheatsWindow* self, const core::RemoteCheatResult& resu
 		          "next game launch.");
 		state.importable = document;
 	} else {
-		// Why it does not match the game (Requirement 11.17), as the core says it.
+		// Why it does not match the game (Requirement 11.17).
 		g_message("cheats: %s cannot be imported: %s", result.file.name.c_str(),
 		          result.error.c_str());
-		text += Format(_("This file cannot be imported: %s"), result.error.c_str());
+		text += Format(_("This file cannot be imported: %s"),
+		               kyty::gtk::Render(kyty::gtk::RemoteCheatErrorText(result)).c_str());
 	}
 	gtk_label_set_text(self->preview_status, text.c_str());
 	SetSensitive(self->import_button, result.importable);
@@ -543,9 +547,10 @@ void Import(KytyCheatsWindow* self, const std::optional<std::string>& expected, 
 			}
 			return;
 		}
-		gtk_label_set_text(
-		    self->preview_status,
-		    Format(_("The cheats could not be imported:\n%s"), error.message.c_str()).c_str());
+		gtk_label_set_text(self->preview_status,
+		                   Format(_("The cheats could not be imported:\n%s"),
+		                          kyty::gtk::Render(kyty::gtk::CheatSaveErrorText(error)).c_str())
+		                       .c_str());
 		// Import is disabled after a failure (task 21.4) until another file is previewed.
 		state.importable.reset();
 		SetSensitive(self->import_button, false);

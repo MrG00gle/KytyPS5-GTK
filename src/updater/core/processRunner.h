@@ -17,10 +17,35 @@ namespace kyty::updater {
 // Run() keeps at most this many bytes of the process's standard error (the Qt launcher's limit).
 inline constexpr size_t kMaxCapturedStandardError = 4096;
 
+// Why a process could not be started or waited for, so that the GTK layer can say it in its own
+// words (plan V1). The POSIX runner sets a kind for every error; a runner that gives only a
+// message (kind None with a message) is shown as that text.
+enum class ProcessErrorKind {
+	None,
+	NulArgument, // "Cannot start <program>: argument <argument> contains a NUL byte"
+	Pipe,        // "Cannot start <program>: cannot create a pipe: <errno text>"
+	Prepare,     // "Cannot start <program>: cannot prepare the spawn: <errno text>"
+	Spawn,       // "Cannot start <program>: <errno text>[ (working directory <path>)]"
+	OpenLog,     // "Cannot start <program>: cannot open the log file <path>: <errno text>"
+	Wait,        // "Cannot wait for <program>: <errno text>"
+};
+
+struct ProcessError {
+	ProcessErrorKind      kind = ProcessErrorKind::None;
+	std::filesystem::path program; // made absolute
+	int                   error_number = 0;
+	size_t                argument     = 0; // NulArgument: the argument's number, from 1
+	std::filesystem::path path;             // Spawn: the working directory (may be empty); OpenLog
+	std::string           message;          // the English text
+
+	friend bool operator==(const ProcessError&, const ProcessError&) = default;
+};
+
 struct ProcessResult {
 	int         wait_status = -1; // the waitpid() status; -1 (no exit, no signal) when error is set
 	std::string error;            // why the process could not start; empty when it ran
 	std::string standard_error;   // the first kMaxCapturedStandardError bytes of its standard error
+	ProcessError failure;          // error with its parts (failure.message is error)
 };
 
 class ProcessRunner {
@@ -35,7 +60,7 @@ public:
 	// Starts program with argv = {program, args...} in cwd as the leader of a new session, with its
 	// standard output and standard error written to log_file (created or truncated), and returns
 	// without waiting. The design's bool, with the reason of a failure.
-	virtual kyty::core::Expected<void, std::string>
+	virtual kyty::core::Expected<void, ProcessError>
 	StartDetached(const std::filesystem::path& program, std::vector<std::string> args,
 	              const std::filesystem::path& cwd, const std::filesystem::path& log_file) = 0;
 };

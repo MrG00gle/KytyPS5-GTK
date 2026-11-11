@@ -263,7 +263,7 @@ std::string ParamJsonWithFirmware(std::string_view title, std::string_view title
 fs::path PackGame(const fs::path& staging) {
 	auto job = core::ArchiveJob::Prepare(staging);
 	if (!job) {
-		Fail("cannot prepare the archive of " + staging.string() + ": " + job.error());
+		Fail("cannot prepare the archive of " + staging.string() + ": " + job.error().message);
 		return {};
 	}
 	core::CancelToken cancel;

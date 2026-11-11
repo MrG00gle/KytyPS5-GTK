@@ -15,19 +15,28 @@ namespace fs = std::filesystem;
 // The highest percentage before the packer has returned: 100 means the archive is complete.
 constexpr int kMaxRunningPercent = 99;
 
-// Whether anything (a dangling symbolic link included) exists at path, or the error text when that
-// cannot be determined.
-Expected<bool, std::string> Exists(const fs::path& path) {
+// Whether anything (a dangling symbolic link included) exists at path, or the error (CheckFailed)
+// when that cannot be determined.
+Expected<bool, ArchiveError> Exists(const fs::path& path) {
 	std::error_code ec;
 	const auto      type = fs::symlink_status(path, ec).type();
 	if (type == fs::file_type::not_found) {
 		return false;
 	}
 	if (ec) {
-		return MakeUnexpected(path.string() + ": cannot check whether it exists: " + ec.message() +
-		                      ".");
+		return MakeUnexpected(ArchiveError {
+		    ArchiveErrorKind::CheckFailed,
+		    {},
+		    path,
+		    ec.value(),
+		    path.string() + ": cannot check whether it exists: " + ec.message() + "."});
 	}
 	return true;
+}
+
+ArchiveError AlreadyExists(const fs::path& archive) {
+	return ArchiveError {
+	    ArchiveErrorKind::Exists, {}, archive, 0, archive.string() + " already exists."};
 }
 
 int PackPercent(std::uint64_t done, std::uint64_t total) {
@@ -67,7 +76,7 @@ ArchiveJob::ArchiveJob(fs::path source, fs::path archive, ArchivePacker packer,
     : m_source(std::move(source)), m_archive(std::move(archive)), m_packer(std::move(packer)),
       m_verifier(std::move(verifier)) {}
 
-Expected<ArchiveJob, std::string>
+Expected<ArchiveJob, ArchiveError>
 ArchiveJob::Prepare(const fs::path& game_dir, ArchivePacker packer, ArchiveVerifier verifier) {
 	auto       archive = ArchivePathFor(game_dir);
 	const auto exists  = Exists(archive);
@@ -75,16 +84,17 @@ ArchiveJob::Prepare(const fs::path& game_dir, ArchivePacker packer, ArchiveVerif
 		return MakeUnexpected(exists.error());
 	}
 	if (*exists) {
-		return MakeUnexpected(archive.string() + " already exists.");
+		return MakeUnexpected(AlreadyExists(archive));
 	}
 	return ArchiveJob(WithoutTrailingSeparator(game_dir), std::move(archive),
 	                  packer ? std::move(packer) : ArchivePacker(DefaultPacker),
 	                  verifier ? std::move(verifier) : ArchiveVerifier(CanOpenArchive));
 }
 
-void ArchiveJob::Fail(std::string error) {
-	m_outcome = ArchiveOutcome::Failed;
-	m_error   = std::move(error);
+void ArchiveJob::Fail(ArchiveError error) {
+	m_outcome      = ArchiveOutcome::Failed;
+	m_error        = std::move(error);
+	m_error.source = m_source;
 }
 
 void ArchiveJob::Run(const std::function<void(int percent)>& progress, const CancelToken& cancel) {
@@ -107,7 +117,9 @@ void ArchiveJob::Run(const std::function<void(int percent)>& progress, const Can
 	}
 	// Only an archive path that is free now can be deleted after a failure: the packer created it.
 	if (const auto exists = Exists(m_archive); !exists || *exists) {
-		Fail(failure + ": " + (exists ? m_archive.string() + " already exists." : exists.error()));
+		auto error    = exists ? AlreadyExists(m_archive) : exists.error();
+		error.message = failure + ": " + error.message;
+		Fail(std::move(error));
 		return;
 	}
 
@@ -140,8 +152,12 @@ void ArchiveJob::Run(const std::function<void(int percent)>& progress, const Can
 	std::error_code ec;
 	std::filesystem::remove(m_archive, ec);
 	if (ec) {
-		Fail(failure + ": cannot remove the partial archive " + m_archive.string() + ": " +
-		     ec.message() + ".");
+		Fail(ArchiveError {ArchiveErrorKind::RemoveFailed,
+		                   {},
+		                   m_archive,
+		                   ec.value(),
+		                   failure + ": cannot remove the partial archive " + m_archive.string() +
+		                       ": " + ec.message() + "."});
 		return;
 	}
 	if (stopped || cancel.IsCancelled()) {
@@ -149,7 +165,7 @@ void ArchiveJob::Run(const std::function<void(int percent)>& progress, const Can
 	} else if (packed) {
 		m_outcome = ArchiveOutcome::VerifyFailed;
 	} else {
-		Fail(failure + ".");
+		Fail(ArchiveError {ArchiveErrorKind::CompressFailed, {}, m_archive, 0, failure + "."});
 	}
 }
 

@@ -16,6 +16,7 @@
 #include "support/noDisplay.h"
 #include "support/tempDir.h"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -114,8 +115,12 @@ void TestPrepare() {
 
 	const auto file     = temp.WriteFile("Game.zar", "existing archive");
 	const auto existing = ArchiveJob::Prepare(game);
-	Check(!existing && existing.error() == file.string() + " already exists.",
-	      "an existing file is named: " + (existing ? std::string() : existing.error()));
+	Check(!existing && existing.error().message == file.string() + " already exists.",
+	      "an existing file is named: " + (existing ? std::string() : existing.error().message));
+	// Phase 9 V1: the kind and the archive, without a source (Prepare's errors).
+	Check(existing.error().kind == kyty::core::ArchiveErrorKind::Exists &&
+	          existing.error().archive == file && existing.error().source.empty(),
+	      "an existing file's kind and archive");
 	Check(ContentGen::SnapshotTree(temp.Path())["Game.zar"] == "F:existing archive",
 	      "the existing file is unchanged");
 	std::error_code ec;
@@ -126,15 +131,24 @@ void TestPrepare() {
 	fs::remove(temp.Path() / "Game.zar", ec);
 	temp.MakeSymlink("nowhere", "Game.zar");
 	const auto dangling = ArchiveJob::Prepare(game);
-	Check(!dangling && dangling.error() == (temp.Path() / "Game.zar").string() + " already exists.",
+	Check(!dangling &&
+	          dangling.error().message == (temp.Path() / "Game.zar").string() + " already exists.",
 	      "a dangling link counts as existing");
 
 	const std::string long_name(252, 'g');
 	const auto        long_game = temp.MakeDirectories(long_name);
 	const auto        too_long  = ArchiveJob::Prepare(long_game);
-	Check(!too_long && too_long.error().starts_with((temp.Path() / (long_name + ".zar")).string() +
-	                                                ": cannot check whether it exists: "),
-	      "a path that cannot be checked: " + (too_long ? std::string() : too_long.error()));
+	Check(!too_long &&
+	          too_long.error().message.starts_with((temp.Path() / (long_name + ".zar")).string() +
+	                                               ": cannot check whether it exists: "),
+	      "a path that cannot be checked: " +
+	          (too_long ? std::string() : too_long.error().message));
+	Check(too_long.error().kind == kyty::core::ArchiveErrorKind::CheckFailed &&
+	          too_long.error().error_number == ENAMETOOLONG &&
+	          too_long.error().message == too_long.error().archive.string() +
+	                                          ": cannot check whether it exists: " +
+	                                          std::generic_category().message(ENAMETOOLONG) + ".",
+	      "the check's errno");
 }
 
 void TestRealPack() {
@@ -200,6 +214,7 @@ struct Scripted {
 	std::vector<int>                       percents;
 	ArchiveOutcome                         outcome = ArchiveOutcome::Pending;
 	std::string                            error;
+	kyty::core::ArchiveErrorKind           failure = kyty::core::ArchiveErrorKind::None;
 	fs::path                               archive;
 	std::vector<fs::path>                  verified; // the verifier's calls
 };
@@ -224,6 +239,7 @@ void RunScript(const KytyTests::TempDir& temp, const PackerScript& script, Scrip
 	job->Run([&](int percent) { result.percents.push_back(percent); }, result.cancel);
 	result.outcome = job->Outcome();
 	result.error   = job->Error();
+	result.failure = job->Failure().kind;
 	result.archive = job->Archive();
 	Check(ContentGen::SnapshotTree(source) ==
 	          std::map<std::string, std::string> {{"eboot.bin", "F:ELF"}},
@@ -255,6 +271,7 @@ void TestScriptedFailure() {
 		RunScript(temp, script, result);
 		Check(result.outcome == ArchiveOutcome::Failed &&
 		          result.error == "Could not compress " + (temp.Path() / "Game").string() + "." &&
+		          result.failure == kyty::core::ArchiveErrorKind::CompressFailed &&
 		          result.percents == std::vector<int> {0, 10} && result.log->calls == 1,
 		      "a failure names the source directory: " + result.error);
 		Check(!fs::exists(fs::symlink_status(result.archive)), "the partial archive is deleted");
@@ -302,6 +319,15 @@ void TestPartialNotRemovable() {
 		Check(job->Outcome() == ArchiveOutcome::Failed && job->Error().starts_with(expected) &&
 		          job->Error().ends_with(".") && fs::exists(temp.Path() / "Game.zar/inner"),
 		      "a partial archive that cannot be deleted is reported: " + job->Error());
+		// Phase 9 V1: the kind, the source, the archive, and the errno of the message.
+		const auto& failure = job->Failure();
+		Check(failure.kind == kyty::core::ArchiveErrorKind::RemoveFailed &&
+		          failure.source == temp.Path() / "Game" &&
+		          failure.archive == temp.Path() / "Game.zar" && failure.error_number != 0 &&
+		          failure.message == job->Error() &&
+		          job->Error() ==
+		              expected + std::generic_category().message(failure.error_number) + ".",
+		      "the removal failure's parts");
 	}
 }
 
@@ -385,6 +411,10 @@ void TestArchiveAppearsBeforeRun() {
 		          ContentGen::SnapshotTree(temp.Path() / "x")["Game.zar"] ==
 		              "F:someone else's archive",
 		      "an archive created after Prepare is not touched: " + job->Error());
+		Check(job->Failure().kind == kyty::core::ArchiveErrorKind::Exists &&
+		          job->Failure().source == temp.Path() / "x/Game" &&
+		          job->Failure().archive == temp.Path() / "x/Game.zar",
+		      "Run's existing archive: the kind with the source");
 	}
 	{
 		PackerScript    script;
@@ -407,6 +437,10 @@ void TestArchiveAppearsBeforeRun() {
 		                                   ": cannot check whether it exists: ") &&
 		          !log->invoked,
 		      "an archive path that cannot be checked when Run starts: " + job->Error());
+		Check(job->Failure().kind == kyty::core::ArchiveErrorKind::CheckFailed &&
+		          job->Failure().source == temp.Path() / "x/Game" &&
+		          job->Failure().error_number != 0,
+		      "Run's unchecked archive path: the kind with the source and errno");
 	}
 }
 

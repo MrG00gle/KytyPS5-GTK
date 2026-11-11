@@ -13,10 +13,17 @@
 
 namespace kyty::core {
 
+// Why a path could not be read, for the GTK layer's own words (plan V1).
+enum class ScanWarningKind {
+	Unreadable,      // reason: ScanFileSystem::List's error text (the system's)
+	NoCanonicalPath, // reason: "cannot resolve the canonical path"
+};
+
 // A Game_Folder that is missing or a directory that cannot be listed.
 struct ScanWarning {
 	std::filesystem::path path;   // the path as the scan reached it (the folder, or folder/sub/dir)
 	std::string           reason; // ScanFileSystem::List's error text
+	ScanWarningKind       kind = ScanWarningKind::Unreadable;
 
 	friend bool operator==(const ScanWarning&, const ScanWarning&) = default;
 };

@@ -12,21 +12,27 @@ namespace kyty::core {
 namespace {
 
 // The Validate() rules beyond FieldDescriptor::check for the field called name.
-std::optional<std::string> SaveRule(std::string_view name, const GameConfiguration& configuration,
-                                    ValidationScope scope) {
+std::optional<ValidationError>
+SaveRule(std::string_view name, const GameConfiguration& configuration, ValidationScope scope) {
+	const auto error = [name](std::string message, ValidationRule rule) {
+		return ValidationError {std::string(name), std::move(message), rule, {}};
+	};
 	if (IsMissingOutputPath(name, configuration)) {
 		if (name == "shader_log_folder") {
-			return "The shader log folder must not be empty while shader logs go to a file.";
+			return error("The shader log folder must not be empty while shader logs go to a file.",
+			             ValidationRule::MissingOutputPath);
 		}
 		if (name == "command_buffer_dump_folder") {
-			return "The command buffer dump folder must not be empty while command buffer dumps "
-			       "are enabled.";
+			return error("The command buffer dump folder must not be empty while command buffer "
+			             "dumps are enabled.",
+			             ValidationRule::MissingOutputPath);
 		}
-		return "The printf output file must not be empty while printf output goes to a file.";
+		return error("The printf output file must not be empty while printf output goes to a file.",
+		             ValidationRule::MissingOutputPath);
 	}
 	if (name == "host_input_mapping" &&
 	    (scope == ValidationScope::Global || configuration.input_mapping_custom)) {
-		const auto invalid = FindInvalidMappingEntries(configuration.host_input_mapping);
+		auto invalid = FindInvalidMappingEntries(configuration.host_input_mapping);
 		if (!invalid.empty()) {
 			std::string message = "Each input mapping entry must have the form Name=Value with a "
 			                      "non-empty name and value. Invalid: ";
@@ -34,7 +40,9 @@ std::optional<std::string> SaveRule(std::string_view name, const GameConfigurati
 				message += (i == 0 ? "entry " : ", entry ") + std::to_string(invalid[i].index + 1) +
 				           " \"" + invalid[i].entry + "\"";
 			}
-			return message + ".";
+			auto result    = error(message + ".", ValidationRule::InvalidMappingEntries);
+			result.entries = std::move(invalid);
+			return result;
 		}
 	}
 	return std::nullopt;
@@ -49,12 +57,12 @@ bool IsHexDigit(char c) {
 std::optional<ValidationError> Validate(const GameConfiguration& configuration,
                                         ValidationScope          scope) {
 	for (const auto& field: GameConfigurationFields()) {
-		auto message = field.check(field.get(configuration));
-		if (!message) {
-			message = SaveRule(field.name, configuration, scope);
+		if (auto message = field.check(field.get(configuration))) {
+			return ValidationError {
+			    std::string(field.name), std::move(*message), ValidationRule::Field, {}};
 		}
-		if (message) {
-			return ValidationError {std::string(field.name), std::move(*message)};
+		if (auto error = SaveRule(field.name, configuration, scope)) {
+			return error;
 		}
 	}
 	return std::nullopt;

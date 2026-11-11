@@ -380,22 +380,41 @@ void TestLocalMode() {
 
 	// Unusable files are errors naming the path or the reason.
 	dir.WriteFile("invalid.json", "{\"PPSA1\": ");
+	using kyty::core::CompatibilityFileErrorKind;
 	auto invalid = kyty::core::LoadLocalCompatibility(dir.Path() / "invalid.json");
-	Check(!invalid && Contains(invalid.error(), "invalid.json") &&
-	          Contains(invalid.error(), "does not parse") &&
-	          Contains(invalid.error(), "parse error"),
-	      "invalid JSON: " + (invalid ? std::string() : invalid.error()));
+	Check(!invalid && Contains(invalid.error().message, "invalid.json") &&
+	          Contains(invalid.error().message, "does not parse") &&
+	          Contains(invalid.error().message, "parse error"),
+	      "invalid JSON: " + (invalid ? std::string() : invalid.error().message));
+	// Phase 9 V1: the kind and the parts of each message.
+	Check(invalid.error().kind == CompatibilityFileErrorKind::InvalidJson &&
+	          invalid.error().path == dir.Path() / "invalid.json" &&
+	          invalid.error().message ==
+	              "The compatibility database " + (dir.Path() / "invalid.json").string() +
+	                  " does not parse: the content is not valid JSON: " + invalid.error().detail &&
+	          invalid.error().detail.starts_with("parse error"),
+	      "invalid JSON's kind, path, and parser text");
 	dir.WriteFile("array.json", "[]");
 	auto array = kyty::core::LoadLocalCompatibility(dir.Path() / "array.json");
-	Check(!array && Contains(array.error(), "not an object"), "a non-object root");
+	Check(!array && Contains(array.error().message, "not an object") &&
+	          array.error().kind == CompatibilityFileErrorKind::NotAnObject,
+	      "a non-object root");
 	dir.MakeDirectories("directory.json");
 	auto directory = kyty::core::LoadLocalCompatibility(dir.Path() / "directory.json");
-	Check(!directory && Contains(directory.error(), "Cannot read") &&
-	          Contains(directory.error(), "directory.json"),
-	      "a directory: " + (directory ? std::string() : directory.error()));
+	Check(!directory && Contains(directory.error().message, "Cannot read") &&
+	          Contains(directory.error().message, "directory.json"),
+	      "a directory: " + (directory ? std::string() : directory.error().message));
+	Check(directory.error().kind == CompatibilityFileErrorKind::Unreadable &&
+	          directory.error().io.error_number == EISDIR &&
+	          directory.error().message ==
+	              "Cannot read the compatibility database: " + directory.error().io.message,
+	      "a directory: the read error is kept");
 	dir.WriteFile("large.json", std::string((16u << 20u) + 1u, ' '));
 	auto large = kyty::core::LoadLocalCompatibility(dir.Path() / "large.json");
-	Check(!large && Contains(large.error(), "Cannot read"), "a file over 16 MiB");
+	Check(!large && Contains(large.error().message, "Cannot read") &&
+	          large.error().io.kind == kyty::core::IoErrorKind::TooLarge &&
+	          large.error().io.limit == (16u << 20u),
+	      "a file over 16 MiB");
 	Check(!kyty::core::SaveLocalCompatibility(dir.Path() / "missing" / "db.json", {}).has_value(),
 	      "saving into a missing directory fails");
 }

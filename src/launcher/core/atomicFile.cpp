@@ -61,8 +61,11 @@ std::string ErrorText(int error_number) {
 	return std::generic_category().message(error_number);
 }
 
-Unexpected<IoError> Failure(const fs::path& path, int error_number, const std::string& what) {
-	return Unexpected<IoError>(IoError {path, error_number, what + ": " + ErrorText(error_number)});
+Unexpected<IoError> Failure(const fs::path& path, int error_number, const std::string& what,
+                            IoErrorKind kind, fs::path detail = {}, fs::path other = {},
+                            uint64_t limit = 0) {
+	return Unexpected<IoError>(IoError {path, error_number, what + ": " + ErrorText(error_number),
+	                                    kind, std::move(detail), std::move(other), limit});
 }
 
 // Follows target while it is a symbolic link. A relative link is resolved against the directory
@@ -77,11 +80,12 @@ Expected<fs::path, IoError> ResolveLinks(const fs::path& target) {
 		}
 		fs::path link = fs::read_symlink(current, ec);
 		if (ec) {
-			return Failure(target, ec.value(), "cannot read the symbolic link " + current.string());
+			return Failure(target, ec.value(), "cannot read the symbolic link " + current.string(),
+			               IoErrorKind::ReadLink, current);
 		}
 		current = link.is_absolute() ? std::move(link) : current.parent_path() / link;
 	}
-	return Failure(target, ELOOP, "cannot resolve " + target.string());
+	return Failure(target, ELOOP, "cannot resolve " + target.string(), IoErrorKind::ResolveLinks);
 }
 
 // Owns the temporary file until it has been renamed over the target.
@@ -192,7 +196,7 @@ Expected<void, IoError> WriteFileAtomically(const fs::path& target, std::string_
 	}
 	const fs::path real = std::move(resolved).value();
 	if (!real.has_filename()) {
-		return Failure(target, EISDIR, "cannot write " + target.string());
+		return Failure(target, EISDIR, "cannot write " + target.string(), IoErrorKind::NoFileName);
 	}
 	fs::path directory = real.parent_path();
 	if (directory.empty()) {
@@ -214,7 +218,8 @@ Expected<void, IoError> WriteFileAtomically(const fs::path& target, std::string_
 	}
 	if (error_number != 0) {
 		return Failure(target, error_number,
-		               "cannot create a temporary file in " + directory.string());
+		               "cannot create a temporary file in " + directory.string(),
+		               IoErrorKind::CreateTemp, directory);
 	}
 
 	error_number = InjectedFault(AtomicFileStep::Write);
@@ -222,7 +227,8 @@ Expected<void, IoError> WriteFileAtomically(const fs::path& target, std::string_
 		error_number = temp.Write(bytes);
 	}
 	if (error_number != 0) {
-		return Failure(target, error_number, "cannot write " + temp.Path());
+		return Failure(target, error_number, "cannot write " + temp.Path(), IoErrorKind::WriteTemp,
+		               temp.Path());
 	}
 
 	error_number = InjectedFault(AtomicFileStep::Sync);
@@ -230,12 +236,14 @@ Expected<void, IoError> WriteFileAtomically(const fs::path& target, std::string_
 		error_number = temp.Sync();
 	}
 	if (error_number != 0) {
-		return Failure(target, error_number, "cannot sync " + temp.Path());
+		return Failure(target, error_number, "cannot sync " + temp.Path(), IoErrorKind::SyncTemp,
+		               temp.Path());
 	}
 
 	error_number = temp.Close(InjectedFault(AtomicFileStep::Close));
 	if (error_number != 0) {
-		return Failure(target, error_number, "cannot close " + temp.Path());
+		return Failure(target, error_number, "cannot close " + temp.Path(), IoErrorKind::CloseTemp,
+		               temp.Path());
 	}
 
 	error_number = InjectedFault(AtomicFileStep::Rename);
@@ -244,7 +252,8 @@ Expected<void, IoError> WriteFileAtomically(const fs::path& target, std::string_
 	}
 	if (error_number != 0) {
 		return Failure(target, error_number,
-		               "cannot rename " + temp.Path() + " to " + real.string());
+		               "cannot rename " + temp.Path() + " to " + real.string(), IoErrorKind::Rename,
+		               temp.Path(), real);
 	}
 	temp.Release();
 
@@ -255,7 +264,7 @@ Expected<void, IoError> WriteFileAtomically(const fs::path& target, std::string_
 Expected<std::string, IoError> ReadFileLimited(const fs::path& path, uint64_t max_bytes) {
 	const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
-		return Failure(path, errno, "cannot open " + path.string());
+		return Failure(path, errno, "cannot open " + path.string(), IoErrorKind::Open);
 	}
 	// Closes fd on every return.
 	struct Descriptor {
@@ -265,18 +274,21 @@ Expected<std::string, IoError> ReadFileLimited(const fs::path& path, uint64_t ma
 
 	struct stat info {};
 	if (::fstat(fd, &info) != 0) {
-		return Failure(path, errno, "cannot read " + path.string());
+		return Failure(path, errno, "cannot read " + path.string(), IoErrorKind::Read);
 	}
 	if (S_ISDIR(info.st_mode)) {
-		return Failure(path, EISDIR, "cannot read " + path.string());
+		return Failure(path, EISDIR, "cannot read " + path.string(), IoErrorKind::Read);
 	}
 	const std::string too_large =
 	    "cannot read " + path.string() + " (limit " + std::to_string(max_bytes) + " bytes)";
+	const auto too_large_failure = [&] {
+		return Failure(path, EFBIG, too_large, IoErrorKind::TooLarge, {}, {}, max_bytes);
+	};
 	std::string bytes;
 	if (S_ISREG(info.st_mode)) {
 		const auto size = static_cast<uint64_t>(info.st_size);
 		if (size > max_bytes) {
-			return Failure(path, EFBIG, too_large);
+			return too_large_failure();
 		}
 		bytes.reserve(static_cast<size_t>(size));
 	}
@@ -288,14 +300,14 @@ Expected<std::string, IoError> ReadFileLimited(const fs::path& path, uint64_t ma
 			if (errno == EINTR) {
 				continue;
 			}
-			return Failure(path, errno, "cannot read " + path.string());
+			return Failure(path, errno, "cannot read " + path.string(), IoErrorKind::Read);
 		}
 		if (count == 0) {
 			break;
 		}
 		// The file may have grown since fstat(), and non-regular files have no size.
 		if (static_cast<uint64_t>(count) > max_bytes - bytes.size()) {
-			return Failure(path, EFBIG, too_large);
+			return too_large_failure();
 		}
 		bytes.append(buffer.data(), static_cast<size_t>(count));
 	}

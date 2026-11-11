@@ -94,9 +94,25 @@ struct ControllerSettings {
 	friend bool operator==(const ControllerSettings&, const ControllerSettings&) = default;
 };
 
+struct InvalidMappingEntry {
+	std::size_t index = 0; // the 0-based position in the mapping
+	std::string entry;     // the entry as stored
+
+	friend bool operator==(const InvalidMappingEntry&, const InvalidMappingEntry&) = default;
+};
+
+// Which rule a value breaks (plan V1: the GTK layer has its own text per rule and field).
+enum class ValidationRule {
+	Field,                 // the field's own rule (FieldDescriptor::check): its range or form
+	MissingOutputPath,     // an output path is empty while its output is on (IsMissingOutputPath)
+	InvalidMappingEntries, // host_input_mapping entries that are not IsValidMappingEntry
+};
+
 struct ValidationError {
 	std::string field;   // the Kyty.ini and JSON key of the invalid field
 	std::string message; // what is wrong, in English, without the key
+	ValidationRule                   rule = ValidationRule::Field;
+	std::vector<InvalidMappingEntry> entries; // InvalidMappingEntries: every invalid entry
 
 	friend bool operator==(const ValidationError&, const ValidationError&) = default;
 };
@@ -124,13 +140,6 @@ std::optional<ValidationError> Validate(const GameConfiguration& configuration,
 // True for an input mapping entry "Name=Value" with both sides non-empty after TrimWhitespace
 // (split at the first '='). Only valid entries become --keymap options.
 bool IsValidMappingEntry(std::string_view entry);
-
-struct InvalidMappingEntry {
-	std::size_t index = 0; // the 0-based position in the mapping
-	std::string entry;     // the entry as stored
-
-	friend bool operator==(const InvalidMappingEntry&, const InvalidMappingEntry&) = default;
-};
 
 // Every entry of mapping that is not IsValidMappingEntry, in order: what the settings editor lists
 // so that the user can remove it.

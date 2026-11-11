@@ -9,6 +9,7 @@
 #include "launcher/core/text.h"
 #include "launcher/core/titleId.h"
 #include "launcher/gtk/alerts.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/gameListModel.h"
 #include "launcher/gtk/gamePickerDialog.h"
 #include "launcher/gtk/gobjectPtr.h"
@@ -43,8 +44,11 @@ namespace core = kyty::core;
 namespace fs   = std::filesystem;
 using kyty::gtk::GCharPtr;
 using kyty::gtk::GObjectPtr;
+using kyty::gtk::IoErrorText;
 using kyty::gtk::LauncherContext;
+using kyty::gtk::Render;
 using kyty::gtk::SignalScope;
+using kyty::gtk::ValidationRuleText;
 
 constexpr const char* kTemplateResource = "/io/github/MrG00gle/KytyPS5_GTK/ui/settings-window.xml";
 
@@ -474,71 +478,25 @@ std::string FieldName(std::string_view key) {
 	return Format(_("“%s”"), key_text.c_str());
 }
 
-// The rule of a field, as the launcher's own text (plan D46); the core's message (English) only for
-// a field the launcher does not know.
-std::string FieldRule(std::string_view key, const std::string& core_message) {
-	if (key == "user_name") {
-		return _("The user name must contain 1 to 16 UTF-8 bytes after leading and trailing spaces "
-		         "are removed.");
-	}
-	if (key == "user_id") {
-		return _("The user ID must be between 0 and 2147482879 and must not be 254 (everyone) or "
-		         "255 (system).");
-	}
-	if (key == "gpu_index") {
-		return _("The GPU must be Automatic or a device index from 0.");
-	}
-	if (key == "trophy_duration_seconds") {
-		return _("The trophy notification duration must be between 5 and 10 seconds.");
-	}
-	if (key == "vblank_frequency") {
-		return _("The vblank frequency must be between 30 and 360.");
-	}
-	if (key == "console_language") {
-		return _("The console language must be one of the listed languages.");
-	}
-	if (key == "elf") {
-		return _("The executable must be a non-empty relative path without a “..” component.");
-	}
-	if (key == "shader_log_folder") {
-		return _("The shader log folder must not be empty while shader logs go to a file.");
-	}
-	if (key == "command_buffer_dump_folder") {
-		return _("The command buffer folder must not be empty while command buffer dumps are "
-		         "enabled.");
-	}
-	if (key == "printf_output_file") {
-		return _("The printf output file must not be empty while printf output goes to a file.");
-	}
-	if (key == "host_input_mapping") {
-		return _("Each input mapping entry must have the form Name=Value with a non-empty name "
-		         "and value.");
-	}
-	if (const auto* field = core::FindGameConfigurationField(key);
-	    field != nullptr && field->kind == core::FieldKind::Enum) {
-		return _("The value must be one of the listed choices.");
-	}
-	if (const auto* field = core::FindGameConfigurationField(key);
-	    field != nullptr && field->kind == core::FieldKind::Bool) {
-		return _("The value must be true or false.");
-	}
-	return core_message;
+// The rule of a field, as the launcher's own text (plan D46; phase 9 V1: coreMessageText.h).
+std::string FieldRule(const core::ValidationError& error) {
+	return Render(ValidationRuleText(error));
 }
 
 std::string FieldErrorText(const core::ValidationError& error) {
 	// TRANSLATORS: an invalid setting: "<label> (<key>): <rule>".
-	return Format(_("%s: %s"), FieldName(error.field).c_str(),
-	              FieldRule(error.field, error.message).c_str());
+	return Format(_("%s: %s"), FieldName(error.field).c_str(), FieldRule(error).c_str());
 }
 
 // The text of a Game_Settings_File import error (HC-19): the field and the title the error is
-// about, in the launcher's words; the core's message only where it holds a path and a reason.
+// about, in the launcher's words, with the read error's path and reason (coreMessageText.h).
 std::string ImportErrorText(const core::ImportError& error) {
 	const char* title = error.title.c_str();
 	const auto  field = FieldName(error.field);
 	switch (error.kind) {
 		case core::ImportErrorKind::Unreadable:
-			return Format(_("The file could not be read: %s"), error.message.c_str());
+			return Format(_("The file could not be read: %s"),
+			              Render(IoErrorText(error.io)).c_str());
 		case core::ImportErrorKind::InvalidJson: return _("The file is not valid JSON.");
 		case core::ImportErrorKind::NotAnObject:
 			return _("The file must contain a JSON object with game configs keyed by title ID.");
@@ -562,8 +520,10 @@ std::string ImportErrorText(const core::ImportError& error) {
 			                "type."),
 			              field.c_str(), title);
 		case core::ImportErrorKind::InvalidValue:
-			return Format(_("The setting %s in the game config of %s has an invalid value. %s"),
-			              field.c_str(), title, FieldRule(error.field, error.message).c_str());
+			return Format(
+			    _("The setting %s in the game config of %s has an invalid value. %s"),
+			    field.c_str(), title,
+			    FieldRule(core::ValidationError {error.field, {}, error.rule, {}}).c_str());
 		case core::ImportErrorKind::NoMatchingMember:
 			// Only the per-game import (task 21.7) selects a member for one game.
 			if (error.title.empty()) {
@@ -571,7 +531,7 @@ std::string ImportErrorText(const core::ImportError& error) {
 			}
 			return Format(_("The file contains no game config for %s."), title);
 	}
-	return error.message;
+	return {}; // every kind returns above
 }
 
 // ---- Values
@@ -721,10 +681,11 @@ void LoadGpuRow(FieldRow& row, int64_t gpu_index, const kyty::gtk::DeviceList& g
 	}
 	SetComboItems(row.row, items);
 	adw_combo_row_set_selected(ADW_COMBO_ROW(row.row), selected);
-	if (!gpus.error.empty()) {
+	const std::string& reason = gpus.error; // core text: SDL's or Vulkan's words (library text)
+	if (!reason.empty()) {
 		adw_action_row_set_subtitle(
 		    ADW_ACTION_ROW(row.row),
-		    Format(_("The GPUs could not be listed: %s"), gpus.error.c_str()).c_str());
+		    Format(_("The GPUs could not be listed: %s"), reason.c_str()).c_str());
 	}
 }
 
@@ -749,11 +710,11 @@ void LoadMicrophoneRow(FieldRow& row, const std::string& device,
 	SetComboItems(row.row, items);
 	adw_combo_row_set_selected(ADW_COMBO_ROW(row.row),
 	                           static_cast<guint>(found - row.device_values.begin()));
-	if (!microphones.error.empty()) {
+	const std::string& reason = microphones.error; // core text: SDL's words (library text)
+	if (!reason.empty()) {
 		adw_action_row_set_subtitle(
 		    ADW_ACTION_ROW(row.row),
-		    Format(_("The microphones could not be listed: %s"), microphones.error.c_str())
-		        .c_str());
+		    Format(_("The microphones could not be listed: %s"), reason.c_str()).c_str());
 	}
 }
 
@@ -1482,7 +1443,7 @@ void ExportGame(KytySettingsWindow* self, const core::GameEntry& entry) {
 		        !written) {
 			    kyty::gtk::ShowError(GTK_WINDOW(self), _("The game config could not be exported"),
 			                         Format(_("%s could not be written:\n%s"), file->c_str(),
-			                                written.error().message.c_str()),
+			                                Render(IoErrorText(written.error())).c_str()),
 			                         chosen_state.cancellable.get());
 		    }
 	    },
@@ -1686,10 +1647,10 @@ KytySettingsWindow* NewWindow(LauncherContext& context, GtkWindow* parent,
 	// The device lists, read when the editor opens (Requirement 9.5).
 	state.gpus        = context.services.device_lists.VulkanDevices();
 	state.microphones = context.services.device_lists.RecordingDevices();
-	if (!state.gpus.error.empty()) {
+	if (!state.gpus.error.empty()) { // core text: not shown here (logged)
 		g_message("cannot list the Vulkan devices: %s", state.gpus.error.c_str());
 	}
-	if (!state.microphones.error.empty()) {
+	if (!state.microphones.error.empty()) { // core text: not shown here (logged)
 		g_message("cannot list the recording devices: %s", state.microphones.error.c_str());
 	}
 

@@ -69,13 +69,24 @@ int InjectedFault(WritableProbeStep step) {
 	return hook ? hook(step) : 0;
 }
 
-Unexpected<std::string> Failure(const fs::path& dir, const std::string& step,
-                                const std::string& reason) {
-	return Unexpected<std::string>(dir.string() + ": cannot " + step + ": " + reason);
+Unexpected<WritableDirectoryError> Failure(const fs::path& dir, WritableProbeStep step,
+                                           const std::string& probe, int error_number,
+                                           const std::string& reason) {
+	std::string what = "create the directory";
+	switch (step) {
+		case WritableProbeStep::CreateDirectories: break;
+		case WritableProbeStep::Create: what = "create the write probe " + probe; break;
+		case WritableProbeStep::Write: what = "write the write probe " + probe; break;
+		case WritableProbeStep::Close: what = "close the write probe " + probe; break;
+		case WritableProbeStep::Remove: what = "remove the write probe " + probe; break;
+	}
+	return Unexpected<WritableDirectoryError>(WritableDirectoryError {
+	    step, dir, probe, error_number, dir.string() + ": cannot " + what + ": " + reason});
 }
 
-Unexpected<std::string> Failure(const fs::path& dir, const std::string& step, int error_number) {
-	return Failure(dir, step, std::generic_category().message(error_number));
+Unexpected<WritableDirectoryError> Failure(const fs::path& dir, WritableProbeStep step,
+                                           const std::string& probe, int error_number) {
+	return Failure(dir, step, probe, error_number, std::generic_category().message(error_number));
 }
 
 // Appends 16 hexadecimal digits from getrandom(); 0 or the errno.
@@ -179,21 +190,21 @@ fs::path SpawnWorkingDirectory(const ResolvedPaths& paths) {
 	return paths.data_dir;
 }
 
-Expected<void, std::string> EnsureWritableDirectory(const fs::path& dir) {
+Expected<void, WritableDirectoryError> EnsureWritableDirectory(const fs::path& dir) {
 	if (const int injected = InjectedFault(WritableProbeStep::CreateDirectories); injected != 0) {
-		return Failure(dir, "create the directory", injected);
+		return Failure(dir, WritableProbeStep::CreateDirectories, {}, injected);
 	}
 	std::error_code ec;
 	fs::create_directories(dir, ec);
 	if (ec) {
-		return Failure(dir, "create the directory", ec.message());
+		return Failure(dir, WritableProbeStep::CreateDirectories, {}, ec.value(), ec.message());
 	}
 
 	std::string probe;
 	int         error_number = 0;
 	const int   fd           = CreateProbe(dir, probe, error_number);
 	if (fd < 0) {
-		return Failure(dir, "create the write probe " + probe, error_number);
+		return Failure(dir, WritableProbeStep::Create, probe, error_number);
 	}
 
 	error_number = InjectedFault(WritableProbeStep::Write);
@@ -203,7 +214,7 @@ Expected<void, std::string> EnsureWritableDirectory(const fs::path& dir) {
 	if (error_number != 0) {
 		::close(fd);
 		::unlink(probe.c_str());
-		return Failure(dir, "write the write probe " + probe, error_number);
+		return Failure(dir, WritableProbeStep::Write, probe, error_number);
 	}
 
 	// The descriptor is released whatever the result (close() must not be retried on Linux).
@@ -213,7 +224,7 @@ Expected<void, std::string> EnsureWritableDirectory(const fs::path& dir) {
 	error_number          = injected != 0 ? injected : closed == 0 ? 0 : close_errno;
 	if (error_number != 0) {
 		::unlink(probe.c_str());
-		return Failure(dir, "close the write probe " + probe, error_number);
+		return Failure(dir, WritableProbeStep::Close, probe, error_number);
 	}
 
 	error_number = InjectedFault(WritableProbeStep::Remove);
@@ -221,7 +232,7 @@ Expected<void, std::string> EnsureWritableDirectory(const fs::path& dir) {
 		error_number = errno;
 	}
 	if (error_number != 0) {
-		return Failure(dir, "remove the write probe " + probe, error_number);
+		return Failure(dir, WritableProbeStep::Remove, probe, error_number);
 	}
 	return {};
 }

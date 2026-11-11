@@ -24,6 +24,7 @@ namespace {
 
 namespace fs         = std::filesystem;
 namespace UpdaterGen = KytyTests::UpdaterGen;
+using kyty::updater::DownloadFailureKind;
 using kyty::updater::DownloadVerifier;
 using kyty::updater::ReleaseAsset;
 using KytyTests::TempDir;
@@ -82,8 +83,11 @@ void TestExact() {
 			Check(verifier.Received() == bytes.size(), name + ": Received()");
 			Check(FinishError(verifier).empty(), name + ": Finish() accepts the file");
 			Check(FinishError(verifier).empty(), name + ": Finish() again");
+			Check(verifier.LastFailure().kind == DownloadFailureKind::None,
+			      name + ": no failure before");
 			const auto late = verifier.Append(AsBytes("x"));
-			Check(!late && late.error() == "The download is already finished.",
+			Check(!late && late.error() == "The download is already finished." &&
+			          verifier.LastFailure().kind == DownloadFailureKind::Finished,
 			      name + ": Append() after Finish() fails");
 			verifier.Abort();
 		}
@@ -94,11 +98,12 @@ void TestExact() {
 void TestRejectedStreams() {
 	const std::string bytes = UpdaterGen::PatternBytes(70000, 2);
 	struct Case {
-		std::string  name;
-		std::string  received;
-		ReleaseAsset asset;
-		bool         fails_in_append;
-		std::string  error;
+		std::string         name;
+		std::string         received;
+		ReleaseAsset        asset;
+		bool                fails_in_append;
+		std::string         error;
+		DownloadFailureKind kind;
 	};
 	std::string corrupted = bytes;
 	corrupted[12345] ^= 0x20;
@@ -108,23 +113,27 @@ void TestRejectedStreams() {
 	last_corrupted.back() ^= static_cast<char>(0x80);
 	auto wrong_digest = AssetFor(bytes);
 	wrong_digest.sha256[31] ^= 0x01;
-	const std::vector<Case> cases = {
-	    {"corrupted in the middle", corrupted, AssetFor(bytes), false,
-	     std::string(kyty::updater::kDownloadDigestMessage)},
-	    {"corrupted first byte", first_corrupted, AssetFor(bytes), false,
-	     std::string(kyty::updater::kDownloadDigestMessage)},
-	    {"corrupted last byte", last_corrupted, AssetFor(bytes), false,
-	     std::string(kyty::updater::kDownloadDigestMessage)},
-	    {"a wrong published digest", bytes, wrong_digest, false,
-	     std::string(kyty::updater::kDownloadDigestMessage)},
+	const std::string       digest = std::string(kyty::updater::kDownloadDigestMessage);
+	const std::string       large  = std::string(kyty::updater::kDownloadTooLargeMessage);
+	const std::vector<Case> cases  = {
+	    {"corrupted in the middle", corrupted, AssetFor(bytes), false, digest,
+	     DownloadFailureKind::Digest},
+	    {"corrupted first byte", first_corrupted, AssetFor(bytes), false, digest,
+	     DownloadFailureKind::Digest},
+	    {"corrupted last byte", last_corrupted, AssetFor(bytes), false, digest,
+	     DownloadFailureKind::Digest},
+	    {"a wrong published digest", bytes, wrong_digest, false, digest,
+	     DownloadFailureKind::Digest},
 	    {"one byte short", bytes.substr(0, bytes.size() - 1), AssetFor(bytes), false,
-	     "The downloaded file is smaller than the release asset (69999 of 70000 bytes)."},
+	     "The downloaded file is smaller than the release asset (69999 of 70000 bytes).",
+	     DownloadFailureKind::TooSmall},
 	    {"empty", "", AssetFor(bytes), false,
-	     "The downloaded file is smaller than the release asset (0 of 70000 bytes)."},
-	    {"one byte extra", bytes + "x", AssetFor(bytes), true,
-	     std::string(kyty::updater::kDownloadTooLargeMessage)},
-	    {"twice the size", bytes + bytes, AssetFor(bytes), true,
-	     std::string(kyty::updater::kDownloadTooLargeMessage)},
+	     "The downloaded file is smaller than the release asset (0 of 70000 bytes).",
+	     DownloadFailureKind::TooSmall},
+	    {"one byte extra", bytes + "x", AssetFor(bytes), true, large,
+	     DownloadFailureKind::TooLarge},
+	    {"twice the size", bytes + bytes, AssetFor(bytes), true, large,
+	     DownloadFailureKind::TooLarge},
 	};
 	for (const auto& test: cases) {
 		for (const std::vector<size_t>& sizes:
@@ -157,6 +166,13 @@ void TestRejectedStreams() {
 				Check(finish_error == test.error, name + ": Finish() fails with '" + test.error +
 				                                      "', got '" + finish_error + "'");
 				Check(!Exists(out), name + ": the file is deleted");
+				// Phase 9 V1: the failure's kind and, for a short file, its two numbers.
+				const auto& failure = verifier.LastFailure();
+				Check(failure.kind == test.kind, name + ": the failure's kind");
+				Check(test.kind != DownloadFailureKind::TooSmall ||
+				          (failure.received == test.received.size() &&
+				           failure.size == test.asset.size),
+				      name + ": the received bytes and the size");
 			}
 			Check(UpdaterGen::SnapshotTree(temp.Path() / "install") == before,
 			      name + ": the installation directory is byte-identical");
@@ -185,6 +201,9 @@ void TestWriteFaults() {
 			Check(calls == failing_call, name + ": the hook runs once per non-empty chunk");
 			Check(!Exists(out), name + ": the file is deleted");
 			Check(FinishError(verifier) == expected, name + ": Finish() reports the write error");
+			Check(verifier.LastFailure().kind == DownloadFailureKind::Write &&
+			          verifier.LastFailure().error_number == ENOSPC,
+			      name + ": the write failure's errno");
 		}
 		kyty::updater::SetDownloadWriteFaultForTesting({});
 	}
@@ -224,7 +243,8 @@ void TestAbortAndDestruction() {
 		const auto append = verifier.Append(AsBytes("z"));
 		Check(!append && append.error() == kyty::updater::kDownloadAbortedMessage,
 		      "Append() after Abort()");
-		Check(FinishError(verifier) == kyty::updater::kDownloadAbortedMessage,
+		Check(FinishError(verifier) == kyty::updater::kDownloadAbortedMessage &&
+		          verifier.LastFailure().kind == DownloadFailureKind::Aborted,
 		      "Finish() after Abort()");
 		verifier.Abort();
 	}
@@ -265,6 +285,9 @@ void TestCreationFailures() {
 			DownloadVerifier verifier(AssetFor(bytes), test.path);
 			const auto       append = verifier.Append(AsBytes(bytes));
 			Check(!append && append.error() == expected, "Append(): '" + expected + "'");
+			Check(verifier.LastFailure().kind == DownloadFailureKind::Create &&
+			          verifier.LastFailure().error_number == test.error_number,
+			      "the creation failure's errno: '" + expected + "'");
 			Check(FinishError(verifier) == expected, "Finish(): '" + expected + "'");
 			verifier.Abort();
 		}

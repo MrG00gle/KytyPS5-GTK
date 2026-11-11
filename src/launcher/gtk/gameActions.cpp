@@ -4,6 +4,7 @@
 #include "launcher/core/settingsStore.h"
 #include "launcher/core/titleId.h"
 #include "launcher/gtk/alerts.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/gobjectPtr.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/services/desktopLauncher.h"
@@ -270,7 +271,7 @@ void ExportGameConfig(LauncherContext& context, GtkWindow* parent, const core::G
 		        !written) {
 			    ShowError(parent, _("The game config could not be exported"),
 			              Format(_("%s could not be written:\n%s"), file->c_str(),
-			                     written.error().message.c_str()),
+			                     Render(IoErrorText(written.error())).c_str()),
 			              keep.get());
 			    return;
 		    }
@@ -321,8 +322,10 @@ GtkWindow* ShowSaveDataFailures(GtkWindow* parent, const core::GameEntry& entry,
                                 GCancellable*                            cancellable) {
 	std::vector<std::string> lines;
 	for (const auto& failure: failures) {
+		const int error_number = failure.error.value(); // core text: the errno, for g_strerror
 		// TRANSLATORS: a path that could not be deleted, then the reason.
-		lines.push_back(Format(_("%s: %s"), failure.path.c_str(), failure.error.message().c_str()));
+		lines.push_back(
+		    Format(_("%s: %s"), failure.path.c_str(), OsErrorText(error_number).c_str()));
 	}
 	// A scrolled list (phase 7 plan D22): a long list stays on the screen.
 	return ShowErrorList(

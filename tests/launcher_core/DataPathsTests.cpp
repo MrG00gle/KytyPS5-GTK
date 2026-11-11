@@ -269,15 +269,22 @@ void TestWritableFailures() {
 
 	auto result = EnsureWritableDirectory(file);
 	Check(!result.has_value(), "a regular file in the way");
-	Check(result.error().starts_with(file.string() + ": cannot create the directory: "),
-	      "the message names the path and the step: " + result.error());
-	Check(result.error().size() > (file.string() + ": cannot create the directory: ").size(),
-	      "the message has a reason: " + result.error());
+	Check(result.error().message.starts_with(file.string() + ": cannot create the directory: "),
+	      "the message names the path and the step: " + result.error().message);
+	Check(result.error().message.size() >
+	          (file.string() + ": cannot create the directory: ").size(),
+	      "the message has a reason: " + result.error().message);
+	Check(result.error().step == WritableProbeStep::CreateDirectories &&
+	          result.error().dir == file && result.error().error_number != 0 &&
+	          result.error().message == file.string() + ": cannot create the directory: " +
+	                                        ErrorText(result.error().error_number),
+	      "the error's step, directory, and errno make the message");
 
 	const auto below = file / "sub";
 	result           = EnsureWritableDirectory(below);
-	Check(!result.has_value() && Contains(result.error(), below.string() + ": cannot create"),
-	      "a directory below a regular file: " + (result ? std::string() : result.error()));
+	Check(!result.has_value() &&
+	          Contains(result.error().message, below.string() + ": cannot create"),
+	      "a directory below a regular file: " + (result ? std::string() : result.error().message));
 
 	result = EnsureWritableDirectory("");
 	Check(!result.has_value(), "the empty path");
@@ -315,17 +322,27 @@ void TestInjectedFaults() {
 		const std::string what = std::string("fault in '") + fault.step_text + "': ";
 		Check(!result.has_value(), what + "fails");
 		const std::string prefix = dir.string() + ": cannot " + fault.step_text;
-		Check(result.error().starts_with(prefix), what + "message " + result.error());
-		Check(Contains(result.error(), ": " + ErrorText(fault.error_number)),
-		      what + "the reason " + result.error());
+		Check(result.error().message.starts_with(prefix),
+		      what + "message " + result.error().message);
+		Check(Contains(result.error().message, ": " + ErrorText(fault.error_number)),
+		      what + "the reason " + result.error().message);
 		Check(calls[fault.step] == 1, what + "the step was asked once");
+		// The parts of the message (phase 9 V1): the step, the directory, the errno, the probe.
+		Check(result.error().step == fault.step && result.error().dir == dir &&
+		          result.error().error_number == fault.error_number,
+		      what + "the error's step, directory, and errno");
 		if (fault.step == WritableProbeStep::CreateDirectories) {
+			Check(result.error().probe.empty(), what + "no probe file");
 			std::error_code ec;
 			Check(!fs::exists(dir, ec), what + "nothing was created");
 			continue;
 		}
-		Check(Contains(result.error(), (dir / ".kyty-write-probe-").string()),
+		Check(Contains(result.error().message, (dir / ".kyty-write-probe-").string()),
 		      what + "the message names the probe file");
+		Check(IsProbeName(result.error().probe.filename().string()) &&
+		          result.error().probe.parent_path() == dir &&
+		          Contains(result.error().message, result.error().probe.string()),
+		      what + "the error's probe file is the one the message names");
 		const auto names = Names(dir);
 		if (fault.probe_left) {
 			Check(names.size() == 1 && IsProbeName(names[0]),
@@ -361,8 +378,8 @@ void TestNameCollisions() {
 	});
 	result = EnsureWritableDirectory(temp.Path());
 	SetWritableProbeFaultForTesting({});
-	Check(!result.has_value() && Contains(result.error(), ": " + ErrorText(EEXIST)),
-	      "every name taken: " + (result ? std::string() : result.error()));
+	Check(!result.has_value() && Contains(result.error().message, ": " + ErrorText(EEXIST)),
+	      "every name taken: " + (result ? std::string() : result.error().message));
 	Check(creates == 100, "100 names were tried, not " + std::to_string(creates));
 
 	Check(EnsureWritableDirectory(temp.Path()).has_value(), "the hook was removed");

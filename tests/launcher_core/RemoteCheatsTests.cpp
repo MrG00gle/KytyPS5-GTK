@@ -81,6 +81,8 @@ void TestImportable() {
 	Harness     harness;
 	const auto& result = harness.Run(ContentGen::ResponseOf(ValidBody(), {10, 100}));
 	Check(result.importable && result.error.empty(), "a matching file is importable");
+	Check(!result.problem && result.fetch.failure == kyty::core::HttpFailure::None,
+	      "no problem and no download failure (phase 9 V1)");
 	Check(result.file == kFile, "the result names the file");
 	Check(result.document && result.document->cheats.size() == 2 &&
 	          result.document->cheats[0].name == "Infinite HP" &&
@@ -115,6 +117,8 @@ void TestMismatches() {
 		const auto& result = harness.Run(ContentGen::ResponseOf(body));
 		Check(!result.importable && result.error == error && result.document.has_value(),
 		      "previewed but not importable: " + result.error);
+		Check(result.problem && result.problem->message == error && result.problem->file.empty(),
+		      "the mismatch is the result's problem: " + error);
 	}
 
 	Harness     harness;
@@ -122,6 +126,10 @@ void TestMismatches() {
 	Check(!result.importable && !result.document &&
 	          result.error == kFile.name + ": Invalid cheat entry 1 (it has no name).",
 	      "a file that does not parse names the file: " + result.error);
+	Check(result.problem &&
+	          result.problem->kind == kyty::core::CheatProblemKind::EntryWithoutName &&
+	          result.problem->file == kFile.name && result.problem->message == result.error,
+	      "the parse problem names the file");
 }
 
 void TestFailures() {
@@ -147,6 +155,9 @@ void TestFailures() {
 		const auto& result = harness.Run(response);
 		Check(!result.importable && !result.document && result.error == error,
 		      "a failed download: " + result.error);
+		Check(result.fetch.failure != kyty::core::HttpFailure::None &&
+		          result.fetch.message == error && !result.problem,
+		      "the download failure's parts: " + error);
 	}
 
 	// Exactly 8 MiB, delivered just before the limit, is accepted.

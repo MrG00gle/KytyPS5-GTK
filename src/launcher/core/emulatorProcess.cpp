@@ -31,13 +31,17 @@ std::string ErrorText(int error_number) {
 }
 
 Unexpected<SpawnError> Failure(SpawnErrorKind kind, const fs::path& executable, int error_number,
-                               std::string reason) {
+                               std::string reason, SpawnCause cause = SpawnCause::ErrorNumber,
+                               std::size_t argument = 0, fs::path cwd = {}) {
 	SpawnError error;
 	error.kind         = kind;
 	error.executable   = executable;
 	error.error_number = error_number;
 	error.reason       = std::move(reason);
 	error.message      = "Cannot start " + executable.string() + ": " + error.reason;
+	error.cause        = cause;
+	error.argument     = argument;
+	error.cwd          = std::move(cwd);
 	return Unexpected<SpawnError>(std::move(error));
 }
 
@@ -186,7 +190,8 @@ Expected<SpawnedProcess, SpawnError> SpawnEmulator(const SpawnRequest& request) 
 		return Failure(kind, executable, error_number, ErrorText(error_number));
 	}
 	if (!S_ISREG(info.st_mode)) {
-		return Failure(SpawnErrorKind::NotExecutable, executable, EACCES, "not a regular file");
+		return Failure(SpawnErrorKind::NotExecutable, executable, EACCES, "not a regular file",
+		               SpawnCause::NotRegularFile);
 	}
 	if (::access(executable.c_str(), X_OK) != 0) {
 		const int error_number = errno;
@@ -196,7 +201,8 @@ Expected<SpawnedProcess, SpawnError> SpawnEmulator(const SpawnRequest& request) 
 	for (size_t i = 0; i < request.args.size(); i++) {
 		if (request.args[i].find('\0') != std::string::npos) {
 			return Failure(SpawnErrorKind::SpawnFailed, executable, EINVAL,
-			               "argument " + std::to_string(i + 1) + " contains a NUL byte");
+			               "argument " + std::to_string(i + 1) + " contains a NUL byte",
+			               SpawnCause::NulArgument, i + 1);
 		}
 	}
 
@@ -210,19 +216,21 @@ Expected<SpawnedProcess, SpawnError> SpawnEmulator(const SpawnRequest& request) 
 	}
 	if (pipe_error != 0) {
 		return Failure(SpawnErrorKind::SpawnFailed, executable, pipe_error,
-		               "cannot create a pipe: " + ErrorText(pipe_error));
+		               "cannot create a pipe: " + ErrorText(pipe_error), SpawnCause::Pipe);
 	}
 
 	FileActions actions;
 	if (const int error_number = actions.Init(stdout_write.fd, stderr_write.fd, request.cwd);
 	    error_number != 0) {
 		return Failure(SpawnErrorKind::SpawnFailed, executable, error_number,
-		               "cannot prepare the spawn file actions: " + ErrorText(error_number));
+		               "cannot prepare the spawn file actions: " + ErrorText(error_number),
+		               SpawnCause::FileActions);
 	}
 	SpawnAttributes attributes;
 	if (const int error_number = attributes.Init(); error_number != 0) {
 		return Failure(SpawnErrorKind::SpawnFailed, executable, error_number,
-		               "cannot prepare the spawn attributes: " + ErrorText(error_number));
+		               "cannot prepare the spawn attributes: " + ErrorText(error_number),
+		               SpawnCause::Attributes);
 	}
 
 	std::string              path = executable.string();
@@ -246,7 +254,8 @@ Expected<SpawnedProcess, SpawnError> SpawnEmulator(const SpawnRequest& request) 
 		if (!request.cwd.empty()) {
 			reason += " (working directory " + request.cwd.string() + ")";
 		}
-		return Failure(SpawnErrorKind::SpawnFailed, executable, error_number, std::move(reason));
+		return Failure(SpawnErrorKind::SpawnFailed, executable, error_number, std::move(reason),
+		               SpawnCause::Spawn, 0, request.cwd);
 	}
 
 	// The write ends close here; the child holds its own copies.

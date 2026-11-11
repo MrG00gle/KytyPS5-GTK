@@ -68,11 +68,79 @@ enum class SessionState {
 	Failed,
 };
 
+// Which sentence SessionOutcome::message is (plan V1: the GTK layer shows its own text per kind
+// and inserts only the parts in SessionDetail). The sentences are those of this file,
+// downloadVerifier.h, and releaseMetadata.h.
+enum class SessionMessage {
+	None,                 // no message, or one without a kind (see SessionOutcome::detail)
+	NoNewerRelease,       // kNoNewerReleaseMessage
+	UnknownReleaseOrder,  // kUnknownReleaseOrderMessage
+	CloseGame,            // kCloseGameMessage
+	GameRunningCancelled, // kGameRunningCancelledMessage
+	// "The update configuration is invalid: <text> must be an absolute path (<path>)."
+	InvalidConfiguration,
+	RefusedUrl,        // "Refused to request <text>: it is not a release URL of <kRepository>."
+	InvalidRelease,    // kInvalidReleaseMessage
+	UnstableRelease,   // kUnstableReleaseMessage
+	InvalidAsset,      // kInvalidAssetMessage
+	MissingAsset,      // kMissingAssetMessage
+	OtherRelease,      // "GitHub answered with the release <text>."
+	CheckTooLarge,     // "The update response is larger than 2 MiB."
+	CheckNetwork,      // "The update check failed: <text>" (text: the client's message)
+	CheckStatus,       // "The update check failed with HTTP status <number>."
+	CheckStalled,      // "The update check received no data for <number> seconds."
+	CheckTimedOut,     // "The update check timed out."
+	CheckCancelled,    // "The update check was cancelled."
+	CreateWorkspace,   // "Cannot create an update folder in <path>: <errno text>"
+	CopyHelper,        // "Cannot copy <path> to <other>: <errno text>"
+	CreatePayload,     // "Cannot create <path>: <errno text>"
+	DownloadNetwork,   // "The download failed: <text>" (text: the client's message)
+	DownloadStatus,    // "The download failed with HTTP status <number>."
+	DownloadStalled,   // "The download received no data for <number> seconds."
+	DownloadTimedOut,  // "The download timed out."
+	DownloadCancelled, // kDownloadAbortedMessage
+	DownloadTooLarge,  // kDownloadTooLargeMessage
+	// "The downloaded file is smaller than the release asset (<received> of <size> bytes)."
+	DownloadTooSmall,
+	DownloadDigest,   // kDownloadDigestMessage
+	DownloadCreate,   // "Cannot create <path>: <errno text>" (the package file)
+	DownloadWrite,    // "Cannot write <path>: <errno text>"
+	DownloadFinished, // "The download is already finished."
+	// "Could not prepare the update: <text> exited with code <number>", then "." or ":\n<stderr>";
+	// text is the step ("/usr/bin/tar", "kyty_updater --validate").
+	StepExited,
+	StepSignaled,        // the same with "was ended by signal <number>"
+	StepWaitStatus,      // the same with "ended with wait status <number>"
+	StepNotStarted,      // "Could not prepare the update: <process>", then "." or ":\n<stderr>"
+	InstallerNotStarted, // "Could not start the update installer: <process>"
+};
+
+// The parts of SessionOutcome::message.
+struct SessionDetail {
+	SessionMessage kind = SessionMessage::None;
+	// The message is kInstalledReleaseUnverifiedMessage, a space, and the sentence of kind.
+	bool                  installed_unverified = false;
+	std::string           text; // see the kinds
+	std::filesystem::path path;
+	std::filesystem::path other;
+	int64_t               number       = 0; // see the kinds
+	uint64_t              received     = 0; // DownloadTooSmall
+	uint64_t              size         = 0; // DownloadTooSmall
+	int                   error_number = 0;
+	std::string           standard_error; // Step*: the process's standard error ("" for ".")
+	ProcessError          process;        // StepNotStarted, InstallerNotStarted
+
+	friend bool operator==(const SessionDetail&, const SessionDetail&) = default;
+};
+
 struct SessionOutcome {
 	SessionState state = SessionState::Idle;
 	// Failed: the reason (empty after Cancel()); NoNewer: kNoNewerReleaseMessage; Offering: empty,
 	// or kCloseGameMessage when Install() was refused; otherwise empty.
 	std::string message;
+	// message's kind and parts: kind None when message is empty, or for a release error this
+	// file does not classify (none of releaseMetadata.h's; the UI then shows message as it is).
+	SessionDetail detail;
 	// The offered release, from Offering on (also in Failed after an offer).
 	std::optional<ReleaseInfo> release;
 	// The argument of Check(): the UI reports NoNewer and Failed only for user-activated checks.

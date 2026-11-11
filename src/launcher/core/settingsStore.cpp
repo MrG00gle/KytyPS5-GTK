@@ -460,15 +460,17 @@ Expected<void, IoError> SaveSettingsStore(SettingsStoreFile&      store,
 		    store.path, error_number,
 		    store.path.string() + " was not saved because it exists but could not be loaded (" +
 		        std::generic_category().message(error_number) +
-		        "). Fix or move the file, or confirm replacing it."});
+		        "). Fix or move the file, or confirm replacing it.",
+		    IoErrorKind::NotLoaded});
 	}
 	if (const auto directory = store.path.parent_path(); !directory.empty()) {
 		std::error_code ec;
 		std::filesystem::create_directories(directory, ec);
 		if (ec) {
-			return MakeUnexpected(IoError {store.path, ec.value(),
-			                               "cannot create the directory " + directory.string() +
-			                                   ": " + ec.message()});
+			return MakeUnexpected(
+			    IoError {store.path, ec.value(),
+			             "cannot create the directory " + directory.string() + ": " + ec.message(),
+			             IoErrorKind::CreateDirectory, directory});
 		}
 	}
 	auto saved = SaveSettings(store.path, settings);

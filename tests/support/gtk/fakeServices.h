@@ -147,7 +147,7 @@ public:
 	kyty::updater::ProcessResult Run(const std::filesystem::path& program,
 	                                 std::vector<std::string>     args,
 	                                 const std::filesystem::path& cwd) override;
-	kyty::core::Expected<void, std::string>
+	kyty::core::Expected<void, kyty::updater::ProcessError>
 	StartDetached(const std::filesystem::path& program, std::vector<std::string> args,
 	              const std::filesystem::path& cwd, const std::filesystem::path& log_file) override;
 

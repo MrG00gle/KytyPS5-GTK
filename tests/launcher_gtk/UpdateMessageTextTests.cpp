@@ -1,20 +1,25 @@
-// The update UI's copies of the updater's sentences (src/launcher/gtk/updateUi.h
-// UpdateMessageKeyFor and UpdateMessageText; phase 7 plan D28, W5; phase 6 p6-u12-5): a real
-// kyty::updater::UpdateSession, on FakeHttpClient and FakeScheduler (no network) with
+// The update UI's texts for the updater's messages (src/launcher/gtk/coreMessageText.h
+// SessionMessageText and updateUi.h UpdateMessageText; phase 9 plan V1, D5, D8; phase 7 plan D28,
+// W5): a real kyty::updater::UpdateSession, on FakeHttpClient and FakeScheduler (no network) with
 // FakeProcessRunner and a fake install gate, is driven into every failure and answer the updater
-// words. For each message the session reports, the test asserts that it has a key whose msgid
-// (and plural msgid) is one of the literals of updateUi.cpp's N_(), _(), NGettext(), and
-// NGettextNoop() calls, read from the source file, that UpdateMessageText equals the gettext
-// lookup of the key with its numbers, and that in the C locale (no catalog: gettext returns the
-// msgid) this is the updater's own sentence again. A rewording of a sentence in src/updater, or of
-// its copy in updateUi.cpp, therefore fails here. No display, no gtk_init.
+// words. For each message the session reports, the test asserts that its text has a msgid (and
+// plural msgid) that is one of the literals of coreMessageText.cpp's N_(), _(), NGettext(), and
+// NGettextNoop() calls, read from the source file, that UpdateMessageText shows that text with its
+// parts, and that in the C locale (no catalog: gettext returns the msgid) this is the updater's
+// own sentence again. A rewording of a sentence in src/updater, or of the launcher's text for it,
+// therefore fails here, and so does a session message without a kind. Every SessionMessage kind
+// is reached once at least; the three that a session cannot reach are checked on outcomes made
+// here. No display, no gtk_init.
 
 #include "launcher/core/httpClient.h"
+#include "launcher/core/text.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/updateUi.h"
 #include "support/fakeHttpClient.h"
 #include "support/fakeScheduler.h"
 #include "support/gtk/fakeServices.h"
+#include "support/gtk/sourceLiterals.h"
 #include "support/noDisplay.h"
 #include "support/tempDir.h"
 #include "support/updaterGenerators.h"
@@ -23,22 +28,20 @@
 #include "updater/core/updatePolicy.h"
 #include "updater/core/updateSession.h"
 
-#include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <functional>
 #include <glib.h>
 #include <map>
 #include <memory>
-#include <optional>
 #include <set>
-#include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -49,9 +52,11 @@ namespace UpdaterGen = KytyTests::UpdaterGen;
 using kyty::core::HttpFailure;
 using kyty::core::HttpRequest;
 using kyty::core::HttpResult;
+using kyty::updater::SessionMessage;
 using kyty::updater::SessionOutcome;
 using kyty::updater::SessionState;
 using kyty::updater::UpdateSession;
+using kyty::updater::WorkspaceStep;
 using KytyTests::FakeHttpClient;
 using KytyTests::FakeResponse;
 using KytyTests::FakeScheduler;
@@ -69,147 +74,49 @@ void Check(bool value, const std::string& message) {
 	}
 }
 
-// ---- The literals of updateUi.cpp
-
-bool IsIdentifier(char c) {
-	return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+std::string ErrorText(int error_number) {
+	return std::generic_category().message(error_number);
 }
 
-// Skips white space and comments from position.
-size_t SkipSpace(const std::string& text, size_t position) {
-	while (position < text.size()) {
-		if (std::isspace(static_cast<unsigned char>(text[position])) != 0) {
-			position++;
-		} else if (text.compare(position, 2, "//") == 0) {
-			position = text.find('\n', position);
-			position = position == std::string::npos ? text.size() : position;
-		} else if (text.compare(position, 2, "/*") == 0) {
-			position = text.find("*/", position);
-			position = position == std::string::npos ? text.size() : position + 2;
-		} else {
-			break;
-		}
-	}
-	return position;
-}
-
-// The string literal at position (adjacent literals joined, the escapes of these sources: \" \\
-// \n), and the position after it; nullopt when no literal starts there.
-std::optional<std::pair<std::string, size_t>> Literal(const std::string& text, size_t position) {
-	std::string value;
-	bool        found = false;
-	position          = SkipSpace(text, position);
-	while (position < text.size() && text[position] == '"') {
-		found = true;
-		for (position++; position < text.size() && text[position] != '"'; position++) {
-			if (text[position] == '\\' && position + 1 < text.size()) {
-				const char escaped = text[++position];
-				value += escaped == 'n' ? '\n' : escaped;
-			} else {
-				value += text[position];
-			}
-		}
-		position = SkipSpace(text, position + 1);
-	}
-	if (!found) {
-		return std::nullopt;
-	}
-	return std::make_pair(value, position);
-}
-
-// Every msgid of the N_(), _(), NGettext(), and NGettextNoop() calls in the file (both forms of
-// the plural ones).
-std::set<std::string> TranslatableLiterals(const fs::path& file) {
-	std::ifstream input(file, std::ios::binary);
-	Check(input.good(), "read " + file.string());
-	std::stringstream buffer;
-	buffer << input.rdbuf();
-	const std::string     text = buffer.str();
-	std::set<std::string> literals;
-	for (size_t i = 0; i < text.size(); i++) {
-		if (!IsIdentifier(text[i]) || (i > 0 && IsIdentifier(text[i - 1]))) {
-			continue;
-		}
-		size_t end = i;
-		while (end < text.size() && IsIdentifier(text[end])) {
-			end++;
-		}
-		const std::string name = text.substr(i, end - i);
-		const size_t      open = SkipSpace(text, end);
-		const bool        known =
-		    name == "_" || name == "N_" || name == "NGettext" || name == "NGettextNoop";
-		if (!known || open >= text.size() || text[open] != '(') {
-			i = end - 1;
-			continue;
-		}
-		auto first = Literal(text, open + 1);
-		if (first) {
-			literals.insert(first->first);
-			if ((name == "NGettext" || name == "NGettextNoop") && first->second < text.size() &&
-			    text[first->second] == ',') {
-				if (auto second = Literal(text, first->second + 1)) {
-					literals.insert(second->first);
-				}
-			}
-		}
-		i = end - 1;
-	}
+const std::set<std::string>& MappingLiterals() {
+	static const std::set<std::string> literals = KytyTests::TranslatableLiterals(
+	    fs::path(KYTY_TEST_SOURCE_DIR) / "src" / "launcher" / "gtk" / "coreMessageText.cpp");
 	return literals;
 }
 
-const std::set<std::string>& UpdateUiLiterals() {
-	static const std::set<std::string> literals = TranslatableLiterals(
-	    fs::path(KYTY_TEST_SOURCE_DIR) / "src" / "launcher" / "gtk" / "updateUi.cpp");
-	return literals;
-}
-
-// ---- The checks
-
-// The gettext lookup of key (g_dgettext or g_dngettext in the kyty-launcher domain) with its
-// numbers.
-std::string Lookup(const kyty::gtk::UpdateMessageKey& key) {
-	using Count               = unsigned long long;
-	const auto&       numbers = key.numbers;
-	const char* const text =
-	    key.plural_msgid != nullptr
-	        ? g_dngettext(GETTEXT_PACKAGE, key.msgid, key.plural_msgid,
-	                      static_cast<unsigned long>(numbers.empty() ? 0 : numbers.back()))
-	        : g_dgettext(GETTEXT_PACKAGE, key.msgid);
-	gchar* formatted = nullptr;
-	switch (numbers.size()) {
-		case 0: formatted = g_strdup(text); break;
-		case 1: formatted = g_strdup_printf(text, static_cast<Count>(numbers[0])); break;
-		default:
-			formatted = g_strdup_printf(text, static_cast<Count>(numbers[0]),
-			                            static_cast<Count>(numbers[1]));
-			break;
-	}
-	std::string result = formatted != nullptr ? formatted : "";
-	g_free(formatted);
-	return result;
-}
-
-std::set<std::string>& KeysSeen() {
-	static std::set<std::string> seen;
+std::set<SessionMessage>& KindsSeen() {
+	static std::set<SessionMessage> seen;
 	return seen;
 }
 
-// message is a sentence the update UI translates: it has a key made of updateUi.cpp's literals,
-// UpdateMessageText shows the lookup of that key, and in the C locale that is message itself.
-void CheckTranslated(const std::string& message, const std::string& name) {
-	const auto key = kyty::gtk::UpdateMessageKeyFor(message);
-	Check(key.has_value() && key->msgid != nullptr,
-	      name + ": \"" + message + "\" has a key (a sentence of updateUi.cpp)");
-	Check(UpdateUiLiterals().count(key->msgid) == 1,
-	      name + ": the msgid \"" + key->msgid + "\" is a literal of updateUi.cpp");
-	Check(key->plural_msgid == nullptr || UpdateUiLiterals().count(key->plural_msgid) == 1,
-	      name + ": the plural msgid is a literal of updateUi.cpp");
-	const std::string shown = kyty::gtk::UpdateMessageText(message);
-	Check(shown == Lookup(*key),
-	      name + ": UpdateMessageText shows the lookup of its key (\"" + shown + "\")");
-	Check(shown == message, name + ": in the C locale the text is the updater's sentence (\"" +
-	                            shown + "\" for \"" + message + "\")");
-	KeysSeen().insert(key->msgid);
+// The outcome's message is shown as the launcher's text: a msgid of coreMessageText.cpp, shown by
+// UpdateMessageText with its parts, and in the C locale the updater's own sentence. The sentence
+// inside the unverified frame is checked the same way.
+void CheckShown(const SessionOutcome& outcome, const std::string& name) {
+	Check(outcome.detail.kind != SessionMessage::None,
+	      name + ": \"" + outcome.message + "\" has a kind");
+	const auto text = kyty::gtk::SessionMessageText(outcome);
+	Check(text.msgid != nullptr && MappingLiterals().count(text.msgid) == 1,
+	      name + ": the msgid is a literal of coreMessageText.cpp");
+	Check(text.plural_msgid == nullptr || MappingLiterals().count(text.plural_msgid) == 1,
+	      name + ": the plural msgid is a literal of coreMessageText.cpp");
+	const std::string shown = kyty::gtk::UpdateMessageText(outcome);
+	Check(shown == kyty::gtk::Render(text), name + ": UpdateMessageText shows the text");
+	Check(shown == outcome.message, name +
+	                                    ": in the C locale the text is the updater's sentence (\"" +
+	                                    shown + "\" for \"" + outcome.message + "\")");
+	KindsSeen().insert(outcome.detail.kind);
+	if (outcome.detail.installed_unverified) {
+		Check(std::string(text.msgid) == "Could not verify the currently installed release. %s",
+		      name + ": the unverified frame");
+		const std::string prefix =
+		    std::string(kyty::updater::kInstalledReleaseUnverifiedMessage) + " ";
+		Check(outcome.message.starts_with(prefix), name + ": the unverified message");
+		auto inner                        = outcome;
+		inner.message                     = outcome.message.substr(prefix.size());
+		inner.detail.installed_unverified = false;
+		CheckShown(inner, name + " (its reason)");
+	}
 }
 
 // ---- An update session on fakes
@@ -294,8 +201,8 @@ FakeResponse Stalled(std::string body, size_t after) {
 	return response;
 }
 
-std::string AssetUrl() {
-	return kyty::updater::AssetDownloadUrl(kLatestTag, kyty::updater::AssetNameForTag(kLatestTag));
+std::string AssetUrl(std::string_view tag = kLatestTag) {
+	return kyty::updater::AssetDownloadUrl(tag, kyty::updater::AssetNameForTag(tag));
 }
 
 struct Session {
@@ -318,7 +225,12 @@ struct Session {
 		config.helper            = install / "kyty_updater";
 		config.launcher_pid      = 4242;
 		config.working_dir       = temp.Path();
-		session                  = std::make_unique<UpdateSession>(
+		Restart();
+	}
+
+	void Restart() {
+		session.reset();
+		session = std::make_unique<UpdateSession>(
 		    config, http, scheduler, runner, gate,
 		    [this](const SessionOutcome& outcome) { outcomes.push_back(outcome); });
 	}
@@ -349,13 +261,14 @@ struct Session {
 };
 
 // The session's message in state after the check (and the installation of the offer when
-// install_offer), checked as a translated sentence.
-void CheckSessionMessage(Session& session, bool install_offer, SessionState state,
-                         const std::string& name) {
-	const auto& last = session.Run(install_offer);
+// install_offer), checked as a shown text; the last outcome.
+SessionOutcome CheckSessionMessage(Session& session, bool install_offer, SessionState state,
+                                   const std::string& name) {
+	const auto last = session.Run(install_offer);
 	Check(last.state == state && !last.message.empty(),
 	      name + ": the session ends with a message (\"" + last.message + "\")");
-	CheckTranslated(last.message, name);
+	CheckShown(last, name);
+	return last;
 }
 
 // ---- Tests
@@ -376,15 +289,26 @@ void TestCheckFailures() {
 	for (const int status: {404, 500}) {
 		Session session;
 		session.Latest(Status(status));
-		CheckSessionMessage(session, false, SessionState::Failed,
-		                    "HTTP status " + std::to_string(status) + " for the check");
+		const auto last =
+		    CheckSessionMessage(session, false, SessionState::Failed,
+		                        "HTTP status " + std::to_string(status) + " for the check");
+		Check(last.detail.number == status, "the check's HTTP status is a part");
 	}
 	{
 		Session session;
 		session.Latest(Stalled(UpdaterGen::ReleaseDocument(Release(kLatestTag, kLaterDate)), 10));
-		CheckSessionMessage(session, false, SessionState::Failed, "a stalled check");
-		Check(session.outcomes.back().message.find(" 15 seconds.") != std::string::npos,
+		const auto last =
+		    CheckSessionMessage(session, false, SessionState::Failed, "a stalled check");
+		Check(last.message.find(" 15 seconds.") != std::string::npos && last.detail.number == 15,
 		      "the stalled check names 15 seconds");
+	}
+	{
+		Session    session; // no scripted response: the fake answers with a network failure
+		const auto last =
+		    CheckSessionMessage(session, false, SessionState::Failed, "a network failure");
+		Check(last.detail.kind == SessionMessage::CheckNetwork && !last.detail.text.empty() &&
+		          last.message.ends_with(last.detail.text),
+		      "the network's reason is the dynamic part");
 	}
 	{
 		Session session;
@@ -397,6 +321,16 @@ void TestCheckFailures() {
 		draft.draft   = "true";
 		session.Latest(Ok(draft));
 		CheckSessionMessage(session, false, SessionState::Failed, "a draft release");
+	}
+	{
+		// A relative installation directory: refused before any request.
+		Session session;
+		session.config.install_dir = "relative/install";
+		session.Restart();
+		const auto last = CheckSessionMessage(session, false, SessionState::Failed,
+		                                      "a relative installation directory");
+		Check(last.detail.text == "install_dir" && last.detail.path == "relative/install",
+		      "the field and its path are the parts");
 	}
 }
 
@@ -423,37 +357,25 @@ void TestCheckAnswers() {
 		session.Installed(Ok(Release(kInstalledTag, kInstalledDate)));
 		CheckSessionMessage(session, false, SessionState::Failed, "an invalid asset");
 	}
-	// The session cannot reach the unknown order: Compare() answers Unknown only for a release
-	// without a tag or a publication time, which the check refuses before it compares (invalid,
-	// unstable, or unverified). Its key is checked on the updater's constant.
-	CheckTranslated(std::string(kyty::updater::kUnknownReleaseOrderMessage), "the unknown order");
-	// The installed release cannot be verified: the reason is shown as a sentence of its own.
+	// The installed release cannot be verified: its reason is shown as a sentence of its own.
 	{
 		Session session;
 		session.Latest(Ok(Release(kLatestTag, kLaterDate)));
 		session.Installed(Status(404));
-		const auto&       last = session.Run(false);
-		const std::string prefix =
-		    std::string(kyty::updater::kInstalledReleaseUnverifiedMessage) + " ";
-		Check(last.state == SessionState::Failed && last.message.starts_with(prefix),
-		      "an unverified installed release: \"" + last.message + "\"");
-		const std::string reason = last.message.substr(prefix.size());
-		CheckTranslated(reason, "the reason of an unverified installed release");
-		Check(!kyty::gtk::UpdateMessageKeyFor(last.message),
-		      "the unverified message with its reason has no key of its own");
-		Check(UpdateUiLiterals().count("Could not verify the currently installed release. %s") == 1,
-		      "updateUi.cpp translates the unverified frame");
-		Check(kyty::gtk::UpdateMessageText(last.message) == last.message,
-		      "the unverified message is shown as the updater says it, in the C locale");
+		const auto last =
+		    CheckSessionMessage(session, false, SessionState::Failed, "an unverified release");
+		Check(last.detail.installed_unverified && last.detail.kind == SessionMessage::CheckStatus,
+		      "the unverified release's reason has its own kind");
 	}
-	// Anything else (a network reason) is shown as it is.
 	{
-		Session     session; // no scripted response: the fake answers with a network failure
-		const auto& last = session.Run(false);
-		Check(last.state == SessionState::Failed && !kyty::gtk::UpdateMessageKeyFor(last.message),
-		      "a network failure's reason has no key: \"" + last.message + "\"");
-		Check(kyty::gtk::UpdateMessageText(last.message) == last.message,
-		      "a reason is shown as it is");
+		Session session;
+		session.Latest(Ok(Release(kLatestTag, kLaterDate)));
+		session.Installed(Ok(Release("2026.01.01-0000000", kInstalledDate)));
+		const auto last = CheckSessionMessage(session, false, SessionState::Failed,
+		                                      "GitHub answers with another release");
+		Check(last.detail.kind == SessionMessage::OtherRelease &&
+		          last.detail.text == "2026.01.01-0000000",
+		      "the other release's tag is the part");
 	}
 }
 
@@ -469,13 +391,15 @@ void TestDownloadFailures() {
 		Session session;
 		session.ScriptNewer();
 		session.Asset(Stalled(Package(), 100));
-		CheckSessionMessage(session, true, SessionState::Failed, "a stalled download");
-		Check(session.outcomes.back().message.find(" 30 seconds.") != std::string::npos,
+		const auto last =
+		    CheckSessionMessage(session, true, SessionState::Failed, "a stalled download");
+		Check(last.message.find(" 30 seconds.") != std::string::npos,
 		      "the stalled download names 30 seconds");
 	}
 	for (const auto& [failure, name]: std::vector<std::pair<HttpFailure, std::string>> {
 	         {HttpFailure::TimedOut, "a timed-out download"},
-	         {HttpFailure::Cancelled, "a cancelled download"}}) {
+	         {HttpFailure::Cancelled, "a cancelled download"},
+	         {HttpFailure::Network, "a network failure of the download"}}) {
 		Session session;
 		session.ScriptNewer();
 		session.http.failures[AssetUrl()] = failure;
@@ -485,8 +409,10 @@ void TestDownloadFailures() {
 		Session session;
 		session.ScriptNewer();
 		session.Asset(Ok(Package().substr(0, 3000)));
-		CheckSessionMessage(session, true, SessionState::Failed, "a short download");
-		Check(session.outcomes.back().message.find("(3000 of 5000 bytes)") != std::string::npos,
+		const auto last =
+		    CheckSessionMessage(session, true, SessionState::Failed, "a short download");
+		Check(last.message.find("(3000 of 5000 bytes)") != std::string::npos &&
+		          last.detail.received == 3000 && last.detail.size == 5000,
 		      "the short download names its bytes");
 	}
 	{
@@ -503,74 +429,170 @@ void TestDownloadFailures() {
 		session.Asset(Ok(corrupt));
 		CheckSessionMessage(session, true, SessionState::Failed, "a download with a wrong digest");
 	}
-}
-
-void TestGameRunning() {
 	{
-		// Install while a game runs: refused, the offer stays.
-		Session session;
-		session.ScriptNewer();
-		session.gate.can_install = false;
-		CheckSessionMessage(session, true, SessionState::Offering, "Install while a game runs");
-	}
-	{
-		// A game started while the release was prepared: cancelled before the handoff.
+		// A write of the package fails (an injected ENOSPC).
 		Session session;
 		session.ScriptNewer();
 		session.Asset(Ok(Package()));
+		kyty::updater::SetDownloadWriteFaultForTesting([] { return ENOSPC; });
+		const auto last =
+		    CheckSessionMessage(session, true, SessionState::Failed, "a failed package write");
+		kyty::updater::SetDownloadWriteFaultForTesting({});
+		Check(last.detail.kind == SessionMessage::DownloadWrite &&
+		          last.detail.error_number == ENOSPC,
+		      "the package write's errno is the part");
+	}
+	{
+		// A release tag that is not a URL path segment cannot be downloaded.
+		Session session;
+		session.Latest(Ok(Release("..", kLaterDate)));
+		session.Installed(Ok(Release(kInstalledTag, kInstalledDate)));
+		const auto last =
+		    CheckSessionMessage(session, true, SessionState::Failed, "a refused asset URL");
+		Check(last.detail.kind == SessionMessage::RefusedUrl && !last.detail.text.empty(),
+		      "the refused URL is the part");
+	}
+}
+
+void TestWorkspaceFailures() {
+	for (const auto step: {WorkspaceStep::CreateWorkspace, WorkspaceStep::CopyHelper,
+	                       WorkspaceStep::CreatePayload}) {
+		Session session;
+		session.ScriptNewer();
+		session.Asset(Ok(Package()));
+		kyty::updater::SetUpdateWorkspaceFaultForTesting(
+		    [step](WorkspaceStep current) { return current == step ? EACCES : 0; });
+		const auto last =
+		    CheckSessionMessage(session, true, SessionState::Failed,
+		                        "workspace step " + std::to_string(static_cast<int>(step)));
+		kyty::updater::SetUpdateWorkspaceFaultForTesting({});
+		Check(last.detail.error_number == EACCES && last.message.ends_with(ErrorText(EACCES)),
+		      "the workspace step's errno is the part");
+	}
+}
+
+void TestProcessFailures() {
+	using kyty::updater::ProcessResult;
+	const auto run = [](const std::string& name, const std::function<void(Session&)>& setup) {
+		Session session;
+		session.ScriptNewer();
+		session.Asset(Ok(Package()));
+		setup(session);
+		return CheckSessionMessage(session, true, SessionState::Failed, name);
+	};
+	run("tar exit code with standard error", [](Session& session) {
+		session.runner.run_results.push_back(
+		    ProcessResult {2 << 8, "", "tar: This does not look like a tar archive\n"});
+	});
+	run("tar exit code", [](Session& session) {
+		session.runner.run_results.push_back(ProcessResult {2 << 8, "", ""});
+	});
+	run("tar signal",
+	    [](Session& session) { session.runner.run_results.push_back(ProcessResult {9, "", ""}); });
+	run("tar stopped", [](Session& session) {
+		session.runner.run_results.push_back(ProcessResult {0x137f, "", ""});
+	});
+	run("tar missing", [](Session& session) {
+		ProcessResult result;
+		result.error                = "Cannot start /usr/bin/tar: " + ErrorText(ENOENT);
+		result.failure.kind         = kyty::updater::ProcessErrorKind::Spawn;
+		result.failure.program      = "/usr/bin/tar";
+		result.failure.error_number = ENOENT;
+		result.failure.message      = result.error;
+		session.runner.run_results.push_back(result);
+	});
+	run("a runner's text without a kind", [](Session& session) {
+		session.runner.run_results.push_back(ProcessResult {-1, "the runner's own words", ""});
+	});
+	run("validation", [](Session& session) {
+		session.runner.run_results.push_back(ProcessResult {0, "", ""});
+		session.runner.run_results.push_back(
+		    ProcessResult {1 << 8, "", "Release is missing an executable: kyty_updater\n"});
+	});
+	run("a game started before the handoff", [](Session& session) {
 		session.runner.on_run = [&session](const fs::path& program) {
 			if (program.filename() == "kyty_updater") {
 				session.gate.can_install = false;
 			}
 		};
-		CheckSessionMessage(session, true, SessionState::Failed, "a game started meanwhile");
-	}
+	});
+	run("the installer cannot start", [](Session& session) {
+		session.runner.detached_errors.push_back("Cannot start kyty_updater: " + ErrorText(EACCES));
+	});
 }
 
-// Every fixed message and every sentence with numbers was reached once at least.
+void TestGameRunning() {
+	// Install while a game runs: refused, the offer stays.
+	Session session;
+	session.ScriptNewer();
+	session.gate.can_install = false;
+	CheckSessionMessage(session, true, SessionState::Offering, "Install while a game runs");
+}
+
+// The kinds a session cannot reach: Compare() answers Unknown only for a release without a tag
+// or a publication time, which the check refuses before it compares; the package file is new in a
+// new workspace (O_EXCL cannot fail on it); and the session drops the verifier after Finish().
+// Their outcomes are made here with the updater's sentences.
+void TestUnreachableKinds() {
+	SessionOutcome order;
+	order.state       = SessionState::Failed;
+	order.message     = std::string(kyty::updater::kUnknownReleaseOrderMessage);
+	order.detail.kind = SessionMessage::UnknownReleaseOrder;
+	CheckShown(order, "the unknown order");
+
+	SessionOutcome create;
+	create.state               = SessionState::Failed;
+	create.message             = "Cannot create /i/.kyty-update-x/package: " + ErrorText(EEXIST);
+	create.detail.kind         = SessionMessage::DownloadCreate;
+	create.detail.path         = "/i/.kyty-update-x/package";
+	create.detail.error_number = EEXIST;
+	CheckShown(create, "the package cannot be created");
+
+	SessionOutcome finished;
+	finished.state       = SessionState::Failed;
+	finished.message     = "The download is already finished.";
+	finished.detail.kind = SessionMessage::DownloadFinished;
+	CheckShown(finished, "the download is already finished");
+}
+
+// Every kind was shown once at least, nothing is shown without a message, and a message without a
+// kind is shown as it is.
 void TestCoverage() {
-	const std::vector<std::string_view> expected = {
-	    kyty::updater::kNoNewerReleaseMessage,
-	    kyty::updater::kUnknownReleaseOrderMessage,
-	    kyty::updater::kCloseGameMessage,
-	    kyty::updater::kGameRunningCancelledMessage,
-	    kyty::updater::kInvalidReleaseMessage,
-	    kyty::updater::kUnstableReleaseMessage,
-	    kyty::updater::kInvalidAssetMessage,
-	    kyty::updater::kMissingAssetMessage,
-	    kyty::updater::kDownloadTooLargeMessage,
-	    kyty::updater::kDownloadDigestMessage,
-	    kyty::updater::kDownloadAbortedMessage,
-	    "The update response is larger than 2 MiB.",
-	    "The update check timed out.",
-	    "The update check was cancelled.",
-	    "The download timed out.",
-	    "The update check failed with HTTP status %llu.",
-	    "The download failed with HTTP status %llu.",
-	    "The update check received no data for %llu second.",
-	    "The download received no data for %llu second.",
-	    "The downloaded file is smaller than the release asset (%llu of %llu byte).",
-	};
-	for (const auto msgid: expected) {
-		Check(KeysSeen().count(std::string(msgid)) == 1,
-		      "a session message reached the key \"" + std::string(msgid) + "\"");
+	for (int kind = static_cast<int>(SessionMessage::None) + 1;
+	     kind <= static_cast<int>(SessionMessage::InstallerNotStarted); kind++) {
+		Check(KindsSeen().count(static_cast<SessionMessage>(kind)) == 1,
+		      "the session message kind " + std::to_string(kind) + " was shown");
 	}
-	Check(KeysSeen().size() == expected.size(), "every key the session reached is expected (" +
-	                                                std::to_string(KeysSeen().size()) + " keys)");
+	SessionOutcome nothing;
+	nothing.state = SessionState::Failed;
+	Check(kyty::gtk::SessionMessageText(nothing).msgid == nullptr &&
+	          kyty::gtk::UpdateMessageText(nothing).empty(),
+	      "no message: no text (a cancel)");
+	// A message without a kind (a release error the session does not classify) is never dropped.
+	SessionOutcome unclassified;
+	unclassified.state   = SessionState::Failed;
+	unclassified.message = "A release error without a kind \xff.";
+	Check(kyty::gtk::SessionMessageText(unclassified).msgid == nullptr &&
+	          kyty::gtk::UpdateMessageText(unclassified) ==
+	              kyty::core::SanitizeUtf8(unclassified.message),
+	      "a message without a kind is shown as it is, with invalid UTF-8 replaced");
 }
 
 } // namespace
 
 int main() {
 	KytyTests::CheckNoDisplay("UpdateMessageTextTests");
-	Check(!UpdateUiLiterals().empty(), "updateUi.cpp has translatable literals");
+	Check(!MappingLiterals().empty(), "coreMessageText.cpp has translatable literals");
 	TestCheckFailures();
 	TestCheckAnswers();
 	TestDownloadFailures();
+	TestWorkspaceFailures();
+	TestProcessFailures();
 	TestGameRunning();
+	TestUnreachableKinds();
 	TestCoverage();
-	std::printf(
-	    "UpdateMessageTextTests: all tests passed (%zu keys, %zu literals of updateUi.cpp)\n",
-	    KeysSeen().size(), UpdateUiLiterals().size());
+	std::printf("UpdateMessageTextTests: all tests passed (%zu kinds, %zu literals of "
+	            "coreMessageText.cpp)\n",
+	            KindsSeen().size(), MappingLiterals().size());
 	return 0;
 }

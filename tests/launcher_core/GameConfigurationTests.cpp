@@ -597,13 +597,17 @@ void TestMappingScope() {
 	c.input_mapping_custom = false;
 	c.user_id              = 254;
 	Check(Validate(c, ValidationScope::Game)->field == "user_id" &&
-	          Validate(c, ValidationScope::Global)->field == "user_id",
+	          Validate(c, ValidationScope::Global)->field == "user_id" &&
+	          Validate(c)->rule == kyty::core::ValidationRule::Field &&
+	          Validate(c)->entries.empty(),
 	      "the user ID rule in both scopes");
 	c.user_id              = 1000;
 	c.printf_direction     = LogDirection::File;
 	c.printf_output_file   = "";
 	c.input_mapping_custom = true;
-	Check(Validate(c, ValidationScope::Game)->field == "printf_output_file",
+	Check(Validate(c, ValidationScope::Game)->field == "printf_output_file" &&
+	          Validate(c, ValidationScope::Game)->rule ==
+	              kyty::core::ValidationRule::MissingOutputPath,
 	      "the output path rule in Game scope");
 	c.printf_output_file = "p";
 	c.host_input_mapping = {"Cross=J"};
@@ -636,6 +640,10 @@ void TestInvalidMappingEntries() {
 	c.host_input_mapping = mapping;
 	const auto error     = Validate(c);
 	Check(error.has_value() && error->field == "host_input_mapping", "the mapping is invalid");
+	// Phase 9 V1: the rule and the invalid entries themselves.
+	Check(error->rule == kyty::core::ValidationRule::InvalidMappingEntries &&
+	          error->entries == expected,
+	      "the mapping rule with its entries");
 	CheckText(error->message,
 	          "Each input mapping entry must have the form Name=Value with a non-empty name and "
 	          "value. Invalid: entry 1 \" leading space\", entry 3 \"\", entry 5 \"=J\", entry 7 "

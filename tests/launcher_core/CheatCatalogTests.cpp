@@ -127,6 +127,8 @@ void TestParseIndex() {
 	Check(index.files[3].title == "ideographic space", "Unicode whitespace is trimmed");
 	// Invalid: "name " (space before '='), lower-case ID, wrong format, no separator.
 	Check(index.error == "Skipped 4 invalid cheat index entries.", "invalid lines: " + index.error);
+	Check(index.problem == kyty::core::CheatIndexProblem::SkippedEntries && index.skipped == 4,
+	      "the problem and the number of invalid lines");
 
 	Check(ParseCheatIndex("PPSA01234_1.0_a.json=x", "json", "PPSA01234").error.empty(),
 	      "a clean index has no error");
@@ -136,7 +138,8 @@ void TestParseIndex() {
 	         {std::string(kMaxCheatIndexBytes + 1, '\n'), "json"},
 	     }) {
 		const auto refused = ParseCheatIndex(data, format, "PPSA01234");
-		Check(refused.files.empty() && refused.error == "Invalid cheat index.",
+		Check(refused.files.empty() && refused.error == "Invalid cheat index." &&
+		          refused.problem == kyty::core::CheatIndexProblem::Invalid,
 		      "refused index (" + format + ", " + std::to_string(data.size()) + " bytes)");
 	}
 	Check(
@@ -222,6 +225,11 @@ void TestLoad() {
 	          "PPSA01234_01.000_a.mc4",
 	      "merged and sorted by version, format, name: " + Names(result.files));
 	Check(result.error == "MC4: Skipped 1 invalid cheat index entries.", "error: " + result.error);
+	Check(result.failures.size() == 1 && result.failures[0].format == "mc4" &&
+	          result.failures[0].problem == kyty::core::CheatIndexProblem::SkippedEntries &&
+	          result.failures[0].skipped == 1 &&
+	          result.failures[0].fetch.failure == kyty::core::HttpFailure::None,
+	      "the failure's parts");
 
 	const auto& requests = harness.http.Requests();
 	Check(requests.size() == 3, "three index requests");
@@ -258,6 +266,16 @@ void TestFailures() {
 	                      "MC4: Unexpected response from the cheat repository (HTTP 503).\n"
 	                      "SHN: Cheat download exceeds the size limit of 2 MiB.",
 	      "one line per failed index, in format order: " + result.error);
+	using kyty::core::HttpFailure;
+	Check(result.failures.size() == 3 && result.failures[0].format == "json" &&
+	          result.failures[0].fetch.failure == HttpFailure::Network &&
+	          result.failures[0].fetch.detail == "connection refused" &&
+	          result.failures[1].format == "mc4" &&
+	          result.failures[1].fetch.failure == HttpFailure::Status &&
+	          result.failures[1].fetch.status == 503 && result.failures[2].format == "shn" &&
+	          result.failures[2].fetch.failure == HttpFailure::TooLarge &&
+	          result.failures[2].fetch.limit_mib == 2,
+	      "the failures' parts, in format order");
 
 	// Exactly 2 MiB is accepted; an empty body is an invalid index.
 	Harness limits;
@@ -271,6 +289,9 @@ void TestFailures() {
 	Check(Names(accepted.files) == "PPSA01234_1.0_a.json PPSA01234_1.0_b.shn",
 	      "2 MiB and a 2xx status are accepted: " + Names(accepted.files));
 	Check(accepted.error == "MC4: Invalid cheat index.", "an empty index: " + accepted.error);
+	Check(accepted.failures.size() == 1 &&
+	          accepted.failures[0].problem == kyty::core::CheatIndexProblem::Invalid,
+	      "an empty index's problem");
 }
 
 void TestTimeout() {
@@ -300,6 +321,10 @@ void TestTimeout() {
 			Check(result.files.empty() &&
 			          result.error == "JSON: Cheat download timed out after 30 seconds.",
 			      what + " is too late: " + result.error);
+			Check(result.failures.size() == 1 &&
+			          result.failures[0].fetch.failure == kyty::core::HttpFailure::TimedOut &&
+			          result.failures[0].fetch.seconds == 30,
+			      what + ": the timeout's seconds");
 		}
 		Check(harness.scheduler.Now() <= milliseconds {30000}, "nothing waits past 30 s");
 	}

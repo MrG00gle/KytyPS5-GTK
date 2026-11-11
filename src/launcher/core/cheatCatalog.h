@@ -16,6 +16,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -56,9 +57,18 @@ std::string RemoteCheatFileUrl(const RemoteCheatFile& file);
 // lists the others disabled.
 bool IsSupportedRemoteCheatFile(const RemoteCheatFile& file);
 
+// What is wrong with an index, for the GTK layer's own words (plan V1).
+enum class CheatIndexProblem {
+	None,
+	Invalid,        // "Invalid cheat index."
+	SkippedEntries, // "Skipped <skipped> invalid cheat index entries."
+};
+
 struct CheatIndex {
 	std::vector<RemoteCheatFile> files;
 	std::string                  error; // "" when every line was usable
+	CheatIndexProblem            problem = CheatIndexProblem::None;
+	std::size_t                  skipped = 0; // SkippedEntries: the invalid lines
 };
 
 // The files of title_id in the index of format, in index order (Qt's ParseIndex). The bytes are
@@ -78,20 +88,46 @@ CheatIndex ParseCheatIndex(std::string_view bytes, std::string_view format,
 // launcher's SameOriginRedirectPolicy).
 HttpRequest CheatRequest(std::string url, uint64_t max_bytes);
 
+// Why a collection download failed (plan V1: the GTK layer has its own text per failure).
+struct CheatFetchError {
+	HttpFailure failure   = HttpFailure::None; // None: the download succeeded
+	int         status    = 0;                 // Status: the HTTP status
+	uint64_t    limit_mib = 0;                 // TooLarge: max_bytes in MiB
+	int64_t     seconds   = 0;                 // TimedOut: kCheatRequestTimeout in seconds
+	std::string detail;                        // Network, Stalled: the client's message
+	std::string message;                       // DescribeCheatFetchFailure
+
+	friend bool operator==(const CheatFetchError&, const CheatFetchError&) = default;
+};
+
 // Why a collection download failed, for a result other than HttpFailure::None ("" for None):
 // "Cheat download failed: <message>.", "Unexpected response from the cheat repository (HTTP
 // <status>).", "Cheat download exceeds the size limit of <n> MiB.", "Cheat download timed out
 // after 30 seconds.", "Cheat download stalled: <message>.", or "Cheat download was cancelled.".
 std::string DescribeCheatFetchFailure(const HttpResult& result, uint64_t max_bytes);
 
+// The same failure with its parts; message is DescribeCheatFetchFailure.
+CheatFetchError CheatFetchErrorFor(const HttpResult& result, uint64_t max_bytes);
+
 // Starts one collection download through http (CheatRequest(url, max_bytes)). done runs once,
-// from an HttpClient callback, with the body and "" when the request succeeded (a 2xx response
-// within the limits), else with "" and DescribeCheatFetchFailure. The body is checked against
-// max_bytes as it arrives too, so a client that delivers more ends the request (TooLarge).
-// Cancelling the returned request with http.Cancel still runs done (with the Cancelled text), so
-// callers that cancel must ignore that call.
+// from an HttpClient callback, with the body and a CheatFetchError of HttpFailure::None when the
+// request succeeded (a 2xx response within the limits), else with "" and CheatFetchErrorFor. The
+// body is checked against max_bytes as it arrives too, so a client that delivers more ends the
+// request (TooLarge). Cancelling the returned request with http.Cancel still runs done (with the
+// Cancelled failure), so callers that cancel must ignore that call.
 RequestId StartCheatDownload(HttpClient& http, std::string url, uint64_t max_bytes,
-                             std::function<void(std::string body, std::string error)> done);
+                             std::function<void(std::string body, CheatFetchError error)> done);
+
+// An index that failed or had invalid lines: the download failure (fetch.failure is not None),
+// else the index's problem.
+struct CheatIndexFailure {
+	std::string       format; // "json", "mc4", or "shn"
+	CheatFetchError   fetch;
+	CheatIndexProblem problem = CheatIndexProblem::None;
+	std::size_t       skipped = 0;
+
+	friend bool operator==(const CheatIndexFailure&, const CheatIndexFailure&) = default;
+};
 
 struct CheatCatalogResult {
 	// The title's files of every index, by version (descending, byte order), then format, then
@@ -100,6 +136,8 @@ struct CheatCatalogResult {
 	// One line "<FORMAT>: <reason>" per index that failed or had invalid lines, in kCheatFormats
 	// order, joined by LF; "" when every index loaded cleanly.
 	std::string error;
+	// The same indexes with their parts, in the same order (empty exactly when error is "").
+	std::vector<CheatIndexFailure> failures;
 };
 
 // Moves the files whose version equals installed_version to the front, keeping the order inside

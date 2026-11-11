@@ -118,7 +118,8 @@ CheatIndex ParseCheatIndex(std::string_view bytes, std::string_view format,
                            std::string_view title_id) {
 	CheatIndex index;
 	if (!IsFormat(format) || bytes.empty() || bytes.size() > kMaxCheatIndexBytes) {
-		index.error = "Invalid cheat index.";
+		index.error   = "Invalid cheat index.";
+		index.problem = CheatIndexProblem::Invalid;
 		return index;
 	}
 	const auto       id   = NormalizeTitleId(title_id);
@@ -151,7 +152,9 @@ CheatIndex ParseCheatIndex(std::string_view bytes, std::string_view format,
 		rest.remove_prefix(end + 1);
 	}
 	if (invalid != 0) {
-		index.error = "Skipped " + std::to_string(invalid) + " invalid cheat index entries.";
+		index.error   = "Skipped " + std::to_string(invalid) + " invalid cheat index entries.";
+		index.problem = CheatIndexProblem::SkippedEntries;
+		index.skipped = invalid;
 	}
 	return index;
 }
@@ -166,27 +169,47 @@ HttpRequest CheatRequest(std::string url, uint64_t max_bytes) {
 	return request;
 }
 
-std::string DescribeCheatFetchFailure(const HttpResult& result, uint64_t max_bytes) {
+CheatFetchError CheatFetchErrorFor(const HttpResult& result, uint64_t max_bytes) {
+	CheatFetchError error;
+	error.failure = result.failure;
 	switch (result.failure) {
-		case HttpFailure::None: return {};
-		case HttpFailure::Network: return "Cheat download failed: " + result.message + ".";
+		case HttpFailure::None: return error;
+		case HttpFailure::Network:
+			error.detail  = result.message;
+			error.message = "Cheat download failed: " + result.message + ".";
+			return error;
 		case HttpFailure::Status:
-			return "Unexpected response from the cheat repository (HTTP " +
-			       std::to_string(result.status) + ").";
+			error.status  = result.status;
+			error.message = "Unexpected response from the cheat repository (HTTP " +
+			                std::to_string(result.status) + ").";
+			return error;
 		case HttpFailure::TooLarge:
-			return "Cheat download exceeds the size limit of " + std::to_string(max_bytes >> 20u) +
-			       " MiB.";
-		case HttpFailure::Stalled: return "Cheat download stalled: " + result.message + ".";
+			error.limit_mib = max_bytes >> 20u;
+			error.message   = "Cheat download exceeds the size limit of " +
+			                  std::to_string(error.limit_mib) + " MiB.";
+			return error;
+		case HttpFailure::Stalled:
+			error.detail  = result.message;
+			error.message = "Cheat download stalled: " + result.message + ".";
+			return error;
 		case HttpFailure::TimedOut:
-			return "Cheat download timed out after " +
-			       std::to_string(kCheatRequestTimeout.count() / 1000) + " seconds.";
+			error.seconds = kCheatRequestTimeout.count() / 1000;
+			error.message =
+			    "Cheat download timed out after " + std::to_string(error.seconds) + " seconds.";
+			return error;
 		case HttpFailure::Cancelled: break;
 	}
-	return "Cheat download was cancelled.";
+	error.failure = HttpFailure::Cancelled;
+	error.message = "Cheat download was cancelled.";
+	return error;
+}
+
+std::string DescribeCheatFetchFailure(const HttpResult& result, uint64_t max_bytes) {
+	return CheatFetchErrorFor(result, max_bytes).message;
 }
 
 RequestId StartCheatDownload(HttpClient& http, std::string url, uint64_t max_bytes,
-                             std::function<void(std::string body, std::string error)> done) {
+                             std::function<void(std::string body, CheatFetchError error)> done) {
 	struct Download {
 		std::string body;
 		bool        too_large = false;
@@ -205,9 +228,9 @@ RequestId StartCheatDownload(HttpClient& http, std::string url, uint64_t max_byt
 	    [download, max_bytes, done = std::move(done)](const HttpResult& result) {
 		    if (download->too_large) {
 			    HttpResult too_large {HttpFailure::TooLarge, result.status, {}};
-			    done({}, DescribeCheatFetchFailure(too_large, max_bytes));
+			    done({}, CheatFetchErrorFor(too_large, max_bytes));
 		    } else if (result.failure != HttpFailure::None) {
-			    done({}, DescribeCheatFetchFailure(result, max_bytes));
+			    done({}, CheatFetchErrorFor(result, max_bytes));
 		    } else {
 			    done(std::move(download->body), {});
 		    }
@@ -229,11 +252,12 @@ struct CheatCatalog::State {
 	HttpClient&                                   http;
 	LoadedFn                                      on_loaded;
 	uint64_t                                      generation = 0;
-	std::array<RequestId, kCheatFormats.size()>   requests {};
-	std::array<std::string, kCheatFormats.size()> errors;
-	std::vector<RemoteCheatFile>                  files;
-	std::string                                   title_id;
-	std::size_t                                   pending = 0;
+	std::array<RequestId, kCheatFormats.size()>         requests {};
+	std::array<std::string, kCheatFormats.size()>       errors;
+	std::array<CheatIndexFailure, kCheatFormats.size()> failures;
+	std::vector<RemoteCheatFile>                        files;
+	std::string                                         title_id;
+	std::size_t                                         pending = 0;
 
 	void CancelRequests() {
 		for (auto& request: requests) {
@@ -246,13 +270,21 @@ struct CheatCatalog::State {
 		generation++;
 	}
 
-	void IndexDone(std::size_t index, const std::string& body, std::string error) {
+	void IndexDone(std::size_t index, const std::string& body, CheatFetchError fetch) {
 		requests[index] = 0;
-		if (error.empty()) {
+		auto& failure   = failures[index];
+		failure         = CheatIndexFailure {std::string(kCheatFormats[index]), {}, {}, 0};
+		std::string error;
+		if (fetch.failure == HttpFailure::None) {
 			auto parsed = ParseCheatIndex(body, kCheatFormats[index], title_id);
 			files.insert(files.end(), std::make_move_iterator(parsed.files.begin()),
 			             std::make_move_iterator(parsed.files.end()));
-			error = std::move(parsed.error);
+			error           = std::move(parsed.error);
+			failure.problem = parsed.problem;
+			failure.skipped = parsed.skipped;
+		} else {
+			error         = fetch.message;
+			failure.fetch = std::move(fetch);
 		}
 		errors[index] = std::move(error);
 		if (--pending > 0) {
@@ -275,6 +307,7 @@ struct CheatCatalog::State {
 			if (!errors[i].empty()) {
 				result.error +=
 				    (result.error.empty() ? "" : "\n") + Upper(kCheatFormats[i]) + ": " + errors[i];
+				result.failures.push_back(failures[i]);
 			}
 		}
 		if (on_loaded) {
@@ -297,19 +330,20 @@ void CheatCatalog::Load(std::string_view title_id) {
 	state.CancelRequests();
 	state.files.clear();
 	state.errors                          = {};
+	state.failures                        = {};
 	state.title_id                        = std::string(title_id);
 	state.pending                         = kCheatFormats.size();
 	const std::weak_ptr<State> weak       = m_state;
 	const auto                 generation = state.generation;
 	for (std::size_t i = 0; i < kCheatFormats.size(); i++) {
-		state.requests[i] =
-		    StartCheatDownload(state.http, CheatIndexUrl(kCheatFormats[i]), kMaxCheatIndexBytes,
-		                       [weak, generation, i](const std::string& body, std::string error) {
-			                       const auto locked = weak.lock();
-			                       if (locked && locked->generation == generation) {
-				                       locked->IndexDone(i, body, std::move(error));
-			                       }
-		                       });
+		state.requests[i] = StartCheatDownload(
+		    state.http, CheatIndexUrl(kCheatFormats[i]), kMaxCheatIndexBytes,
+		    [weak, generation, i](const std::string& body, CheatFetchError error) {
+			    const auto locked = weak.lock();
+			    if (locked && locked->generation == generation) {
+				    locked->IndexDone(i, body, std::move(error));
+			    }
+		    });
 	}
 }
 

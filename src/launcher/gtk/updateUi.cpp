@@ -3,16 +3,13 @@
 #include "launcher/core/text.h"
 #include "launcher/gtk/alerts.h"
 #include "launcher/gtk/backgroundTask.h"
+#include "launcher/gtk/coreMessageText.h"
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/services/desktopLauncher.h"
-#include "updater/core/downloadVerifier.h"
-#include "updater/core/releaseMetadata.h"
 #include "updater/core/updatePolicy.h"
 #include "updater/core/workspaceCleanup.h"
 
-#include <charconv>
 #include <cstdarg>
-#include <initializer_list>
 #include <optional>
 #include <system_error>
 #include <unistd.h>
@@ -77,106 +74,6 @@ bool Busy(SessionState state) {
 	return false;
 }
 
-// The updater's fixed messages and their translatable texts (plan D46; phase 7 plan D28: the
-// launcher_gtk_update_message_text test drives a real updater::UpdateSession into each of them).
-struct FixedMessage {
-	std::string_view core;
-	const char*      text;
-};
-
-const FixedMessage kFixedMessages[] = {
-    {updater::kNoNewerReleaseMessage, N_("No newer release is available.")},
-    {updater::kUnknownReleaseOrderMessage,
-     N_("Could not determine whether the available release is newer.")},
-    {updater::kCloseGameMessage, N_("Close the running game first.")},
-    {updater::kGameRunningCancelledMessage,
-     N_("The update was cancelled. Close the running game first.")},
-    {updater::kInvalidReleaseMessage, N_("Invalid GitHub release response.")},
-    {updater::kUnstableReleaseMessage, N_("The release is not a published stable release.")},
-    {updater::kInvalidAssetMessage, N_("The update package size or SHA-256 checksum is invalid.")},
-    {updater::kMissingAssetMessage, N_("This release has no update package for your platform.")},
-    {updater::kDownloadTooLargeMessage,
-     N_("The downloaded file is larger than the release asset.")},
-    {updater::kDownloadDigestMessage,
-     N_("The update failed its SHA-256 verification. Please try again.")},
-    {updater::kDownloadAbortedMessage, N_("The download was cancelled.")},
-    // updater/core/updateSession.cpp writes these sentences without exporting them
-    // (kMetadataTooLargeMessage, DescribeMetadataFailure, DescribeDownloadFailure).
-    {"The update response is larger than 2 MiB.", N_("The update response is larger than 2 MiB.")},
-    {"The update check timed out.", N_("The update check timed out.")},
-    {"The update check was cancelled.", N_("The update check was cancelled.")},
-    {"The download timed out.", N_("The download timed out.")},
-};
-
-// The updater's sentences with numbers (updater/core/updateSession.cpp DescribeMetadataFailure and
-// DescribeDownloadFailure, updater/core/downloadVerifier.cpp Finish): the words around the numbers
-// (words[0], a number, words[1], ..., a number, the last word) and the translatable text, whose
-// last number picks the plural form.
-struct NumberedMessage {
-	std::vector<std::string_view> words;
-	PluralText                    text;
-};
-
-const NumberedMessage kNumberedMessages[] = {
-    {{"The update check failed with HTTP status ", "."},
-     // TRANSLATORS: %llu is an HTTP status code, for example 404.
-     {N_("The update check failed with HTTP status %llu."), nullptr}},
-    {{"The download failed with HTTP status ", "."},
-     // TRANSLATORS: %llu is an HTTP status code, for example 404.
-     {N_("The download failed with HTTP status %llu."), nullptr}},
-    {{"The update check received no data for ", " seconds."},
-     NGettextNoop("The update check received no data for %llu second.",
-                  "The update check received no data for %llu seconds.")},
-    {{"The download received no data for ", " seconds."},
-     NGettextNoop("The download received no data for %llu second.",
-                  "The download received no data for %llu seconds.")},
-    {{"The downloaded file is smaller than the release asset (", " of ", " bytes)."},
-     // TRANSLATORS: the bytes received so far and the size of the update package.
-     NGettextNoop("The downloaded file is smaller than the release asset (%llu of %llu byte).",
-                  "The downloaded file is smaller than the release asset (%llu of %llu bytes).")},
-};
-
-// The numbers of message when it is words[0], a number, words[1], ..., a number, words.back()
-// (each number in decimal digits); otherwise nothing.
-std::vector<uint64_t> NumbersIn(std::string_view                     message,
-                                const std::vector<std::string_view>& words) {
-	std::vector<uint64_t> numbers;
-	bool                  first = true;
-	for (const auto word: words) {
-		if (!std::exchange(first, false)) {
-			uint64_t   value     = 0;
-			const auto end       = message.data() + message.size();
-			const auto [next, e] = std::from_chars(message.data(), end, value);
-			if (e != std::errc {}) {
-				return {};
-			}
-			numbers.push_back(value);
-			message.remove_prefix(static_cast<size_t>(next - message.data()));
-		}
-		if (!message.starts_with(word)) {
-			return {};
-		}
-		message.remove_prefix(word.size());
-	}
-	return message.empty() ? numbers : std::vector<uint64_t> {};
-}
-
-// The translated text of key with its numbers.
-std::string KeyText(const UpdateMessageKey& key) {
-	using Count               = unsigned long long;
-	const auto&       numbers = key.numbers;
-	const char* const text =
-	    key.plural_msgid != nullptr && !numbers.empty()
-	        ? NGettext(key.msgid, key.plural_msgid, static_cast<unsigned long>(numbers.back()))
-	        : _(key.msgid);
-	switch (numbers.size()) {
-		case 0: return text;
-		case 1: return Format(text, static_cast<Count>(numbers[0]));
-		default:
-			return Format(text, static_cast<Count>(numbers[0]), static_cast<Count>(numbers[1]));
-	}
-}
-
 // Every update alert has the window title of the Qt launcher's update message boxes.
 GtkWindow* Titled(GtkWindow* window) {
 	if (window != nullptr) {
@@ -226,38 +123,14 @@ std::string ReleasePageUrl(std::string_view tag) {
 	return std::string(updater::kReleasesPage) + "/tag/" + updater::PercentEncode(tag);
 }
 
-std::optional<UpdateMessageKey> UpdateMessageKeyFor(std::string_view message) {
-	for (const auto& fixed: kFixedMessages) {
-		if (message == fixed.core) {
-			return UpdateMessageKey {fixed.text, nullptr, {}};
-		}
-	}
-	for (const auto& numbered: kNumberedMessages) {
-		auto numbers = NumbersIn(message, numbered.words);
-		if (!numbers.empty() && numbers.size() + 1 == numbered.words.size()) {
-			return UpdateMessageKey {numbered.text.singular, numbered.text.plural,
-			                         std::move(numbers)};
-		}
-	}
-	return std::nullopt;
-}
-
-std::string UpdateMessageText(std::string_view message) {
-	if (const auto key = UpdateMessageKeyFor(message)) {
-		return KeyText(*key);
-	}
-	// "Could not verify the currently installed release. <reason>"
-	const std::string unverified = std::string(updater::kInstalledReleaseUnverifiedMessage) + " ";
-	if (message.starts_with(unverified)) {
-		const std::string reason = UpdateMessageText(message.substr(unverified.size()));
-		// TRANSLATORS: %s is the reason (an English message of the updater or of the network).
-		return Format(_("Could not verify the currently installed release. %s"), reason.c_str());
-	}
-	return core::SanitizeUtf8(message);
+std::string UpdateMessageText(const updater::SessionOutcome& outcome) {
+	return Render(SessionMessageText(outcome));
 }
 
 std::string PreviousResultText(const updater::PreviousResult& result) {
-	const std::string sanitized = core::SanitizeUtf8(result.message);
+	// The helper's own text, shown as it is (it writes .kyty-update-result; plan G6).
+	const std::string& text      = result.message; // core text: the helper's result (G6)
+	const std::string  sanitized = core::SanitizeUtf8(text);
 	const auto        trimmed   = core::TrimWhitespace(sanitized);
 	if (!trimmed.empty()) {
 		return std::string(trimmed);
@@ -479,6 +352,8 @@ void UpdateUi::OnChange(const updater::SessionOutcome& outcome) {
 	if (outcome.release) {
 		m_release = outcome.release;
 	}
+	// A message without a kind is shown as it is (SessionMessageText), never dropped.
+	const bool said = !outcome.message.empty(); // core text: tests for a message, shows nothing
 	if (outcome.state != previous) {
 		g_debug("update: %s -> %s%s%s", StateName(previous), StateName(outcome.state),
 		        outcome.message.empty() ? "" : ": ", outcome.message.c_str());
@@ -488,11 +363,10 @@ void UpdateUi::OnChange(const updater::SessionOutcome& outcome) {
 		case SessionState::FetchingLatest:
 		case SessionState::FetchingInstalled: break;
 		case SessionState::Offering:
-			if (!outcome.message.empty()) {
+			if (said) {
 				// 10.4: Install was refused while a game runs; the offer stays (the banner).
 				m_installing = false;
-				ShowMessage(_("The update cannot be installed now"),
-				            UpdateMessageText(outcome.message));
+				ShowMessage(_("The update cannot be installed now"), UpdateMessageText(outcome));
 			} else if (previous != SessionState::Offering) {
 				ShowOffer();
 			}
@@ -500,7 +374,7 @@ void UpdateUi::OnChange(const updater::SessionOutcome& outcome) {
 		case SessionState::NoNewer:
 			// 13.13: only for a user-activated check.
 			if (outcome.user_activated) {
-				ShowMessage(_("No update available"), UpdateMessageText(outcome.message));
+				ShowMessage(_("No update available"), UpdateMessageText(outcome));
 			}
 			break;
 		case SessionState::Downloading:
@@ -526,14 +400,14 @@ void UpdateUi::OnChange(const updater::SessionOutcome& outcome) {
 		case SessionState::Failed: {
 			CloseProgress();
 			const bool installing = std::exchange(m_installing, false);
-			if (outcome.message.empty()) {
+			if (!said) {
 				break; // Cancel: nothing to say
 			}
 			if (installing) {
-				ShowInstallFailure(outcome.message); // always (13.8)
+				ShowInstallFailure(outcome); // always (13.8)
 			} else if (outcome.user_activated) {
 				// 13.12: only for a user-activated check.
-				ShowMessage(_("Could not check for updates"), UpdateMessageText(outcome.message));
+				ShowMessage(_("Could not check for updates"), UpdateMessageText(outcome));
 			} else {
 				g_message("update: the check at startup failed: %s",
 				          core::SanitizeUtf8(outcome.message).c_str());
@@ -576,9 +450,9 @@ void UpdateUi::ShowMessage(const std::string& heading, const std::string& body) 
 	Titled(ShowError(m_parent, heading, body, m_cancellable.get()));
 }
 
-void UpdateUi::ShowInstallFailure(const std::string& message) {
+void UpdateUi::ShowInstallFailure(const updater::SessionOutcome& outcome) {
 	const std::string heading = _("The update could not be installed");
-	const std::string body    = UpdateMessageText(message);
+	const std::string body    = UpdateMessageText(outcome);
 	g_message("update: installation failed: %s", body.c_str());
 	if (!m_release || m_release->tag.empty()) {
 		ShowMessage(heading, body);

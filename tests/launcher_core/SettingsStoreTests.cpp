@@ -966,6 +966,7 @@ void CheckRefused(kyty::core::SettingsStoreFile& store, const LauncherSettings& 
 	                           std::generic_category().message(error_number) +
 	                           "). Fix or move the file, or confirm replacing it.",
 	      what + ": the message names the path and the reason: " + error.message);
+	Check(error.kind == kyty::core::IoErrorKind::NotLoaded, what + ": the kind (phase 9 V1)");
 	Check(store.load_error.has_value() && !store.overwrite_confirmed,
 	      what + ": the refusal keeps load_error");
 }
@@ -1055,6 +1056,9 @@ void TestSettingsStoreFile() {
 	                                               ": " + std::generic_category().message(ENOTDIR),
 	      "a confirmed save under a regular file is refused with ENOTDIR, naming the directory: " +
 	          not_directory.error().message);
+	Check(not_directory.error().kind == kyty::core::IoErrorKind::CreateDirectory &&
+	          not_directory.error().detail == parent,
+	      "the kind and the directory (phase 9 V1)");
 	Check(ReadBytes(parent) == "a regular file" && store.load_error.has_value(),
 	      "the regular file is still unchanged, and load_error stays");
 }

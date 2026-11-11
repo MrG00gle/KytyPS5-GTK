@@ -200,12 +200,13 @@ void UpdatePreview(KytyInputMappingWindow* self) {
 	    state.diagram, state.capturing ? std::string(state.bindings[*state.capturing].control->id)
 	                                   : std::string());
 
-	std::string status;
+	const std::string& sdl_error = controller.error; // core text: SDL's message (library text)
+	std::string        status;
 	if (controller.paused) {
 		status = _("Preview is paused while a game is running.");
-	} else if (!controller.error.empty()) {
+	} else if (!sdl_error.empty()) {
 		// TRANSLATORS: %s is SDL's message.
-		status = Format(_("Controller preview unavailable: %s"), controller.error.c_str());
+		status = Format(_("Controller preview unavailable: %s"), sdl_error.c_str());
 	} else if (!controller.device_name.empty()) {
 		// TRANSLATORS: %s is the name of the connected controller.
 		status = Format(_("Connected: %s"), controller.device_name.c_str());
