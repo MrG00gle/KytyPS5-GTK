@@ -16,6 +16,7 @@
 #include "graphics/presentation/systemOverlay.h"
 #include "graphics/presentation/videoOut.h"
 #include "graphics/presentation/window.h"
+#include "graphics/presentation/window/vulkanDeviceSelection.h"
 #include "graphics/presentation/window/windowInternal.h"
 #include "kernel/memory.h"
 #include "libs/controller.h"
@@ -147,7 +148,18 @@ static uint32_t VulkanFindQueueFamily(vk::PhysicalDevice device, vk::SurfaceKHR 
 	return static_cast<uint32_t>(-1);
 }
 
-// On failure out_device is null and out_rejections says why each device was skipped.
+static VulkanDeviceType DeviceType(vk::PhysicalDeviceType type) {
+	switch (type) {
+		case vk::PhysicalDeviceType::eIntegratedGpu: return VulkanDeviceType::IntegratedGpu;
+		case vk::PhysicalDeviceType::eDiscreteGpu: return VulkanDeviceType::DiscreteGpu;
+		case vk::PhysicalDeviceType::eVirtualGpu: return VulkanDeviceType::VirtualGpu;
+		case vk::PhysicalDeviceType::eCpu: return VulkanDeviceType::Cpu;
+		default: return VulkanDeviceType::Other;
+	}
+}
+
+// On failure out_device is null and out_rejections names each device with the reasons it was
+// skipped, or says that there is no device.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surface,
                                      const std::vector<const char*>& device_extensions,
@@ -161,7 +173,12 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 	    "vkEnumeratePhysicalDevices", [&](uint32_t* count, vk::PhysicalDevice* values) {
 		    return instance.enumeratePhysicalDevices(count, values);
 	    });
-	EXIT_NOT_IMPLEMENTED(devices.empty());
+	if (devices.empty()) {
+		out_device       = nullptr;
+		out_queue_family = static_cast<uint32_t>(-1);
+		out_rejections   = DescribeVulkanDeviceRejections({});
+		return;
+	}
 
 	if (Config::GetGpuIndex() >= 0) {
 		if (static_cast<size_t>(Config::GetGpuIndex()) < devices.size()) {
@@ -174,32 +191,31 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 		devices = {headset}; // The headset runtime renders on this GPU.
 	}
 
-	vk::PhysicalDevice  best_device       = nullptr;
-	uint32_t            best_queue_family = static_cast<uint32_t>(-1);
-	SurfaceCapabilities best_capabilities;
+	// One candidate per device, in enumeration order; the queue family and the surface
+	// capabilities are kept for the devices that qualify.
+	std::vector<VulkanDeviceCandidate> candidates(devices.size());
+	std::vector<uint32_t>              queue_families(devices.size(), static_cast<uint32_t>(-1));
+	std::vector<SurfaceCapabilities>   capabilities(devices.size());
 
-	for (const auto& device: devices) {
-		bool skip_device = false;
+	for (size_t index = 0; index < devices.size(); index++) {
+		const auto& device      = devices[index];
+		auto&       candidate   = candidates[index];
+		bool        skip_device = false;
 
 		vk::PhysicalDeviceProperties device_properties {};
 		device.getProperties(&device_properties);
+		candidate.name = device_properties.deviceName.data();
+		candidate.type = DeviceType(device_properties.deviceType);
 
 		const auto reject = [&](const std::string& reason) {
 			LOGF("%s\n", reason.c_str());
-			out_rejections +=
-			    skip_device ? "; " : fmt::format("\n  {}: ", device_properties.deviceName.data());
-			out_rejections += reason;
+			candidate.rejections.push_back(reason);
 			skip_device = true;
 		};
 
 		LOGF("Vulkan device: %s\n", device_properties.deviceName.data());
 		if (device_properties.apiVersion < VULKAN_TARGET_API_VERSION) {
-			reject(fmt::format("Vulkan {}.{} is required, but device supports only {}.{}.{}",
-			                   VK_VERSION_MAJOR(VULKAN_TARGET_API_VERSION),
-			                   VK_VERSION_MINOR(VULKAN_TARGET_API_VERSION),
-			                   VK_VERSION_MAJOR(device_properties.apiVersion),
-			                   VK_VERSION_MINOR(device_properties.apiVersion),
-			                   VK_VERSION_PATCH(device_properties.apiVersion)));
+			reject(VulkanVersionRejection(device_properties.apiVersion, VULKAN_TARGET_API_VERSION));
 			continue;
 		}
 
@@ -235,13 +251,13 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 
 		const auto queue_family = VulkanFindQueueFamily(device, surface);
 		if (queue_family == static_cast<uint32_t>(-1)) {
-			reject("No universal graphics, compute, and presentation queue");
+			reject(NoUniversalQueueRejection());
 		}
 
 		const auto check_feature = [&](vk::Bool32 supported, const char* name,
 		                               vk::Bool32 required = VK_TRUE) {
 			if (required == VK_TRUE && supported != VK_TRUE) {
-				reject(fmt::format("{} is not supported", name));
+				reject(UnsupportedRejection(name));
 			}
 		};
 
@@ -315,7 +331,7 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 
 			for (const char* ext: device_extensions) {
 				if (!HasExtension(available_extensions, ext)) {
-					reject(fmt::format("{} is not supported", ext));
+					reject(UnsupportedRejection(ext));
 				}
 			}
 
@@ -379,19 +395,20 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 			continue;
 		}
 
-		if (best_device == nullptr ||
-		    device_properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
-			best_device       = device;
-			best_queue_family = queue_family;
-			best_capabilities = std::move(candidate_capabilities);
-		}
+		queue_families[index] = queue_family;
+		capabilities[index]   = std::move(candidate_capabilities);
 	}
 
-	out_device       = best_device;
-	out_queue_family = best_queue_family;
-	if (best_device != nullptr) {
-		out_capabilities = std::move(best_capabilities);
+	const auto selected = SelectVulkanDevice(candidates);
+	if (!selected) {
+		out_device       = nullptr;
+		out_queue_family = static_cast<uint32_t>(-1);
+		out_rejections   = DescribeVulkanDeviceRejections(candidates);
+		return;
 	}
+	out_device       = devices[*selected];
+	out_queue_family = queue_families[*selected];
+	out_capabilities = std::move(capabilities[*selected]);
 }
 
 static vk::Device VulkanCreateDevice(GraphicContext& graphics,
@@ -948,7 +965,9 @@ void WindowContext::CreateVulkan() {
 	                         rejected_devices);
 
 	if (graphic_ctx.physical_device == nullptr) {
-		EXIT("Could not find suitable device:%s", rejected_devices.c_str());
+		// Every device with its reasons, or that there is none, then exit status 1.
+		Common::DbgExitHandler(__FILE__, __LINE__, rejected_devices);
+		Common::DbgExit(1);
 	}
 
 	vk::PhysicalDevicePushDescriptorProperties push_descriptor_properties {};

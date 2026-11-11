@@ -186,6 +186,12 @@ add_library(kyty_emulator_options STATIC
 )
 target_include_directories(kyty_emulator_options PUBLIC ${KYTY_SOURCE_DIR})
 target_link_libraries(kyty_emulator_options PUBLIC common)
+# Vulkan device ranking and rejection reporting, a pure function shared by kyty_emulator and the tests.
+add_library(kyty_vulkan_device_selection STATIC
+	"${KYTY_SOURCE_DIR}/graphics/presentation/window/vulkanDeviceSelection.cpp"
+	"${KYTY_SOURCE_DIR}/graphics/presentation/window/vulkanDeviceSelection.h"
+)
+target_include_directories(kyty_vulkan_device_selection PUBLIC ${KYTY_SOURCE_DIR})
 add_subdirectory("${KYTY_SOURCE_DIR}/launcher/core" "${CMAKE_CURRENT_BINARY_DIR}/launcher/core")
 # The Updater: kyty_updater_core whatever KYTY_BUILD_LAUNCHER is, and the kyty_updater helper.
 add_subdirectory("${KYTY_SOURCE_DIR}/updater" "${CMAKE_CURRENT_BINARY_DIR}/updater")
@@ -325,11 +331,15 @@ list(APPEND kyty_emulator_src
 	"${KYTY_SOURCE_DIR}/emulator.cpp"
 )
 list(REMOVE_DUPLICATES kyty_emulator_src)
+# Compiled once, in kyty_vulkan_device_selection.
+list(FILTER kyty_emulator_src EXCLUDE REGEX "/graphics/presentation/window/vulkanDeviceSelection\\.(cpp|h)$")
 
 set(kyty_emulator_link_libraries common Vulkan::Headers spirv-tools-opt spirv-tools SDL3::SDL3-static imgui xxhash FFmpeg::ffmpeg fmt::fmt nlohmann_json::nlohmann_json LibAtrac9 kyty_git_version Zydis::Zydis xbyak::xbyak opus OpenXR::openxr_loader)
 # The system overlay finds its assets through Emulator::FindAssetFile, so the tests that build the
 # Emulator sources link the option library too.
 list(APPEND kyty_emulator_link_libraries kyty_emulator_options)
+# vulkanWindow.cpp, also built into those tests, selects its device through this library.
+list(APPEND kyty_emulator_link_libraries kyty_vulkan_device_selection)
 
 # Linux system libraries.
 if(LINUX)

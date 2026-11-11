@@ -390,7 +390,7 @@ kyty_add_test(NAME lld_linked_executables
 	TIMEOUT 60
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 
-kyty_add_test_directory(tests/emulator LINK kyty_emulator_options)
+kyty_add_test_directory(tests/emulator LINK kyty_emulator_options kyty_vulkan_device_selection)
 
 # kyty_emulator --help and --redzone, checked by emulator_options_tests against the parser's own
 # option table and UsageText().
