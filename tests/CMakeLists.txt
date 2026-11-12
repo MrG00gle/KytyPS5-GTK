@@ -615,6 +615,22 @@ kyty_add_test(NAME ci_tools
 	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/ci/tests" -v
 	TIMEOUT 120
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+# The CI workflow's structure (task 28.3, tools/checks/workflow_check.py): triggers, runners and
+# containers, no Qt package, unfiltered test runs with a JUnit check after each, the release job's
+# conditions and needs, and uploads with if: always(); then the unit tests over mutated copies of
+# the workflow. PyYAML is required. They need no build output, so they are registered with
+# KYTY_BUILD_LAUNCHER OFF too.
+kyty_add_test(NAME workflow_structure
+	COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/workflow_check.py"
+	        --workflow "${CMAKE_SOURCE_DIR}/.github/workflows/build.yml"
+	LABELS source-check
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+kyty_add_test(NAME workflow_check_tool
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/checks/tests"
+	        -p test_workflow_check.py -v
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 
 # Process test helpers (task 15.6): argv_echo writes its arguments NUL-terminated and fake_emulator
 # stands in for the Emulator in spawn tests (tests/support/helperPaths.h finds both). Each one has a

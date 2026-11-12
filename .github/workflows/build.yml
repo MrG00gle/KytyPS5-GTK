@@ -206,7 +206,10 @@ jobs:
       - name: Check against the Main_Branch baseline
         run: python3 -B tools/checks/check_regression.py "$BUILD_DIR/ctest.xml"
 
-      # The workflow structure check (tools/checks/workflow_check.py) joins here with that tool.
+      - name: Check the workflow structure
+        # Needs no build output, so it also runs when a test failed.
+        if: ${{ !cancelled() }}
+        run: python3 -B tools/checks/workflow_check.py --workflow .github/workflows/build.yml
 
       - name: Install
         id: install
