@@ -51,8 +51,8 @@ match is printed as `path:line: text`. The checks mirror the phase 2 scans:
                      pacman, zypper) that names a Qt package (qt5-, qt6-,
                      qtbase, libqt). A command that trailing backslashes
                      continue counts as one line, reported at its first
-                     line. README.md is exempt until task 29 rewrites it
-                     (Requirement 19), see QT_EXEMPT.
+                     line. QT_EXEMPT lists the files that are exempt, with
+                     the reason (none since the README rewrite).
     layering         Requirement 6.7 (CTest source_check_layering): no
                      #include of a GTK, GDK, GSK, libadwaita, GLib, GIO, or
                      libsoup header in src/launcher/core/ and src/updater/.
@@ -178,12 +178,8 @@ QT_PACKAGE = re.compile(r"(?i)(?<![\w-])(?:qt[56]-|qtbase|libqt)")
 QT_PKG_CONFIG_CALL = re.compile(r"\bpkg_(?:check_modules|search_module)\s*\(")
 QT_PKG_CONFIG_TOOL = re.compile(r"(?<![\w-])pkg-?conf(?:ig)?(?![\w-])")
 QT_PKG_CONFIG_MODULE = re.compile(r"\bQt[56][A-Z]\w*")
-# Files that keep their Qt text for now, with the reason.
-QT_EXEMPT = {
-    # The README still describes the Qt build. Task 29 (Requirement 19) rewrites it and removes
-    # this exemption.
-    "README.md": "task 29 rewrites the README",
-}
+# Files that keep their Qt text for now, with the reason. None since the README rewrite.
+QT_EXEMPT = {}
 
 # layering: the GTK, GLib, and libsoup headers.
 LAYERING_PATTERN = (r'^\s*#\s*include\s*[<"]\s*'

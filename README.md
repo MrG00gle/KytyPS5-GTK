@@ -1,295 +1,197 @@
-# KytyPS5
+# KytyPS5-GTK
 
-[![Build KytyPS5 (Linux)](https://img.shields.io/github/check-runs/KytyPS5/KytyPS5/main?nameFilter=Build%20KytyPS5%20%28Linux%29&label=Build%20KytyPS5%20%28Linux%29)](https://github.com/KytyPS5/KytyPS5/actions/workflows/build.yml)
-[![Platform](https://img.shields.io/badge/platform-Linux%20x86--64-0078D4.svg)](#system-requirements)
-[![Status](https://img.shields.io/badge/status-active%20development-orange.svg)](#current-status)
-[![License](https://img.shields.io/badge/license-GPL--2.0-blue.svg)](LICENSE)
+[![Build and release (main)](https://github.com/MrG00gle/KytyPS5-GTK/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/MrG00gle/KytyPS5-GTK/actions/workflows/build.yml?query=branch%3Amain)
+[![Build and release (dev)](https://github.com/MrG00gle/KytyPS5-GTK/actions/workflows/build.yml/badge.svg?branch=dev)](https://github.com/MrG00gle/KytyPS5-GTK/actions/workflows/build.yml?query=branch%3Adev)
+[![License: GPL-2.0-only](https://img.shields.io/badge/license-GPL--2.0--only-blue.svg)](LICENSE)
 
-**[Weekly updates](https://github.com/KytyPS5/KytyPS5/discussions/862)** — game progress, recent fixes, and ongoing development.
-
-**[Development on Discord](https://discord.gg/UNrkMqGaBg)** — KytyPS5 development.
-
-KytyPS5 is a free and open-source PlayStation 5 translation layer written in C++ for Linux.
-It is based on a heavily modified version of
-[Kyty](https://github.com/InoriRus/Kyty). The project is in active development, and behavior
-can change significantly between builds.
+KytyPS5-GTK is a fork of [upstream KytyPS5](https://github.com/KytyPS5/KytyPS5), a free and
+open-source PlayStation 5 translation layer written in C++, which is based on
+[Kyty](https://github.com/InoriRus/Kyty). The fork runs on Linux only, and it ships a GTK 4
+launcher and a Flatpak package.
 
 > [!IMPORTANT]
-> KytyPS5 is not affiliated with Sony Interactive Entertainment or PlayStation. The project does
-> not distribute games or copyrighted system software. Use only game files that you have obtained
-> legally.
+> KytyPS5-GTK is not affiliated with Sony Interactive Entertainment or PlayStation. The project
+> does not distribute games or copyrighted system software. You must use only legally obtained
+> game files.
 
-## Current Status
+## Fork changes
 
-KytyPS5 can boot 2D and 3D games, including titles built with Unreal Engine
-4/5, Unity, and custom engines. External low-level emulation modules are neither required nor
-planned.
+How KytyPS5-GTK differs from upstream KytyPS5:
 
-Development is currently focused on expanding game compatibility and improving boot reliability.
+- **Linux x86-64 only.** The fork builds, tests, and ships for Linux on x86-64 processors and for
+  nothing else.
+- **GTK launcher.** A GTK 4 and libadwaita launcher (`kyty_launcher`) replaces the Qt 6 launcher of
+  upstream KytyPS5, with the same functions and a built-in log view instead of a host terminal.
+- **Flatpak package.** The Flatpak `io.github.MrG00gle.KytyPS5_GTK` packages the launcher and the
+  emulator, with sandbox-safe data locations. Each release attaches a `.flatpak` bundle.
+- **No Windows support.** The Windows build, its CI job, and every Windows-only code path are gone
+  (no MSVC, clang-cl, or winpthread).
+- **No macOS support.** The macOS build, its CI job, the MoltenVK and Rosetta support, and the app
+  bundle are gone.
+- **No Nix or NixOS support.** The Nix flake, the Nix shells, and the NixOS build instructions are
+  gone.
+- **Coverage targets.** CI fails unless the tests cover at least 90 % of the lines and 95 % of the
+  functions of the launcher core (`src/launcher/core`), 90 % of the lines of the Updater
+  (`src/updater`), and 60 % of the lines of the GTK launcher code (`src/launcher/gtk`), and it fails
+  when the overall line coverage drops more than 0.50 percentage points below the committed
+  baseline.
 
-Linux x86-64 is the target platform.
+## Project status
+
+The emulator comes from upstream KytyPS5, which is in active development, so behavior can change
+significantly between builds. Upstream KytyPS5 can boot 2D and 3D games, including titles built
+with Unreal Engine 4/5, Unity, and custom engines. External low-level emulation modules are neither
+required nor planned.
+
+This fork adds the Linux packaging, the GTK launcher, tests, and CI on top of the upstream KytyPS5
+emulator. Releases of the fork are published on the
+[KytyPS5-GTK releases page](https://github.com/MrG00gle/KytyPS5-GTK/releases).
 
 Community game test results are available in the
-[KytyPS5 Compatibility List](https://kytyps5.github.io/).
+[upstream KytyPS5 compatibility list](https://kytyps5.github.io/), which the launcher also shows.
+News about the emulator itself comes from the
+[weekly updates of upstream KytyPS5](https://github.com/KytyPS5/KytyPS5/discussions/862) and the
+[upstream KytyPS5 development Discord](https://discord.gg/UNrkMqGaBg).
 
-## Bugs and Issues
+Compatibility, stability, and performance can vary between versions, and you may encounter crashes
+or graphical glitches. Report problems with this fork in the
+[KytyPS5-GTK issue tracker](https://github.com/MrG00gle/KytyPS5-GTK/issues/new/choose) and include
+the version you tested.
 
-Compatibility, stability, and performance can vary between versions. You may encounter crashes
-or graphical glitches, so please include the version you tested when reporting an issue.
-
-## Screenshots
+<p align="center">
+  <img src="docs/screenshots/kyty-launcher-main.png" width="600" alt="The KytyPS5-GTK launcher main window with its game list">
+</p>
 
 <table align="center">
   <tr>
     <td align="center">
       <strong>Astro Bot</strong><br>
-      <img src="docs/screenshots/ps5-01.png" width="300" alt="Astro Bot running in KytyPS5">
+      <img src="docs/screenshots/ps5-01.png" width="300" alt="Astro Bot running in upstream KytyPS5">
     </td>
     <td align="center">
       <strong>Saros</strong><br>
-      <img src="docs/screenshots/ps5-03.png" width="300" alt="Saros running in KytyPS5">
+      <img src="docs/screenshots/ps5-03.png" width="300" alt="Saros running in upstream KytyPS5">
     </td>
   </tr>
   <tr>
     <td align="center">
       <strong>Neptunia ReVerse</strong><br>
-      <img src="docs/screenshots/ps5-04.png" width="300" alt="Neptunia ReVerse running in KytyPS5">
+      <img src="docs/screenshots/ps5-04.png" width="300" alt="Neptunia ReVerse running in upstream KytyPS5">
     </td>
     <td align="center">
       <strong>SILENT HILL: The Short Message</strong><br>
-      <img src="docs/screenshots/ps5-05.png" width="300" alt="SILENT HILL: The Short Message running in KytyPS5">
+      <img src="docs/screenshots/ps5-05.png" width="300" alt="SILENT HILL: The Short Message running in upstream KytyPS5">
     </td>
   </tr>
   <tr>
     <td align="center">
       <strong>Demon's Souls</strong><br>
-      <img src="docs/screenshots/ps5-02.png" width="300" alt="Demon's Souls running in KytyPS5">
+      <img src="docs/screenshots/ps5-02.png" width="300" alt="Demon's Souls running in upstream KytyPS5">
     </td>
     <td align="center">
       <strong>UFC 6</strong><br>
-      <img src="docs/screenshots/ps5-06.jpg" width="300" alt="UFC 6 running in KytyPS5">
+      <img src="docs/screenshots/ps5-06.jpg" width="300" alt="UFC 6 running in upstream KytyPS5">
     </td>
   </tr>
 </table>
 
-<p align="center"><em>And many more...</em></p>
+## System requirements
 
-## Contributing
+- The only supported platform is Linux on an x86-64 processor.
+- A GPU with Vulkan 1.3 support is required, with a current driver. Update the graphics driver
+  before you report rendering problems.
+- The Flatpak needs Flatpak and the GNOME 49 runtime from Flathub, which `flatpak install` fetches.
+- Building from source needs Clang, lld, CMake, and Ninja. The [building guide](docs/building.md)
+  lists every package.
 
-Testing games and submitting detailed bug reports are useful ways to contribute. Search existing
-issues first, then use the **Game Emulation Status Report** template and attach the complete log file.
+## Install with Flatpak
 
-**Pull requests for general fixes, architectural changes, or refactoring that do not address a concrete bug or launch problem in a specific game will be automatically closed.**
-
-**Large, unfocused commits or pull requests that bundle unrelated changes without a clear purpose or game-related benefit will also be automatically closed.**
-
-Keep each PR focused. Name the affected game, describe the exact problem, and provide evidence showing what the change fixes.
-
-Linux is the target platform, so changes should not introduce regressions on Linux. Because KytyPS5 is still evolving quickly, consider
-opening an issue before starting a large change.
-
-### Formatting
-
-Set up the clang-format hook after cloning.
-
-Install `pre-commit` using the method appropriate for your platform:
-
-- **Arch Linux / CachyOS:** `sudo pacman -S pre-commit`
-- **Other Linux distributions:** `python -m pip install pre-commit`
-
-Then install the Git hook:
+Download the `KytyPS5-GTK-<date>-<commit>-x86_64.flatpak` bundle of a release from the
+[releases page](https://github.com/MrG00gle/KytyPS5-GTK/releases). Add the Flathub remote once,
+so that Flatpak can install the runtime, then install the bundle and run it:
 
 ```bash
-python -m pre_commit install --install-hooks
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user ./KytyPS5-GTK-<date>-<commit>-x86_64.flatpak
+flatpak run io.github.MrG00gle.KytyPS5_GTK
 ```
 
-It formats staged `.cpp`, `.h`, and `.inc` files in `src`.
+The desktop entry "KytyPS5-GTK" starts the same launcher. The Flatpak gets its updates through
+Flatpak, not through the launcher's Updater. The [packaging guide](docs/packaging.md) explains the
+updates, the sandbox permissions, and how to give the Flatpak access to more folders.
 
-## Developer Information
+## Building from source
 
-The PS5 graphics architecture is based on AMD RDNA 2. Use AMD's
-[RDNA 2 Instruction Set Architecture Reference Guide (document 70648)](https://docs.amd.com/v/u/en-US/rdna2-shader-instruction-set-architecture)
-as the primary instruction-encoding reference when working on shader decoding and recompilation.
-
-Important areas of the codebase:
-
-- [`src/graphics/shader/recompiler`](src/graphics/shader/recompiler) — instruction decoding,
-  intermediate representation, control flow, resource tracking, and SPIR-V emission
-- [`src/graphics/guest_gpu`](src/graphics/guest_gpu) — PS5 (Prospero) GPU formats and command processing
-- [`src/graphics/host_gpu`](src/graphics/host_gpu) — Vulkan host backend and resource management
-- [`tests`](tests) — focused memory, shader, and resource-tracking regression tests
-
-The renderer targets Vulkan 1.3. Keep shader changes aligned with both the RDNA 2 ISA semantics and
-the Vulkan/SPIR-V validation rules.
-
-## Building
-
-### System requirements
-
-- A current Linux distribution
-- A 64-bit x86 processor
-- A Vulkan 1.3-capable GPU with current drivers
-
-### Building on Linux
-
-Install the toolchain and the libraries the bundled SDL3 needs. Without the audio, Wayland, and
-udev development packages, SDL3 quietly configures itself without those backends, and the resulting
-build has no working audio or gamepad hotplug support:
+Install the packages that the [building guide](docs/building.md) lists for your distribution, then
+build and install with Clang and lld:
 
 ```bash
-sudo apt-get install --no-install-recommends \
-  clang lld ninja-build cmake git glslang-tools python3 pkg-config \
-  libgl1-mesa-dev libx11-dev libxcursor-dev libxext-dev libxfixes-dev \
-  libxi-dev libxrandr-dev libxss-dev libxtst-dev libxkbcommon-dev \
-  libasound2-dev libpulse-dev libudev-dev libdbus-1-dev libwayland-dev wayland-protocols
-```
-
-Qt 6 (Concurrent, Network, and Widgets) is required for the launcher. Use your distribution's
-packages (`qt6-base-dev`) or an official Qt installation.
-
-```bash
-git submodule update --init --recursive
-
+git clone --recursive https://github.com/MrG00gle/KytyPS5-GTK.git
+cd KytyPS5-GTK
 cmake -S . -B _Build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-  -DCMAKE_PREFIX_PATH="$Qt6_DIR"
-
-cmake --build _Build/linux --target launcher --parallel
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build _Build/linux
 cmake --install _Build/linux --prefix _Build/linux/install
 ```
 
-The install step copies the Qt libraries and plugins next to the binaries, so
-`_Build/linux/install` runs without a matching system Qt installation. FFmpeg is linked statically
-from the pinned [KytyPS5 FFmpeg core](https://github.com/KytyPS5/ext-ffmpeg-core)
-release, including VP9 and WebM support. System FFmpeg packages are not required.
-
-To build `kyty_emulator` and the `kyty_tests` target without Qt, use a separate build directory:
-
-```bash
-git submodule update --init --recursive
-
-cmake -S . -B _Build/linux-no-qt -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-  -DKYTY_BUILD_LAUNCHER=OFF
-
-cmake --build _Build/linux-no-qt --target kyty_emulator kyty_tests --parallel
-```
-
-Clang is required.
-
-The CMake source root is the repository root.
-
-### Building on Fedora and Fedora Atomic (Bazzite, Bluefin, Silverblue)
-
-On regular Fedora, install dependencies on the host. On Fedora Atomic variants such as Bazzite,
-Bluefin and Silverblue, use [Distrobox](https://distrobox.it/) and run the install and build steps
-inside the container. Keep the checkout in your home directory so it is shared with the container.
-Add `--nvidia` to the create command for hosts using the proprietary NVIDIA driver:
-
-```bash
-distrobox create --name kyty-build --image registry.fedoraproject.org/fedora:latest
-distrobox enter kyty-build
-```
-
-Install the toolchain, Qt 6 and SDL3 dependencies:
-
-```bash
-sudo dnf install -y \
-  clang lld ninja-build cmake git glslang python3 pkgconf-pkg-config \
-  mesa-libGL-devel libX11-devel libXcursor-devel libXext-devel libXfixes-devel \
-  libXi-devel libXrandr-devel libXScrnSaver-devel libXtst-devel libxkbcommon-devel \
-  alsa-lib-devel pulseaudio-libs-devel systemd-devel dbus-devel \
-  wayland-devel wayland-protocols-devel qt6-qtbase-devel
-```
-
-From the repository root, follow the launcher configure, build and install steps in
-[Building on Linux](#building-on-linux), omitting `-DCMAKE_PREFIX_PATH="$Qt6_DIR"`; CMake finds
-Fedora's packaged Qt 6 automatically.
-
-Run `./_Build/linux/install/kyty_launcher` on regular Fedora or inside the container. To launch a
-container build from the host, leave the container with `exit`, then run from the repository root:
-
-```bash
-distrobox enter kyty-build -- ./_Build/linux/install/kyty_launcher
-```
-
-Qt libraries and plugins are bundled. You can also launch directly on a Fedora Atomic host
-if its other system libraries are compatible with the container build.
-
-### Regression tests
-
-Build every regression executable and run the registered tests with:
-
-```bash
-cmake --build _Build/linux --target kyty_tests
-ctest --test-dir _Build/linux --output-on-failure
-```
+`_Build/linux/install` then holds `kyty_launcher`, `kyty_emulator`, and `kyty_updater`. The
+[testing guide](docs/testing.md) shows how to build and run the tests and the coverage report.
 
 ## Running
 
-Update your graphics driver before reporting rendering problems.
-
-To use the graphical launcher:
+Start the launcher, add the folders that hold your games, select a game, and run it:
 
 ```bash
 ./_Build/linux/install/kyty_launcher
 ```
 
-On first launch, add one or more game folders in the global settings. The launcher searches those
-folders recursively for game directories containing `eboot.bin` and ZArchive (`.zar`) game dumps
-whose archive root contains `eboot.bin`. Select a detected game and run it from the game list.
-ZArchive dumps are mounted read-only and streamed directly; they do not need to be extracted first.
-
-Official release builds include a built-in updater. Leave **Check for updates on startup** enabled,
-or click **Check for updates**, then choose **Install Update**. The launcher downloads the package
-for your platform from GitHub, checks its SHA-256 checksum, and restarts after installation. Close
-any running games first. Settings, saves, patches, and other files outside the release package are
-preserved; replacement failures restore the previous files. The installation folder must be writable.
-If a package cannot be installed automatically, the updater offers the GitHub release page.
-Source builds and builds from forks do not replace themselves with official releases.
-
-The emulator can also be started directly with a legally obtained game directory, ELF file, or
-ZArchive dump:
+The launcher finds game directories that contain `eboot.bin` and ZArchive (`.zar`) files whose
+archive root contains `eboot.bin`. It shows the emulator's output in its log view. The emulator can
+also run a legally obtained game directly:
 
 ```bash
 ./_Build/linux/install/kyty_emulator --game "/games/ExampleGame"
 ./_Build/linux/install/kyty_emulator --game "/games/ExampleGame.zar"
 ```
 
-To override the Vulkan loader, set `SDL_VULKAN_LIBRARY`:
+The [running guide](docs/running.md) covers the first launch, game folders, ZArchive games, the log
+view, the release archive, the Updater, and every emulator option.
 
-```bash
-SDL_VULKAN_LIBRARY=/path/to/libvulkan.so.1 ./kyty_emulator --game "/games/ExampleGame"
-```
+## Documentation
 
-Run `kyty_emulator --help` to see the available graphics, logging, validation, profiling, and
-debugging options.
+- [Building](docs/building.md): dependencies, configure, build, and install.
+- [Running](docs/running.md): the launcher, the log view, and every emulator option.
+- [Configuration](docs/configuration.md): every global setting and where the settings are stored.
+- [Architecture](docs/architecture.md): the source tree, the process model, and the data folder.
+- [Testing](docs/testing.md): the test suite, coverage, CI, and the manual checklist.
+- [Packaging](docs/packaging.md): the Flatpak build, its permissions, and its updates.
+- [Notification localization](docs/notification-localization.md): the trophy notification texts.
+- [Contributing](CONTRIBUTING.md): branches, checks, formatting, coverage rules, and AI use.
 
-### AI Use
+## Contributing
 
-AI tools may be used for research, reverse engineering, and development assistance. Contributors
-must fully understand, review, and test all code they submit and remain responsible for its
-correctness. Repository communication, including pull-request descriptions, code comments, and
-issue comments, must come from the human contributor rather than an autonomous AI agent.
+Testing games and submitting detailed bug reports are useful ways to contribute. Search the
+[existing issues](https://github.com/MrG00gle/KytyPS5-GTK/issues) first, then use the
+**Game Emulation Status Report** template and attach the complete log.
 
-Pull requests that include AI-assisted or AI-generated work should disclose the scope of the AI
-involvement and describe the human review and testing performed before submission. Unverified or
-untested generated changes may be closed without review.
+Pull requests target the `dev` branch, and every CI check must pass. [CONTRIBUTING.md](CONTRIBUTING.md)
+has the branch rules, the clang-format hook, the coverage rules, and the AI use policy.
 
 ## License
 
-KytyPS5 is licensed under the [GNU General Public License version 2](LICENSE)
-(`GPL-2.0-only`).
+KytyPS5-GTK is licensed under the [GNU General Public License version 2](LICENSE), SPDX identifier
+`GPL-2.0-only`.
 
 This project is based on the original [Kyty](https://github.com/InoriRus/Kyty), which was released
 under the MIT License. Kyty's original copyright and license notice are preserved in
-[`LICENSES/Kyty-MIT.txt`](LICENSES/Kyty-MIT.txt). Third-party components remain subject to the
-licenses included with those components.
+[`LICENSES/Kyty-MIT.txt`](LICENSES/Kyty-MIT.txt). Third-party components remain subject to their own
+licenses, which are included with those components.
 
-## Special Thanks
+## Acknowledgments
 
-- [InoriRus/Kyty](https://github.com/InoriRus/Kyty) — KytyPS5 is based on a heavily modified version
+- [Upstream KytyPS5](https://github.com/KytyPS5/KytyPS5): the emulator that this fork packages and
+  extends.
+- [Kyty](https://github.com/InoriRus/Kyty): upstream KytyPS5 is based on a heavily modified version
   of the original Kyty project.
-- [shadps4-emu/shadPS4](https://github.com/shadps4-emu/shadPS4) — reference for understanding PS4
-  memory behavior, GPU resource aliasing, cache coherency,
-  and the AVPlayer implementation.
+- [shadPS4](https://github.com/shadps4-emu/shadPS4): a reference for understanding PS4 memory
+  behavior, GPU resource aliasing, cache coherency, and the AVPlayer implementation.
