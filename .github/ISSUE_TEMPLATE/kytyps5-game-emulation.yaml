@@ -1,5 +1,5 @@
 name: Game Emulation Status Report
-description: Submit a KytyPS5 game compatibility result, including boot, rendering, audio, input, or gameplay behavior.
+description: Submit a KytyPS5-GTK game compatibility result, including boot, rendering, audio, input, or gameplay behavior.
 title: "[GAME STATUS]: "
 body:
   - type: markdown
@@ -10,7 +10,7 @@ body:
         Before submitting, please:
         - Search existing issues first.
         - Re-test with a clean game dump.
-        - Use the latest KytyPS5 build available to you.
+        - Use the latest KytyPS5-GTK build available to you.
         - Attach the complete log file instead of edited snippets.
 
   - type: markdown
@@ -39,9 +39,21 @@ body:
   - type: input
     id: kyty-version
     attributes:
-      label: KytyPS5 version
-      description: Include the exact build you tested so the report can be matched to the right code.
-      placeholder: "Example: v0.0.1"
+      label: KytyPS5-GTK version
+      description: Include the exact build you tested (the release tag, or the commit of a source build) so the report can be matched to the right code.
+      placeholder: "Example: KytyPS5-GTK-2026-11-12-1a2b3c4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation-type
+    attributes:
+      label: Installation type
+      description: Select how you installed the build you tested.
+      options:
+        - Flatpak
+        - release archive
+        - source build
     validations:
       required: true
 
@@ -71,8 +83,8 @@ body:
     id: regression-builds
     attributes:
       label: Last working build / first broken build
-      description: Optional. Fill this in if the same game worked in an older KytyPS5 build.
-      placeholder: "Example: last worked in v0.0.1, first broke in v0.0.1"
+      description: Optional. Fill this in if the same game worked in an older KytyPS5-GTK build.
+      placeholder: "Example: last worked in KytyPS5-GTK-2026-11-01-0a1b2c3, first broke in KytyPS5-GTK-2026-11-12-1a2b3c4"
 
   - type: markdown
     attributes:
@@ -92,9 +104,9 @@ body:
     id: steps-to-reproduce
     attributes:
       label: Steps to reproduce the result
-      description: List the shortest path to the reported status or failure from a fresh KytyPS5 start.
+      description: List the shortest path to the reported status or failure from a fresh KytyPS5-GTK start.
       placeholder: |
-        1. Open KytyPS5.
+        1. Open the KytyPS5-GTK launcher.
         2. Boot the game.
         3. Select ...
     validations:
@@ -115,11 +127,11 @@ body:
         ## Host system
 
   - type: input
-    id: os
+    id: distribution
     attributes:
-      label: OS
-      description: Include the operating system name, version, and edition when useful.
-      placeholder: "Example: Fedora Linux 43 (Workstation Edition)"
+      label: Linux distribution and version
+      description: Include the distribution name and version, and the edition or desktop when useful.
+      placeholder: "Example: Fedora 43 Workstation"
     validations:
       required: true
 
@@ -159,7 +171,7 @@ body:
     id: log-file
     attributes:
       label: Log file upload
-      description: Drag the full KytyPS5 log (_kyty.txt) into this box, or link to the complete unmodified file.
+      description: Before you reproduce the problem, set Printf output (Debug page of Global settings or of the game's config) to Console, then save the full log from the launcher's log view (Save log…). Or set it to File and take _kyty.txt from the data folder. With the default Silent, the log is nearly empty. Drag the file into this box, or link to the complete unmodified file.
       placeholder: "Attach the full log file here."
     validations:
       required: true
