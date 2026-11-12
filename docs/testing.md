@@ -35,7 +35,7 @@ has no launcher, Updater, or UI tests.
 | `gpu` | Tests that create a Vulkan device: the shader recompiler's Vulkan harness modes and `kernel_file_system`. | A Vulkan 1.3 device. Without one they exit with code 77, which CTest reports as skipped. |
 | `ui` | Tests that drive the GTK launcher's windows, one CTest per case and display backend (`_wayland` and `_x11` suffixes). | weston, Xvfb, and `dbus-daemon`. Without them they exit with code 77 (skipped). |
 | `property` | RapidCheck property tests, one per correctness property (`<executable>_p<NN>`). Each run checks at least 100 generated inputs. | Nothing special. |
-| `source-check` | Checks of the repository content: removed platform terms and deleted paths, leftovers of the old launcher's toolkit, the layering rule, translatable strings and the launcher's own texts for core errors, the dialog registry, the Flatpak manifest, its pins, and the metainfo, the CI workflow structure, and the preserved license files and copyright lines. | Python 3 and PyYAML. |
+| `source-check` | Checks of the repository content: removed platform terms and deleted paths, leftovers of the old launcher's toolkit, the layering rule, translatable strings and the launcher's own texts for core errors, the dialog registry, the Flatpak manifest, its pins, and the metainfo, the CI workflow structure, the documentation (the README structure, the terms of the guides, their links, the issue template, and the documented lint exceptions), and the preserved license files and copyright lines. | Python 3 and PyYAML. |
 
 Tests without a label need nothing beyond the build.
 
@@ -162,7 +162,8 @@ A missing file, or a file with anything other than one such value, fails the che
 `.github/workflows/build.yml` runs on pushes and pull requests to `main` and `dev` and on manual
 dispatch. Its jobs:
 
-- **Ubuntu 24.04**: Release build, the full test suite, the release archive, and its license check;
+- **Ubuntu 24.04**: Release build, the full test suite, the documentation checks, the release
+  archive, and its license check;
 - **Fedora** (the newest generally available release): first without GTK and with
   `KYTY_BUILD_LAUNCHER=OFF`, then with everything, each followed by the full test suite;
 - **Coverage**: the coverage build on Ubuntu 24.04, the report as an artifact, and the coverage
@@ -177,6 +178,14 @@ GPU tests and with headless display servers for the UI tests. `tools/checks/juni
 fails the job for every failed, skipped, or not-run test, so a GPU test or UI test that skips counts
 as a failure. `tools/checks/check_regression.py` checks that every test in
 `tools/checks/main-passing-tests.txt`, the tests that passed on the original `main`, still passes.
+
+The Ubuntu job also checks the documentation. `tools/docs/check_links.py --repo .` fails on a
+relative link or image in `README.md`, `CONTRIBUTING.md`, or `docs/` whose file does not exist or
+whose `#fragment` matches no heading anchor, and prints the file, line, and target of each.
+`tools/docs/check_help_options.py` runs the job's `kyty_emulator --help` and fails when it exits
+with an error, prints no option, or prints an option that the
+[running guide](running.md#emulator-options) does not name, and prints each missing option. The
+CTests `docs_links` and `docs_help_options` run the same checks locally.
 
 The repository owner approved two exceptions, each for the listed tests only:
 

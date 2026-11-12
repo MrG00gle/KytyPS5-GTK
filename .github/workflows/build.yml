@@ -211,6 +211,18 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -B tools/checks/workflow_check.py --workflow .github/workflows/build.yml
 
+      - name: Check the documentation links
+        # Every relative link, image, and #fragment in README.md, CONTRIBUTING.md, and docs/.
+        if: ${{ !cancelled() }}
+        run: python3 -B tools/docs/check_links.py --repo .
+
+      - name: Check the emulator options in the running guide
+        # Every option that this run's kyty_emulator --help prints appears in docs/running.md.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          python3 -B tools/docs/check_help_options.py --emulator "$BUILD_DIR/kyty_emulator" \
+            --doc docs/running.md
+
       - name: Install
         id: install
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

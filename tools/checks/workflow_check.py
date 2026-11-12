@@ -39,7 +39,9 @@ both are accepted) and checks:
   uploads    every actions/upload-artifact step has if: always(), and the flatpak-builder action
              does not upload on its own (upload-artifact: false).
   steps      the steps the design requires in a job (REQUIRED_STEPS): the ubuntu job runs this
-             check on the workflow.
+             check on the workflow, tools/docs/check_links.py on the checkout, and
+             tools/docs/check_help_options.py on the kyty_emulator it built, against
+             docs/running.md (task 29.6).
 
 Usage:
     workflow_check.py --workflow FILE
@@ -85,12 +87,22 @@ RELEASE_JOB = "release"
 RELEASE_CONDITIONS = {"github.event_name == 'push'", "github.ref == 'refs/heads/main'",
                       "github.repository == 'MrG00gle/KytyPS5-GTK'"}
 TIMING_RERUN = "timing-rerun"
-# Job id -> [(what the step does, a regex that one logical line of its run must match)]. The
-# documentation checks (task 29.6) join here.
+# Job id -> [(what the step does, a regex that one logical line of its run must match)].
 REQUIRED_STEPS = {
-    "ubuntu": [("the workflow structure check",
-                re.compile(r"(?<![\w./-])tools/checks/workflow_check\.py\s+--workflow\s+"
-                           r"\.github/workflows/build\.yml(?![\w./-])"))],
+    "ubuntu": [
+        ("the workflow structure check",
+         re.compile(r"(?<![\w./-])tools/checks/workflow_check\.py\s+--workflow\s+"
+                    r"\.github/workflows/build\.yml(?![\w./-])")),
+        # Requirements 20.10 and 20.13.
+        ("the documentation link check",
+         re.compile(r"(?<![\w./-])tools/docs/check_links\.py\s+--repo\s+\.(?![\w./-])")),
+        # Requirements 20.3 and 20.12: the Emulator of this run.
+        ("the running guide's option check",
+         re.compile(r"(?<![\w./-])tools/docs/check_help_options\.py\s+--emulator\s+"
+                    r"(?:\"\$(?:BUILD_DIR|\{BUILD_DIR\})/kyty_emulator\"|"
+                    r"\$(?:BUILD_DIR|\{BUILD_DIR\})/kyty_emulator)\s+--doc\s+docs/running\.md"
+                    r"(?![\w./-])")),
+    ],
 }
 
 INSTALL_COMMAND = re.compile(content_checks.QT_PACKAGE_MANAGER.pattern

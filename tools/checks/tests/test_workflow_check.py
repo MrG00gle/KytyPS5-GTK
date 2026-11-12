@@ -401,6 +401,40 @@ class TestResults(Workflow):
             steps.remove(find_step(data, "ubuntu", "Check the workflow structure"))
         self.assert_fails(change, "job ubuntu: has no step that runs the workflow structure check")
 
+    def test_missing_documentation_link_step(self):
+        def change(data):
+            steps = data["jobs"]["ubuntu"]["steps"]
+            steps.remove(find_step(data, "ubuntu", "Check the documentation links"))
+        self.assert_fails(change, "job ubuntu: has no step that runs the documentation link check")
+
+    def test_missing_help_option_step(self):
+        def change(data):
+            steps = data["jobs"]["ubuntu"]["steps"]
+            steps.remove(find_step(data, "ubuntu",
+                                   "Check the emulator options in the running guide"))
+        self.assert_fails(change, "job ubuntu: has no step that runs the running guide's option "
+                          "check")
+
+    def test_help_options_against_another_guide(self):
+        def change(data):
+            replace_in_run(data, "ubuntu", "Check the emulator options in the running guide",
+                           "--doc docs/running.md", "--doc README.md")
+        self.assert_fails(change, "the running guide's option check")
+
+    def test_help_options_of_an_installed_emulator(self):
+        def change(data):
+            replace_in_run(data, "ubuntu", "Check the emulator options in the running guide",
+                           '"$BUILD_DIR/kyty_emulator"', "/usr/bin/kyty_emulator")
+        self.assert_fails(change, "the running guide's option check")
+
+    def test_documentation_steps_only_in_another_job(self):
+        def change(data):
+            steps = data["jobs"]["ubuntu"]["steps"]
+            step = find_step(data, "ubuntu", "Check the documentation links")
+            steps.remove(step)
+            data["jobs"]["fedora"]["steps"].append(step)
+        self.assert_fails(change, "job ubuntu: has no step that runs the documentation link check")
+
 
 class Release(Workflow):
     def test_release_if_without_the_repository_condition(self):

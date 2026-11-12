@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Repository content checks for the removed platforms (task 8.3), the GTK settings rule, the
-Qt removal and GTK launcher rules (task 23.2), and the launcher's own texts for core errors (phase
-9 V1).
+Qt removal and GTK launcher rules (task 23.2), the launcher's own texts for core errors (phase
+9 V1), and the documentation (task 29.7).
 
 Usage:
     content_checks.py --repo DIR --check ID
@@ -101,6 +101,55 @@ match is printed as `path:line: text`. The checks mirror the phase 2 scans:
                      alerts.h also count when a helper that the registry
                      calls calls them.
 
+The Documentation_Set checks (tasks 29.6 and 29.7) read README.md,
+CONTRIBUTING.md, and every Markdown file under docs/. They read Markdown by
+blocks: headings, list items, table rows, paragraphs, and fenced code blocks.
+
+    readme_structure Requirements 19.1-19.6, 19.8-19.10, 20.9, 21.2, 21.3,
+                     21.5 and design.md's heading order: exactly one "#"
+                     heading, KytyPS5-GTK, and the "#" and "##" headings in
+                     design.md's order; before the first "##" heading, one
+                     sentence that calls KytyPS5-GTK a fork of upstream
+                     KytyPS5 based on Kyty and links both repositories, the
+                     Sony non-affiliation, and "only legally obtained" game
+                     files; in "## Fork changes", a list item of its own for
+                     each of the seven 19.2 topics; a paragraph, list, or
+                     code block in each 19.5 topic section; at least one
+                     build status badge, each naming a workflow of the fork
+                     in both its image and its link; every GitHub releases
+                     and issues URL under the fork's; "upstream KytyPS5" in
+                     the text, sentence, or list item of every Discord,
+                     upstream discussions, or kytyps5.github.io link;
+                     "upstream" in the heading, sentence, list item, link
+                     text, or alternative text of every KytyPS5 that is not
+                     KytyPS5-GTK, outside URLs; the system requirement
+                     statements; the flatpak install and flatpak run
+                     commands; a relative link to every other
+                     Documentation_Set file; the License statements and
+                     links; and one Acknowledgments item per project.
+    docs_terms       Requirements 19.7, 3.6, 4.5: in the Documentation_Set
+                     outside the README Fork changes section, no
+                     Removed_Platform_Term (case-sensitive whole words), no
+                     word that begins with "qt" in any case, no .exe file
+                     name, and none of the Apple terms of 4.5.
+    issue_template   Requirements 20.11, 20.14: every file under
+                     .github/ISSUE_TEMPLATE/ except config.yml is an issue
+                     form with a required "distribution" input whose label
+                     asks for the distribution and version, and a required
+                     "installation-type" dropdown with exactly the options
+                     Flatpak, release archive, and source build; no
+                     Removed_Platform_Term anywhere in it; and no placeholder
+                     or value with a .exe name, a drive-letter path, or a
+                     backslash.
+    packaging_lint_exceptions_documented
+                     Requirements 14.11, 20.7: every lint ID in
+                     packaging/flatpak/lint-exceptions.json, and every ID
+                     that a workflow adds to a per-run copy with
+                     tools/ci/lint_exceptions.py --add, appears in
+                     docs/packaging.md outside code blocks, in a table row
+                     with a justification sentence in another cell, or in a
+                     paragraph or list item with a sentence besides the ID.
+
 The forbidden terms are built from adjacent string literals, so that this file,
 which is inside the scanned scope, does not contain them.
 
@@ -110,7 +159,9 @@ or repository error.
 
 import argparse
 import bisect
+import json
 import os
+import posixpath
 import re
 import stat
 import subprocess
@@ -253,6 +304,115 @@ FINAL_TYPE = re.compile(
     r"G_DECLARE_FINAL_TYPE\s*\(\s*(\w+)\s*,\s*(\w+)\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*\)")
 ALERT_HELPER = re.compile(
     rf"(?<![{WORD_CHARS}])GtkWindow\s*\*\s*((?:Show|Confirm|Ask|Choose)\w*)\s*\(")
+
+# The Documentation_Set: README.md, CONTRIBUTING.md, and every Markdown file under docs/.
+README = "README.md"
+DOCUMENTATION_TOP = (README, "CONTRIBUTING.md")
+FORK_REPOSITORY = "MrG00gle/KytyPS5-GTK"
+FORK_URL = "https://github.com/" + FORK_REPOSITORY
+UPSTREAM_URL = "https://github.com/KytyPS5/KytyPS5"
+KYTY_URL = "https://github.com/InoriRus/Kyty"
+SHADPS4_URL = "https://github.com/shadps4-emu/shadPS4"
+APP_ID = "io.github.MrG00gle.KytyPS5_GTK"
+# design.md "Documentation set layout": the README's first- and second-level headings, in order.
+README_HEADINGS = (
+    "# KytyPS5-GTK", FORK_CHANGES_HEADING, "## Project status", "## System requirements",
+    "## Install with Flatpak", "## Building from source", "## Running", "## Documentation",
+    "## Contributing", "## License", "## Acknowledgments")
+# Requirement 19.5: the topic sections, each with a paragraph, list, or code block.
+README_TOPIC_SECTIONS = ("Project status", "System requirements", "Install with Flatpak",
+                         "Building from source", "Running", "Contributing", "License",
+                         "Acknowledgments")
+ACKNOWLEDGED = (("KytyPS5", UPSTREAM_URL), ("Kyty", KYTY_URL), ("shadPS4", SHADPS4_URL))
+MARKDOWN_FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+MARKDOWN_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+BLOCKQUOTE_MARKER = re.compile(r"^\s*>\s?")
+LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+# A Markdown link or image: "!" for an image, the text (one level of brackets inside, so a linked
+# badge's image), and the target (parentheses balanced one level deep), with an optional title.
+MARKDOWN_LINK = re.compile(r"(!?)\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\(\s*<?"
+                           r"([^\s<>()]*(?:\([^\s()]*\)[^\s<>()]*)*)>?"
+                           r"(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)")
+HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>")
+HTML_ANCHOR_ELEMENT = re.compile(r"<a\s[^<>]*?(?<![\w-])href\s*=\s*\"([^\"]*)\"[^<>]*>(.*?)</a\s*>",
+                                 re.IGNORECASE | re.DOTALL)
+HTML_IMAGE = re.compile(r"<img\s[^<>]*>", re.IGNORECASE)
+HTML_ATTRIBUTE = re.compile(r"(?<![\w-])([A-Za-z][\w-]*)\s*=\s*\"([^\"]*)\"")
+BARE_URL = re.compile(r"https?://[^\s<>\"'`()\[\]]+")
+SENTENCE_END = re.compile(r"[.!?](?=\s)")
+# Requirement 19.3: build status badges, and links to GitHub releases and issues pages.
+BUILD_BADGE = re.compile(r"/actions/workflows/[^/?#\s]+/badge\.svg"
+                         r"|shields\.io/github/"
+                         r"(?:actions/workflow/status|workflow/status|check-runs)/")
+GITHUB_PAGE = re.compile(r"^https?://(?:www\.)?github\.com/([^/\s?#]+/[^/\s?#]+)/(releases|issues)"
+                         r"(?=$|[/?#])", re.IGNORECASE)
+# Requirement 19.4: the upstream community links.
+COMMUNITY_LINK = re.compile(
+    r"^https?://(?:(?:www\.)?discord\.gg/|(?:www\.|ptb\.|canary\.)?discord(?:app)?\.com/invite/"
+    r"|(?:www\.)?github\.com/KytyPS5/KytyPS5/discussions(?=$|[/?#])"
+    r"|kytyps5\.github\.io(?=$|[/?#]))",
+    re.IGNORECASE)
+UPSTREAM_KYTYPS5 = re.compile(r"(?i)(?<![A-Za-z0-9_])upstream\s+KytyPS5(?!-GTK)(?![A-Za-z0-9_])")
+# Requirement 19.10: KytyPS5 as a whole word, not followed by -GTK.
+BARE_KYTYPS5 = re.compile(r"(?<![A-Za-z0-9_])KytyPS5(?!-GTK)(?![A-Za-z0-9_])")
+UPSTREAM = re.compile(r"(?i)(?<![A-Za-z0-9_])upstream(?![A-Za-z0-9_])")
+
+
+def all_of(*patterns):
+    compiled = [re.compile(pattern) for pattern in patterns]
+    return lambda text: all(pattern.search(text) for pattern in compiled)
+
+
+# Requirement 19.2: the Fork changes topics, each in a list item of its own.
+FORK_CHANGE_TOPICS = (
+    ("the Linux x86-64-only scope", all_of(r"\bLinux x86-64\b", r"(?i)\bonly\b")),
+    ("the GTK launcher replacing the old launcher",
+     all_of(r"\bGTK\b", r"(?<![\w-])Q" r"t(?![\w-])", r"(?i)\blauncher\b")),
+    ("the Flatpak package", all_of(r"\bFlatpak\b")),
+    ("the removal of Win" "dows support", all_of(r"(?<![\w-])Win" r"dows(?![\w-])")),
+    ("the removal of mac" "OS support", all_of(r"(?<![\w-])mac" r"OS(?![\w-])")),
+    ("the removal of Nix support",
+     all_of(r"(?<![\w-])Nix(?![\w-])", r"(?<![\w-])Nix" r"OS(?![\w-])")),
+    ("the coverage targets (90 % and 95 %, 90 %, 60 %, and the 0.50-point rule)",
+     lambda text: (len(re.findall(r"(?<![\d.])90\s?%", text)) >= 2
+                   and all_of(r"(?<![\d.])95\s?%", r"(?<![\d.])60\s?%", r"(?<![\d.])0\.50(?!\d)")(
+                       text))),
+)
+FLATPAK_INSTALL = re.compile(r"(?<![\w-])flatpak\s+install\b[^\n]*?\S\.flatpak(?![\w-])")
+FLATPAK_RUN = re.compile(rf"(?<![\w-])flatpak\s+run\s+(?:-\S+\s+)*{re.escape(APP_ID)}(?![\w.-])")
+# Requirements 21.2 and 21.5: the License section's statements.
+LICENSE_STATEMENTS = (
+    (re.compile(r"GNU General Public License,?\s+version\s+2\b"),
+     "that the project is licensed under the GNU General Public License version 2", "21.2"),
+    (re.compile(r"(?<![\w.-])GPL-2\.0-only(?![\w.-])"), "the SPDX identifier GPL-2.0-only",
+     "21.2"),
+    (re.compile(r"\bbased\s+on\b.*\bKyty\b.*\bMIT\s+License\b"),
+     "that the project is based on Kyty, released under the MIT License", "21.5"),
+    (re.compile(r"(?i)\bthird-party\s+components\s+remain\s+subject\s+to\s+their\s+own\s+"
+                r"licenses\b"),
+     "that third-party components remain subject to their own licenses", "21.5"),
+)
+# docs_terms: Removed_Platform_Terms (19.7), words that begin with "qt" in any case (19.7), .exe
+# file names (3.6), and the Apple terms of Requirement 4.5, built from pieces as above.
+REMOVED_PLATFORM_TERMS = ("Win" "dows", "MS" "VC", "clang" "-cl", "win" "pthread", "Power" "Shell",
+                          "mac" "OS", "Molten" "VK", "Roset" "ta") + NIX_TERMS
+QT_WORD = re.compile(r"(?i)(?<![A-Za-z0-9_])q" r"t")
+EXE_NAME = re.compile(r"(?i)[A-Za-z0-9_-]\.ex" r"e(?![A-Za-z0-9_])")
+APPLE_DOC_TERMS = ("Apple" " Silicon", "X" "code", "Home" "brew", "code" "sign",
+                   "libMolten" "VK.dylib", "KytyPS5" ".app")
+# issue_template (20.11, 20.14)
+ISSUE_TEMPLATES = ".github/ISSUE_TEMPLATE"
+ISSUE_TEMPLATE_CONFIGS = ("config.yml", "config.yaml")
+DISTRIBUTION_FIELD = "distribution"
+INSTALLATION_TYPE_FIELD = "installation-type"
+INSTALLATION_TYPES = ["Flatpak", "release archive", "source build"]
+# A drive-letter path or a backslash: not a Linux example.
+NON_LINUX_PATH = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]|\\")
+# packaging_lint_exceptions_documented (14.11, 20.7)
+LINT_EXCEPTIONS = "packaging/flatpak/lint-exceptions.json"
+PACKAGING_GUIDE = "docs/packaging.md"
+LINT_EXCEPTIONS_TOOL = re.compile(r"(?<![\w./-])(?:\./)?tools/ci/lint_exceptions\.py(?![\w.-])")
 
 
 class RepoError(Exception):
@@ -758,6 +918,669 @@ def check_core_text(repo, files):
     return violations, scanned
 
 
+# ---- The Documentation_Set (tasks 29.6 and 29.7)
+
+class Block:
+    """A Markdown block: kind is "heading", "item" (a list item), "row" (a table row),
+    "paragraph", or "code" (a fenced code block); text has its lines joined with single spaces
+    (a code block keeps its newlines), without blockquote markers or the list marker."""
+
+    __slots__ = ("kind", "line", "text", "level")
+
+    def __init__(self, kind, line, text, level=0):
+        self.kind = kind
+        self.line = line
+        self.text = text
+        self.level = level
+
+
+def markdown_fenced_lines(lines):
+    """The line numbers (1-based) of the fenced code blocks, fences included."""
+    fenced = set()
+    fence = None
+    for number, line in enumerate(lines, 1):
+        match = MARKDOWN_FENCE.match(line)
+        if fence is None:
+            if match and not (match.group(1)[0] == "`" and "`" in line[match.end():]):
+                fence = match.group(1)
+                fenced.add(number)
+        else:
+            fenced.add(number)
+            if (match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence)
+                    and not line[match.end():].strip()):
+                fence = None
+    return fenced
+
+
+def markdown_blocks(lines):
+    fenced = markdown_fenced_lines(lines)
+    blocks = []
+    current = []
+
+    def close():
+        if current:
+            kind, line, parts = current
+            joiner = "\n" if kind == "code" else " "
+            blocks.append(Block(kind, line, joiner.join(parts).strip()))
+            current.clear()
+
+    for number, raw in enumerate(lines, 1):
+        line = raw.rstrip("\r")
+        if number in fenced:
+            if not current or current[0] != "code":
+                close()
+                current.extend(("code", number, []))
+            current[2].append(line)
+            continue
+        if current and current[0] == "code":
+            close()
+        text = BLOCKQUOTE_MARKER.sub("", line)
+        heading = MARKDOWN_HEADING.match(text)
+        if heading or not text.strip() or text.lstrip().startswith("|") or LIST_MARKER.match(text):
+            close()
+        if heading:
+            title = (heading.group(2) or "").strip()
+            blocks.append(Block("heading", number, title, len(heading.group(1))))
+        elif text.lstrip().startswith("|"):
+            blocks.append(Block("row", number, text.strip()))
+        elif LIST_MARKER.match(text):
+            current.extend(("item", number, [LIST_MARKER.sub("", text, count=1).strip()]))
+        elif text.strip():
+            if not current:
+                current.extend(("paragraph", number, []))
+            current[2].append(text.strip())
+    close()
+    return blocks
+
+
+def heading_line(block):
+    return "#" * block.level + " " + block.text
+
+
+def readme_sections(blocks):
+    """{title: blocks} of the "## " sections; "" holds the blocks before the first one."""
+    sections = {"": []}
+    current = ""
+    for block in blocks:
+        if block.kind == "heading" and block.level == 2:
+            current = block.text
+            sections.setdefault(current, [])
+            continue
+        sections[current].append(block)
+    return sections
+
+
+class Link:
+    __slots__ = ("start", "end", "text", "text_span", "target", "target_span", "image", "parent")
+
+    def __init__(self, start, end, text, text_span, target, target_span, image, parent=None):
+        self.start = start
+        self.end = end
+        self.text = text
+        self.text_span = text_span
+        self.target = target
+        self.target_span = target_span
+        self.image = image
+        self.parent = parent
+
+
+def markdown_links(text):
+    """Every Markdown link and image of text (also nested, as in a linked badge), every HTML <a>
+    with an href and <img> with a src, and every bare URL outside them, in text order. An image's
+    text is its alternative text; its parent is the target of the link around it."""
+    links = nested_markdown_links(text, 0, None)
+    anchored = []
+    for match in HTML_ANCHOR_ELEMENT.finditer(text):
+        anchored.append(match.span())
+        links.append(Link(match.start(), match.end(), match.group(2), match.span(2),
+                          match.group(1), match.span(1), False))
+        for image in HTML_IMAGE.finditer(match.group(2)):
+            links.extend(html_image(image, match.start(2), match.group(1)))
+    for image in HTML_IMAGE.finditer(text):
+        if not any(start <= image.start() < end for start, end in anchored):
+            links.extend(html_image(image, 0, None))
+    taken = [span for link in links for span in (link.target_span, (link.start, link.end))]
+    for match in BARE_URL.finditer(text):
+        if not any(start <= match.start() < end for start, end in taken):
+            url = match.group(0).rstrip(".,;:!?")
+            span = (match.start(), match.start() + len(url))
+            links.append(Link(span[0], span[1], "", (span[0], span[0]), url, span, False))
+    return sorted(links, key=lambda link: link.start)
+
+
+def nested_markdown_links(text, offset, parent):
+    links = []
+    for match in MARKDOWN_LINK.finditer(text):
+        image = match.group(1) == "!"
+        links.append(Link(offset + match.start(), offset + match.end(), match.group(2),
+                          (offset + match.start(2), offset + match.end(2)), match.group(3),
+                          (offset + match.start(3), offset + match.end(3)), image, parent))
+        links.extend(nested_markdown_links(match.group(2), offset + match.start(2),
+                                           None if image else match.group(3)))
+    return links
+
+
+def html_image(match, offset, parent):
+    attributes = {name.lower(): (value, (offset + match.start() + value_start,
+                                         offset + match.start() + value_start + len(value)))
+                  for name, value, value_start in (
+                      (found.group(1), found.group(2), found.start(2))
+                      for found in HTML_ATTRIBUTE.finditer(match.group(0)))}
+    if "src" not in attributes:
+        return []
+    alt, alt_span = attributes.get("alt", ("", (0, 0)))
+    source, source_span = attributes["src"]
+    return [Link(offset + match.start(), offset + match.end(), alt, alt_span, source, source_span,
+                 True, parent)]
+
+
+def url_spans(text):
+    """The spans of text that are URLs or link targets, which the README rules skip."""
+    spans = [link.target_span for link in markdown_links(text)]
+    spans += [match.span(2) for match in HTML_ATTRIBUTE.finditer(text)
+              if match.group(1).lower() in ("href", "src")]
+    return spans + [match.span() for match in BARE_URL.finditer(text)]
+
+
+def sentences(text, links):
+    """The (start, end) of each sentence of a block's text; a sentence ends after ".", "!", or
+    "?" before a space, but not inside a link or an HTML tag."""
+    protected = [(link.start, link.end) for link in links]
+    protected += [match.span() for match in HTML_TAG.finditer(text)]
+    bounds = [0]
+    for match in SENTENCE_END.finditer(text):
+        if not any(start < match.end() < end for start, end in protected):
+            bounds.append(match.end())
+    bounds.append(len(text))
+    return [(start, end) for start, end in zip(bounds, bounds[1:]) if text[start:end].strip()]
+
+
+def visible(text, spans):
+    """text with HTML tags and the given spans blanked, offsets kept."""
+    characters = list(text)
+    for start, end in [match.span() for match in HTML_TAG.finditer(text)] + list(spans):
+        characters[start:end] = " " * (end - start)
+    return "".join(characters)
+
+
+def normalized(text):
+    return " ".join(text.split())
+
+
+def relative_target(source, target):
+    """The repository path of a relative link target (fragment and query dropped), or None."""
+    target = target.strip()
+    if not target or re.match(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|#)", target):
+        return None
+    path = re.split(r"[?#]", target, maxsplit=1)[0]
+    joined = posixpath.normpath(posixpath.join(posixpath.dirname(source), path))
+    return "" if joined == "." else joined
+
+
+def documentation_set(files):
+    return [path for path in files
+            if path in DOCUMENTATION_TOP or (path.startswith("docs/") and path.endswith(".md"))]
+
+
+def distinct_items(candidates):
+    """The topics that cannot each get an item of their own; candidates[i] is the set of the items
+    that topic i matches (Kuhn's matching)."""
+    owner = {}
+
+    def assign(topic, seen):
+        for item in sorted(candidates[topic]):
+            if item in seen:
+                continue
+            seen.add(item)
+            if item not in owner or assign(owner[item], seen):
+                owner[item] = topic
+                return True
+        return False
+
+    return [topic for topic in range(len(candidates)) if not assign(topic, set())]
+
+
+class ReadmeCheck:
+    """The README rules of readme_structure."""
+
+    def __init__(self, repo, files, lines):
+        self.files = files
+        self.lines = lines
+        self.blocks = markdown_blocks(lines)
+        self.sections = readme_sections(self.blocks)
+        self.violations = []
+
+    def report(self, line, text, requirement):
+        where = f"{README}:{line}" if line else README
+        label = "Requirements" if "," in requirement else "Requirement"
+        self.violations.append(f"{where}: {text} ({label} {requirement})")
+
+    def text_blocks(self, title):
+        return [block for block in self.sections.get(title, []) if block.kind != "heading"]
+
+    def run(self):
+        self.check_headings()
+        self.check_intro()
+        self.check_fork_changes()
+        self.check_topic_sections()
+        self.check_links()
+        self.check_upstream_names()
+        self.check_system_requirements()
+        self.check_flatpak()
+        self.check_documentation_links()
+        self.check_license()
+        self.check_acknowledgments()
+        return self.violations
+
+    def check_headings(self):
+        headings = [block for block in self.blocks if block.kind == "heading" and block.level <= 2]
+        found = [heading_line(block) for block in headings]
+        first_level = [block for block in headings if block.level == 1]
+        if len(first_level) != 1 or first_level[0].text != README_HEADINGS[0][2:]:
+            shown = ", ".join(repr(heading_line(block)) for block in first_level) or "none"
+            self.report(first_level[0].line if first_level else 0,
+                        f"the README needs exactly one first-level heading, "
+                        f"{README_HEADINGS[0]!r}; it has {shown}", "19.1")
+        if found != list(README_HEADINGS):
+            self.report(0, f"the first- and second-level headings are {found}, not design.md's "
+                        f"{list(README_HEADINGS)} in that order", "19.2, 19.5")
+
+    def check_intro(self):
+        intro = [block for block in self.sections[""] if block.kind in ("paragraph", "item")]
+        text = normalized(" ".join(block.text for block in intro))
+        statement = False
+        for block in intro:
+            links = markdown_links(block.text)
+            for start, end in sentences(block.text, links):
+                sentence = block.text[start:end]
+                targets = {link.target.rstrip("/") for link in links
+                           if start <= link.start < end and not link.image}
+                if ("KytyPS5-GTK" in sentence and re.search(r"(?i)\bfork\b", sentence)
+                        and re.search(r"(?i)\bbased\s+on\b", sentence)
+                        and {UPSTREAM_URL, KYTY_URL} <= targets):
+                    statement = True
+        if not statement:
+            self.report(0, "no sentence before the first second-level heading states that "
+                        f"KytyPS5-GTK is a fork of upstream KytyPS5 ({UPSTREAM_URL}), which is "
+                        f"based on Kyty ({KYTY_URL}), with a link to both", "19.1")
+        if not re.search(r"not\s+affiliated\s+with\s+Sony\s+Interactive\s+Entertainment", text):
+            self.report(0, "no statement before the first second-level heading that KytyPS5-GTK "
+                        "is not affiliated with Sony Interactive Entertainment", "19.6")
+        if not re.search(r"(?i)\bonly\s+legally\s+obtained\b", text):
+            self.report(0, "no statement before the first second-level heading that users must "
+                        "use only legally obtained game files", "19.6")
+
+    def check_fork_changes(self):
+        items = [block for block in self.text_blocks(FORK_CHANGES_HEADING[3:])
+                 if block.kind == "item"]
+        candidates = [{index for index, item in enumerate(items) if matches(item.text)}
+                      for _, matches in FORK_CHANGE_TOPICS]
+        for topic in distinct_items(candidates):
+            name = FORK_CHANGE_TOPICS[topic][0]
+            what = "no list item" if not candidates[topic] else "no list item of its own"
+            self.report(0, f"{FORK_CHANGES_HEADING} has {what} for {name}", "19.2")
+
+    def check_topic_sections(self):
+        for title in README_TOPIC_SECTIONS:
+            if title in self.sections and not any(
+                    block.kind in ("paragraph", "item", "row", "code") and block.text
+                    for block in self.sections[title]):
+                self.report(0, f"the section ## {title} has no paragraph, list, or code block",
+                            "19.5")
+
+    def all_links(self):
+        for block in self.blocks:
+            if block.kind != "code":
+                for link in markdown_links(block.text):
+                    yield block, link
+
+    def check_links(self):
+        badges = 0
+        workflows = {path.rsplit("/", 1)[-1] for path in self.files
+                     if under(".github/workflows")(path) and path.endswith((".yml", ".yaml"))}
+        for block, link in self.all_links():
+            if link.image and BUILD_BADGE.search(link.target):
+                badges += 1
+                self.check_badge(block, link, workflows)
+        if not badges:
+            self.report(0, "the README has no build status badge", "19.3")
+        text = "\n".join(block.text for block in self.blocks if block.kind != "code")
+        masked = CODE_SPAN.sub(lambda match: " " * len(match.group(0)), text)
+        for match in BARE_URL.finditer(masked):
+            url = match.group(0).rstrip(".,;:!?")
+            found = GITHUB_PAGE.match(url)
+            if not found:
+                continue
+            page = found.group(2)
+            wanted = f"{FORK_URL}/{page}"
+            if not (url == wanted or url.startswith((wanted + "/", wanted + "?", wanted + "#"))):
+                self.report(self.line_of_text(url), f"the {page} link {url} is not under "
+                            f"{wanted}", "19.3")
+        for block, link in self.all_links():
+            if link.image or not COMMUNITY_LINK.match(link.target):
+                continue
+            if self.has_phrase(block, link, UPSTREAM_KYTYPS5):
+                continue
+            self.report(block.line, f"the link to {link.target} does not say \"upstream "
+                        "KytyPS5\" in its text, sentence, or list item", "19.4")
+
+    def check_badge(self, block, link, workflows):
+        found = re.search(rf"{re.escape(FORK_REPOSITORY)}/(?:actions/workflows/)?([\w.-]+\.ya?ml)",
+                          link.target)
+        workflow = found.group(1) if found else None
+        if workflow not in workflows:
+            self.report(block.line, f"the build badge image {link.target} names no workflow of "
+                        f"{FORK_REPOSITORY} under .github/workflows/", "19.3")
+            return
+        wanted = f"{FORK_URL}/actions/workflows/{workflow}"
+        parent = link.parent or ""
+        if not (parent == wanted or parent.startswith((wanted + "?", wanted + "#"))):
+            self.report(block.line, f"the build badge {link.target} links to "
+                        f"{parent or 'nothing'}, not {wanted}", "19.3")
+
+    def line_of_text(self, needle):
+        for number, line in enumerate(self.lines, 1):
+            if needle in line:
+                return number
+        return 0
+
+    @staticmethod
+    def has_phrase(block, link, phrase):
+        """Whether phrase is in the link's text, its sentence, or (for a list item or heading)
+        the block."""
+        links = markdown_links(block.text)
+        shown = visible(block.text, url_spans(block.text))
+        if phrase.search(link.text):
+            return True
+        if block.kind in ("item", "heading") and phrase.search(shown):
+            return True
+        return any(start <= link.start < end and phrase.search(shown[start:end])
+                   for start, end in sentences(block.text, links))
+
+    def check_upstream_names(self):
+        for block in self.blocks:
+            links = markdown_links(block.text)
+            skipped = url_spans(block.text)
+            shown = visible(block.text, skipped)
+            alternatives = [link.text_span for link in links if link.image]
+            link_texts = [link.text_span for link in links if not link.image]
+            tags = [match.span() for match in HTML_TAG.finditer(block.text)]
+            spans = sentences(block.text, links)
+            for match in BARE_KYTYPS5.finditer(block.text):
+                position = match.start()
+                if any(start <= position < end for start, end in skipped):
+                    continue
+                containers = [block.text[start:end] for start, end in alternatives + link_texts
+                              if start <= position < end]
+                inside_tag = any(start <= position < end for start, end in tags)
+                if block.kind in ("item", "heading"):
+                    containers.append(shown)
+                if not inside_tag:
+                    containers += [shown[start:end] for start, end in spans
+                                   if start <= position < end]
+                if not any(UPSTREAM.search(container) for container in containers):
+                    sentence = next((block.text[start:end] for start, end in spans
+                                     if start <= position < end), block.text)
+                    self.report(block.line, f"KytyPS5 without \"upstream\" in its heading, "
+                                f"sentence, list item, link text, or alternative text: "
+                                f"{display(sentence)}", "19.10")
+
+    def section_sentences(self, title):
+        for block in self.text_blocks(title):
+            links = markdown_links(block.text)
+            for start, end in sentences(block.text, links):
+                yield block.text[start:end]
+
+    def check_system_requirements(self):
+        found = list(self.section_sentences("System requirements"))
+        if not any(re.search(r"\bonly\b", sentence) and "Linux" in sentence
+                   and "x86-64" in sentence for sentence in found):
+            self.report(0, "## System requirements does not state that the only supported "
+                        "platform is Linux on an x86-64 processor", "19.8")
+        if not any("Vulkan 1.3" in sentence and "GPU" in sentence
+                   and re.search(r"(?i)\b(?:requir|need|must)", sentence) for sentence in found):
+            self.report(0, "## System requirements does not state that a GPU with Vulkan 1.3 "
+                        "support is required", "19.8")
+
+    def check_flatpak(self):
+        lines = [line for block in self.text_blocks("Install with Flatpak")
+                 for line in block.text.split("\n")]
+        if not any(FLATPAK_INSTALL.search(line) for line in lines):
+            self.report(0, "## Install with Flatpak has no flatpak install command for a "
+                        ".flatpak bundle", "19.9")
+        if not any(FLATPAK_RUN.search(line) for line in lines):
+            self.report(0, f"## Install with Flatpak has no flatpak run {APP_ID} command", "19.9")
+
+    def relative_links(self, blocks):
+        return {relative_target(README, link.target) for block in blocks if block.kind != "code"
+                for link in markdown_links(block.text) if not link.image} - {None}
+
+    def check_documentation_links(self):
+        linked = self.relative_links(self.blocks)
+        for path in documentation_set(self.files):
+            if path != README and path not in linked:
+                self.report(0, f"no relative link to {path}, a file of the Documentation_Set",
+                            "20.9")
+
+    def check_license(self):
+        blocks = self.text_blocks("License")
+        text = normalized(" ".join(visible(block.text, url_spans(block.text)) for block in blocks))
+        linked = self.relative_links(blocks)
+        for pattern, what, requirement in LICENSE_STATEMENTS:
+            if not pattern.search(text):
+                self.report(0, f"## License does not state {what}", requirement)
+        for path, requirement in (("LICENSE", "21.2"), ("LICENSES/Kyty-MIT.txt", "21.5")):
+            if path not in linked:
+                self.report(0, f"## License has no relative link to {path}", requirement)
+
+    def check_acknowledgments(self):
+        items = [block for block in self.text_blocks("Acknowledgments") if block.kind == "item"]
+        for name, url in ACKNOWLEDGED:
+            entries = [item for item in items
+                       if any(link.target.rstrip("/") == url for link in markdown_links(item.text))]
+            if len(entries) != 1:
+                self.report(0, f"## Acknowledgments has {len(entries)} list items that link to "
+                            f"{url}, not one entry for {name}", "21.3")
+            elif not re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", entries[0].text):
+                self.report(entries[0].line, f"the acknowledgment that links to {url} does not "
+                            f"name {name}", "21.3")
+
+
+def check_readme_structure(repo, files):
+    lines = read_text_lines(repo, README)
+    if lines is None:
+        return [f"{README}: missing (Requirement 19.1)"], 0
+    return ReadmeCheck(repo, files, [line.rstrip("\r") for line in lines]).run(), 1
+
+
+def check_docs_terms(repo, files):
+    violations = []
+    scanned = 0
+    rules = ((whole_words(REMOVED_PLATFORM_TERMS), "Removed_Platform_Term", "19.7"),
+             (QT_WORD, "word that begins with qt", "19.7"),
+             (EXE_NAME, ".exe file name", "3.6"),
+             (substrings(APPLE_DOC_TERMS), "Apple term", "4.5"))
+    for path in documentation_set(files):
+        lines = read_text_lines(repo, path)
+        if lines is None:
+            continue
+        scanned += 1
+        excluded = fork_changes_lines(lines) if path == README else set()
+        for number, line in enumerate(lines, 1):
+            if number in excluded:
+                continue
+            for pattern, what, requirement in rules:
+                for match in pattern.finditer(line):
+                    violations.append(f"{path}:{number}: {display(line)} ({what} "
+                                      f"{match.group(0)!r}, Requirement {requirement})")
+    return violations, scanned
+
+
+def import_yaml():
+    try:
+        import yaml
+    except ImportError:
+        raise RepoError("this check needs PyYAML (python3-pyyaml or python3-yaml)") from None
+    return yaml
+
+
+def required(field):
+    validations = field.get("validations")
+    return isinstance(validations, dict) and validations.get("required") is True
+
+
+def form_violations(path, fields):
+    """The violations of Requirements 20.11 and 20.14 in the fields of one issue form."""
+    violations = []
+
+    def field(field_id, kind):
+        found = [item for item in fields if item.get("id") == field_id]
+        if len(found) != 1:
+            violations.append(f"{path}: {len(found)} fields with the id {field_id}, not one "
+                              f"required {kind} (Requirement 20.11)")
+            return None
+        if found[0].get("type") != kind or not required(found[0]):
+            optional = "" if required(found[0]) else " (not required)"
+            violations.append(f"{path}: the field {field_id} is a {found[0].get('type')}"
+                              f"{optional}, not a required {kind} (Requirement 20.11)")
+        attributes = found[0].get("attributes")
+        return attributes if isinstance(attributes, dict) else {}
+
+    attributes = field(DISTRIBUTION_FIELD, "input")
+    if attributes is not None:
+        label = str(attributes.get("label", ""))
+        if not (re.search(r"(?i)\bdistribution\b", label) and re.search(r"(?i)\bversion\b", label)):
+            violations.append(f"{path}: the label of {DISTRIBUTION_FIELD}, {label!r}, does not ask "
+                              "for the Linux distribution and version (Requirement 20.11)")
+    attributes = field(INSTALLATION_TYPE_FIELD, "dropdown")
+    if attributes is not None and attributes.get("options") != INSTALLATION_TYPES:
+        violations.append(f"{path}: the options of {INSTALLATION_TYPE_FIELD} are "
+                          f"{attributes.get('options')!r}, not exactly {INSTALLATION_TYPES!r} "
+                          "(Requirement 20.11)")
+    for item in fields:
+        attributes = item.get("attributes")
+        if item.get("type") == "markdown" or not isinstance(attributes, dict):
+            continue
+        for key in ("placeholder", "value"):
+            example = attributes.get(key)
+            if isinstance(example, str) and (EXE_NAME.search(example)
+                                             or NON_LINUX_PATH.search(example)):
+                violations.append(f"{path}: the {key} of {item.get('id')}, {display(example)!r}, "
+                                  "is not a Linux example (Requirement 20.14)")
+    return violations
+
+
+def check_issue_template(repo, files):
+    yaml = import_yaml()
+    templates = [path for path in files if under(ISSUE_TEMPLATES)(path)
+                 and path.rsplit("/", 1)[-1] not in ISSUE_TEMPLATE_CONFIGS]
+    violations = [] if templates else [f"{ISSUE_TEMPLATES}: no issue template (Requirement 20.11)"]
+    scanned = 0
+    terms = whole_words(REMOVED_PLATFORM_TERMS)
+    for path in templates:
+        lines = read_text_lines(repo, path)
+        if lines is None:
+            continue
+        scanned += 1
+        for number, line in enumerate(lines, 1):
+            for match in terms.finditer(line):
+                violations.append(f"{path}:{number}: {display(line)} (Removed_Platform_Term "
+                                  f"{match.group(0)!r}, Requirement 20.14)")
+        if not path.endswith((".yml", ".yaml")):
+            violations.append(f"{path}: a Markdown template cannot require fields; make it an "
+                              "issue form (.yml) (Requirement 20.11)")
+            continue
+        try:
+            form = yaml.safe_load("\n".join(lines))
+        except yaml.YAMLError as error:
+            violations.append(f"{path}: not valid YAML: {' '.join(str(error).split())}")
+            continue
+        body = form.get("body") if isinstance(form, dict) else None
+        if not isinstance(body, list):
+            violations.append(f"{path}: has no body list of form fields (Requirement 20.11)")
+            continue
+        violations.extend(form_violations(path, [item for item in body if isinstance(item, dict)]))
+    return violations, scanned
+
+
+def has_sentence(text):
+    """Whether text holds a sentence: at least four words, ending with ".", "!", or "?"."""
+    for piece in re.split(r"(?<=[.!?])\s+", text.strip()):
+        if (re.search(r"[.!?][\"')\]*`]*$", piece.strip())
+                and len(re.findall(r"[A-Za-z]{2,}", piece)) >= 4):
+            return True
+    return False
+
+
+def lint_exception_ids(repo, files, violations):
+    """{lint ID: where it is listed}: the committed exceptions file and every ID that a workflow
+    adds to a per-run copy with tools/ci/lint_exceptions.py --add."""
+    ids = {}
+    lines = read_text_lines(repo, LINT_EXCEPTIONS)
+    if lines is None:
+        raise RepoError(f"cannot read {LINT_EXCEPTIONS}")
+    try:
+        document = json.loads("\n".join(lines))
+    except json.JSONDecodeError as error:
+        violations.append(f"{LINT_EXCEPTIONS}: not JSON: {error}")
+        document = {}
+    if not isinstance(document, dict):
+        violations.append(f"{LINT_EXCEPTIONS}: not a JSON object of App_IDs and lint ID lists")
+        document = {}
+    for app_id, listed in document.items():
+        if not isinstance(listed, list) or not all(isinstance(entry, str) for entry in listed):
+            violations.append(f"{LINT_EXCEPTIONS}: the value of {app_id} is not a list of lint "
+                              "IDs")
+            continue
+        for lint_id in listed:
+            ids.setdefault(lint_id, LINT_EXCEPTIONS)
+    for path in files:
+        if not under(".github/workflows")(path) or not path.endswith((".yml", ".yaml")):
+            continue
+        for number, text in continued_lines(read_text_lines(repo, path) or []):
+            if not LINT_EXCEPTIONS_TOOL.search(text):
+                continue
+            words = text.split()
+            for index, word in enumerate(words):
+                if word == "--add" and index + 1 < len(words):
+                    ids.setdefault(words[index + 1].strip("'\""), f"{path}:{number}")
+                elif word.startswith("--add="):
+                    ids.setdefault(word[len("--add="):].strip("'\""), f"{path}:{number}")
+    return ids
+
+
+def check_lint_exceptions_documented(repo, files):
+    violations = []
+    ids = lint_exception_ids(repo, files, violations)
+    guide = read_text_lines(repo, PACKAGING_GUIDE)
+    if guide is None:
+        violations.append(f"{PACKAGING_GUIDE}: missing; it must justify every lint exception "
+                          "(Requirements 14.11, 20.7)")
+        return violations, 1
+    blocks = [block for block in markdown_blocks(guide) if block.kind not in ("code", "heading")]
+    for lint_id, source in sorted(ids.items()):
+        pattern = re.compile(rf"(?<![\w-]){re.escape(lint_id)}(?![\w-])")
+        mentions = [block for block in blocks if pattern.search(block.text)]
+        if not mentions:
+            violations.append(f"{PACKAGING_GUIDE}: does not name the lint exception {lint_id} "
+                              f"(listed in {source}; Requirements 14.11, 20.7)")
+            continue
+        if not any(justified(block, pattern) for block in mentions):
+            violations.append(f"{PACKAGING_GUIDE}:{mentions[0].line}: names the lint exception "
+                              f"{lint_id} without a justification sentence (listed in {source}; "
+                              "Requirements 14.11, 20.7)")
+    return violations, 2
+
+
+def justified(block, pattern):
+    """Whether a table row has a sentence in a cell without the lint ID, or a paragraph or list
+    item has one besides the ID."""
+    if block.kind == "row":
+        cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", block.text.strip().strip("|"))]
+        return any(has_sentence(cell) for cell in cells if not pattern.search(cell))
+    return has_sentence(pattern.sub(" ", block.text))
+
+
 # Check id -> (requirement, description, function(repo, files) -> (violations, files scanned)).
 FUNCTION_CHECKS = {
     "qt_remnants": (
@@ -771,6 +1594,20 @@ FUNCTION_CHECKS = {
     "dialog_registry": (
         "17.10", "window, dialog, or alert types missing from the dialog registry",
         check_dialog_registry),
+    "readme_structure": (
+        "19.1-19.6, 19.8-19.10, 20.9, 21.2, 21.3, 21.5",
+        "README heading, statement, badge, or link that breaks the README rules",
+        check_readme_structure),
+    "docs_terms": (
+        "3.6, 4.5, 19.7", "removed platform terms, words that begin with qt, .exe file names, or "
+        "Apple terms in the Documentation_Set outside the Fork changes section", check_docs_terms),
+    "issue_template": (
+        "20.11, 20.14", "issue template without the required Linux distribution and installation "
+        "type fields, or with a removed platform term or a non-Linux example",
+        check_issue_template),
+    "packaging_lint_exceptions_documented": (
+        "14.11, 20.7", "flatpak-builder-lint exception without a justification in "
+        "docs/packaging.md", check_lint_exceptions_documented),
 }
 
 

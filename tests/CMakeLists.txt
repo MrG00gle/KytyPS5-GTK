@@ -569,14 +569,18 @@ kyty_add_test_directory(tests/source_check LINK kyty_source_check LABELS source-
 # Repository content checks (Requirements 2.3, 3.7, 3.9, 4.1, 4.2, 4.8, 4.9; gtk_settings_save: the
 # GTK launcher saves Kyty.ini only through SaveSettingsStore; task 23.2: qt_remnants 6.1 and 6.3,
 # translatable 6.12, dialog_registry 17.10, and layering 6.7 as source_check_layering, the design's
-# name; core_text 6.12: no core message reaches a GTK widget as it is) and license and copyright
-# preservation checks (Requirements 21.1, 21.6) over this source tree. They need no build output, so
-# they are registered with KYTY_BUILD_LAUNCHER OFF too.
+# name; core_text 6.12: no core message reaches a GTK widget as it is; task 29.7: readme_structure,
+# docs_terms, issue_template, and packaging_lint_exceptions_documented, the design's name) and
+# license and copyright preservation checks (Requirements 21.1, 21.6) over this source tree. They
+# need no build output, so they are registered with KYTY_BUILD_LAUNCHER OFF too.
 foreach(kyty_check IN ITEMS nix_terms windows_terms macos_terms cmake_apple bundle_strings deleted_paths
-		vscode_patterns gtk_settings_save qt_remnants translatable core_text dialog_registry layering)
+		vscode_patterns gtk_settings_save qt_remnants translatable core_text dialog_registry layering
+		readme_structure docs_terms issue_template packaging_lint_exceptions_documented)
 	set(kyty_check_name content_check_${kyty_check})
 	if(kyty_check STREQUAL "layering")
 		set(kyty_check_name source_check_layering)
+	elseif(kyty_check STREQUAL "packaging_lint_exceptions_documented")
+		set(kyty_check_name ${kyty_check})
 	endif()
 	kyty_add_test(NAME ${kyty_check_name}
 		COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/content_checks.py"
@@ -599,6 +603,26 @@ foreach(kyty_check IN ITEMS license copyright)
 		TIMEOUT 120
 		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 endforeach()
+
+# Documentation checks (task 29.6, Requirements 20.3, 20.10, 20.12, 20.13): every relative link and
+# image of the Documentation_Set resolves, and docs/running.md names every option of this build's
+# kyty_emulator --help (the Emulator is built with KYTY_BUILD_LAUNCHER OFF too); then the unit tests
+# of tools/docs/ (task 29.7).
+kyty_add_test(NAME docs_links
+	COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/docs/check_links.py"
+	        --repo "${CMAKE_SOURCE_DIR}"
+	LABELS source-check
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+kyty_add_test(NAME docs_help_options
+	COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/docs/check_help_options.py"
+	        --emulator $<TARGET_FILE:kyty_emulator> --doc "${CMAKE_SOURCE_DIR}/docs/running.md"
+	TIMEOUT 30
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+kyty_add_test(NAME docs_tools
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/docs/tests" -v
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 
 # Unit tests of the coverage tools in tools/coverage/ (report.py and check.py).
 foreach(kyty_tool IN ITEMS report check)

@@ -20,8 +20,8 @@ portable file wins when it exists. **Global settings** shows the settings file a
 directory of the current session as absolute paths. The
 [architecture guide](architecture.md#data-directory) lists the contents of the data directory.
 
-The file is a QSettings-style INI file in UTF-8, so files written by the upstream launcher keep
-working. The launcher writes it atomically (a temporary file, then a rename) and keeps keys and
+The file is an INI file in UTF-8, in the format that the upstream launcher writes, so files written
+by the upstream launcher keep working. The launcher writes it atomically (a temporary file, then a rename) and keeps keys and
 groups it does not know. When a file exists but cannot be loaded, the launcher asks before its next
 save replaces it. A value that cannot be read, or that breaks the rules below, falls back to its
 default when the file is loaded.
