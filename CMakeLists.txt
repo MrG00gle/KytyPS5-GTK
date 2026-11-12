@@ -169,7 +169,7 @@ config_compiler_and_linker()
 
 add_subdirectory("${KYTY_THIRD_PARTY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/3rdparty")
 # The license files of Kyty and of every third-party component: licenses-manifest.txt now, and the
-# install rules in the fhs layout.
+# install rules of both layouts.
 include(KytyLicenses)
 kyty_register_third_party_licenses()
 kyty_install_licenses()

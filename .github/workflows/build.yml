@@ -1,103 +1,148 @@
-name: Build and Release KytyPS5
+# Builds, tests, measures coverage, packages, and (on a push to main in MrG00gle/KytyPS5-GTK only)
+# releases KytyPS5-GTK on Linux. Jobs: metadata -> ubuntu, fedora, coverage, flatpak -> release.
+#
+# Two CI policies that the repository owner approved for named tests only (docs/testing.md):
+# - tools/checks/ci-expected-failures.txt: GPU tests that fail on lavapipe for a missing Vulkan
+#   feature are accepted only when they fail with exactly the listed text;
+# - tools/checks/ci-timing-retries.txt: the search timing tests may pass in a rerun (the
+#   timing-rerun steps) after failing in the full run.
+# tools/checks/junit_check.py enforces both; every other test must pass in the full run.
+# The Flatpak bundle of a non-official run lists its own tag as a development release, and only
+# runs on main lint with packaging/flatpak/lint-exceptions.json unchanged (docs/packaging.md).
+name: Build and release
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [main, dev]
   pull_request:
+    branches: [main, dev]
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+defaults:
+  run:
+    # bash -eo pipefail: a failing command anywhere in a pipe fails the step.
+    shell: bash
+
 env:
-  SCCACHE_GHA_ENABLED: "true"
-  KYTY_BUILD_ORIGIN: ${{ github.repository != 'KytyPS5/KytyPS5' && 'Fork' || github.event_name == 'push' && 'Official' || 'Source' }}
-  KYTY_BUILD_REPOSITORY: ${{ github.repository }}
+  APP_ID: io.github.MrG00gle.KytyPS5_GTK
+  CCACHE_MAXSIZE: 2G
+  EXPECTED_FAILURES: tools/checks/ci-expected-failures.txt
+  TIMING_RETRIES: tools/checks/ci-timing-retries.txt
+  # Ubuntu 24.04 packages of the ubuntu and coverage jobs. No Qt package. CMake is the runner
+  # image's (3.29 or newer), not Ubuntu's 3.28.
+  UBUNTU_PACKAGES: >-
+    clang lld llvm gcc g++ ninja-build ccache pkg-config patch file binutils
+    glslang-tools python3 python3-yaml gettext
+    libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev glib-networking
+    adwaita-icon-theme hicolor-icon-theme fonts-dejavu-core
+    libasound2-dev libdbus-1-dev libpulse-dev libudev-dev libwayland-dev wayland-protocols
+    libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxi-dev libxkbcommon-dev libxrandr-dev
+    libxss-dev libxtst-dev libgl1-mesa-dev
+    libvulkan1 mesa-vulkan-drivers
+    weston xvfb dbus-daemon
 
 jobs:
   metadata:
-    name: Prepare build metadata
-    runs-on: ubuntu-latest
+    name: Release tag and official flag
+    runs-on: ubuntu-24.04
     outputs:
-      release_tag: ${{ steps.release_tag.outputs.value }}
-
+      tag: ${{ steps.tag.outputs.tag }}
+      official: ${{ steps.tag.outputs.official }}
+      releases: ${{ steps.releases.outputs.json }}
     steps:
-      - name: Generate release tag
-        id: release_tag
-        shell: bash
-        run: |
-          echo "value=KytyPS5-$(date -u +'%Y-%m-%d')-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Check out
+        uses: actions/checkout@v7
 
-  linux:
-    name: Build KytyPS5 (Linux)
+      - name: Compute the tag
+        id: tag
+        run: |
+          # KytyPS5-GTK-<commit date, UTC>-<sha7>: unique to the commit and stable across reruns.
+          date=$(TZ=UTC git show -s --format=%cd --date=format-local:%Y-%m-%d "$GITHUB_SHA")
+          tag="KytyPS5-GTK-${date}-${GITHUB_SHA:0:7}"
+          if [[ ! $tag =~ ^KytyPS5-GTK-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]{7}$ ]]; then
+            echo "::error::malformed release tag '$tag'"
+            exit 1
+          fi
+          official=false
+          if [[ $GITHUB_EVENT_NAME == push && $GITHUB_REF == refs/heads/main &&
+                $GITHUB_REPOSITORY == MrG00gle/KytyPS5-GTK ]]; then
+            official=true
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "official=$official" >> "$GITHUB_OUTPUT"
+          echo "Release tag: \`$tag\`, official: $official" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: List the published releases
+        id: releases
+        # Every run: the flatpak job writes one metainfo <release> entry per published release.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | {tag_name, published_at, draft, prerelease}' > releases.jsonl
+          cat releases.jsonl
+          { echo 'json<<KYTY_RELEASES_EOF'; cat releases.jsonl; echo 'KYTY_RELEASES_EOF'; } >> "$GITHUB_OUTPUT"
+
+  ubuntu:
+    name: Ubuntu 24.04 (Release, all tests, release archive)
     needs: metadata
     runs-on: ubuntu-24.04
-
+    env:
+      # The GPU tests run on Mesa's software Vulkan driver (lavapipe, Vulkan 1.3).
+      VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+      KYTY_RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+      BUILD_DIR: _Build/linux
+      ARCHIVE: _Build/${{ needs.metadata.outputs.tag }}-Linux-x86_64.tar.gz
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Check out
+        uses: actions/checkout@v7
         with:
+          # preservation_copyright follows renames since the Main_Branch commit.
+          fetch-depth: 0
           submodules: recursive
 
-      - name: Install build dependencies
-        shell: bash
+      - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes \
-            clang \
-            glslang-tools \
-            libasound2-dev \
-            libdbus-1-dev \
-            libgl1-mesa-dev \
-            libpulse-dev \
-            libudev-dev \
-            libwayland-dev \
-            libx11-dev \
-            libxcursor-dev \
-            libxext-dev \
-            libxfixes-dev \
-            libxi-dev \
-            libxkbcommon-dev \
-            libxrandr-dev \
-            libxss-dev \
-            libxtst-dev \
-            lld \
-            pkg-config \
-            wayland-protocols
+          # shellcheck disable=SC2086 # the package list is split on purpose
+          sudo apt-get install --no-install-recommends --yes $UBUNTU_PACKAGES
+          test -f "$VK_DRIVER_FILES"
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-
-      - name: Verify toolchain
-        shell: bash
+      - name: Show the tool versions
         run: |
-          git --version
           cmake --version
           ninja --version
           clang++ --version
           ld.lld --version
           glslangValidator --version
+          python3 -c 'import sys, yaml; print(sys.version, "PyYAML", yaml.__version__)'
+
+      - name: Set the ccache directory
+        run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
+
+      - name: Restore and save ccache
+        uses: actions/cache@v6
+        with:
+          path: _Build/ccache
+          key: ccache-ubuntu-${{ github.sha }}
+          restore-keys: ccache-ubuntu-
 
       - name: Configure
-        shell: bash
         run: |
           mkdir -p _Build
-          cmake -S . -B _Build/linux \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
-            -DKYTY_BUILD_ORIGIN="$KYTY_BUILD_ORIGIN" \
-            -DKYTY_BUILD_REPOSITORY="$KYTY_BUILD_REPOSITORY" \
-            -DKYTY_RELEASE_TAG="${{ needs.metadata.outputs.release_tag }}" \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache 2>&1 | tee _Build/configure.log
-          exit "${PIPESTATUS[0]}"
+          cmake -S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DKYTY_RELEASE_TAG="$KYTY_RELEASE_TAG" 2>&1 | tee _Build/configure.log
 
-      - name: Verify SDL3 backends
-        shell: bash
+      - name: Check the SDL3 backends
         run: |
           status=0
           for feature in SDL_ALSA SDL_PULSEAUDIO SDL_WAYLAND SDL_X11 SDL_LIBUDEV SDL_DBUS; do
@@ -111,111 +156,556 @@ jobs:
           exit "$status"
 
       - name: Build
-        shell: bash
-        run: |
-          cmake --build _Build/linux \
-            --target launcher page_manager_tests memory_tracker_tests \
-              audio_out2_port_tests pad_haptics_tests controller_settings_tests host_input_tests ime_dialog_tests lru_cache_tests virtual_memory_allocation_tests \
-              resource_tracking_tests scalar_provenance_tests \
-              resource_materialization_tests shader_vertex_metadata_tests archive_file_tests avplayer_file_tests \
-            --parallel
+        id: build
+        run: cmake --build "$BUILD_DIR" --target all kyty_tests
 
-      - name: Test
-        shell: bash
+      - name: Run every test
+        id: tests
         run: |
-          ctest --test-dir _Build/linux --output-on-failure \
-            -R '^(audio_out2_port|pad_haptics|controller_settings|host_input|ime_dialog|lru_cache|memory_tracker|page_manager|resource_tracking|scalar_provenance|resource_materialization|shader_vertex_metadata|archive_file|avplayer_file|virtual_memory_allocation)$'
+          # No name, label, or exclusion filter (Requirement 16.4). junit_check.py judges the result:
+          # ctest exits 8 when a test fails; any other non-zero status is an error of its own.
+          status=0
+          ctest --test-dir "$BUILD_DIR" --output-on-failure --test-output-size-passed 262144 \
+            --output-junit "$PWD/$BUILD_DIR/ctest.xml" || status=$?
+          echo "ctest exit status: $status"
+          if [[ $status != 0 && $status != 8 ]]; then exit "$status"; fi
+          ctest --test-dir "$BUILD_DIR" --show-only=json-v1 > "$BUILD_DIR/ctest-tests.json"
+
+      - name: Rerun the listed timing tests that failed
+        id: timing-rerun
+        # Only after the full run, only tests of $TIMING_RETRIES, and only those that failed there.
+        run: |
+          candidates=$(python3 -B tools/checks/junit_check.py "$BUILD_DIR/ctest.xml" \
+            --retry-list "$TIMING_RETRIES" --print-retry-candidates)
+          if [[ -z $candidates ]]; then
+            echo "No test of $TIMING_RETRIES failed in the full run."
+            exit 0
+          fi
+          mapfile -t names <<< "$candidates"
+          regex="^($(IFS='|'; echo "${names[*]}"))\$"
+          echo "Rerunning up to 3 times: ${names[*]}"
+          status=0
+          ctest --test-dir "$BUILD_DIR" -R "$regex" --repeat until-pass:3 --output-on-failure \
+            --test-output-size-passed 262144 --output-junit "$PWD/$BUILD_DIR/ctest-rerun.xml" || status=$?
+          echo "ctest exit status: $status"
+          if [[ $status != 0 && $status != 8 ]]; then exit "$status"; fi
+
+      - name: Check the test results
+        run: |
+          rerun=()
+          if [[ -f $BUILD_DIR/ctest-rerun.xml ]]; then rerun=(--rerun "$BUILD_DIR/ctest-rerun.xml"); fi
+          status=0
+          python3 -B tools/checks/junit_check.py "$BUILD_DIR/ctest.xml" \
+            --registered "$BUILD_DIR/ctest-tests.json" --expected-failures "$EXPECTED_FAILURES" \
+            --retry-list "$TIMING_RETRIES" "${rerun[@]}" > "$BUILD_DIR/junit-check.txt" || status=$?
+          cat "$BUILD_DIR/junit-check.txt"
+          { echo '### Ubuntu test results'; echo '```'; cat "$BUILD_DIR/junit-check.txt"; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Check against the Main_Branch baseline
+        run: python3 -B tools/checks/check_regression.py "$BUILD_DIR/ctest.xml"
+
+      # The workflow structure check (tools/checks/workflow_check.py) joins here with that tool.
 
       - name: Install
-        shell: bash
-        run: |
-          cmake --install _Build/linux --prefix _Build/linux/install
+        id: install
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cmake --install "$BUILD_DIR" --prefix _Build/install
 
-      - name: Verify artifacts
-        shell: bash
+      - name: Package the release archive
+        id: archive
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
-          file _Build/linux/install/kyty_launcher
-          file _Build/linux/install/kyty_emulator
-          test -x _Build/linux/install/kyty_updater
-          file _Build/linux/install/kyty_emulator | grep -q "ELF 64-bit LSB .*x86-64"
-          ldd _Build/linux/install/kyty_emulator > /dev/null
-          readelf -d _Build/linux/install/kyty_launcher | grep -q 'RPATH.*\$ORIGIN/lib'
-          while IFS= read -r -d '' binary; do
-            while read -r dependency; do
-              test -e "_Build/linux/install/lib/$dependency"
-            done < <(
-              readelf -d "$binary" |
-                sed -n 's/.*Shared library: \[\(libQt6[^]]*\|libicu[^]]*\)\].*/\1/p'
-            )
-          done < <(
-            find _Build/linux/install/kyty_launcher _Build/linux/install/plugins \
-              -type f \( -name kyty_launcher -o -name '*.so' \) -print0
-          )
-          _Build/linux/install/kyty_emulator --help > /dev/null
+          tar -C _Build/install -czf "$ARCHIVE" .
+          listed=$(tar -tzf "$ARCHIVE" | sed 's|^\./||')
+          for exe in kyty_emulator kyty_launcher kyty_updater; do
+            grep -Fqx "$exe" <<< "$listed" || { echo "::error::$exe is not at the archive's top"; exit 1; }
+            file "_Build/install/$exe" | grep -q 'ELF 64-bit LSB .*x86-64'
+          done
+          _Build/install/kyty_emulator --help > /dev/null
 
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+      - name: Check the license files in the archive
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
+        run: |
+          python3 -B tools/checks/check_licenses.py --archive "$ARCHIVE" \
+            --manifest "$BUILD_DIR/licenses-manifest.txt" --repo .
+
+      - name: Upload the release archive
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          name: KytyPS5-Linux-x86_64
-          path: _Build/linux/install/**
+          name: linux-archive
+          path: ${{ env.ARCHIVE }}
           if-no-files-found: error
 
+      - name: Upload the test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ubuntu-ctest
+          path: |
+            _Build/linux/ctest*.xml
+            _Build/linux/ctest-tests.json
+            _Build/linux/junit-check.txt
+          if-no-files-found: error
+
+  fedora:
+    name: Fedora (GA, stage A without GTK, stage B with everything)
+    needs: metadata
+    runs-on: ubuntu-24.04
+    container:
+      image: registry.fedoraproject.org/fedora:latest
+      options: --shm-size=2g
+    env:
+      # The GPU tests run on Mesa's software Vulkan driver (lavapipe, Vulkan 1.3).
+      VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+      KYTY_RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+      BUILD_DIR: _Build/fedora
+      # Stage A: everything except GTK. gcc-c++ is for coverage_requires_clang; weston and
+      # dbus-daemon are for kernel_file_system, which runs in a headless Wayland session.
+      FEDORA_PACKAGES_A: >-
+        clang lld cmake ninja-build ccache pkgconf-pkg-config gcc gcc-c++ patch file binutils
+        tar gzip findutils diffutils which glslang python3-pyyaml
+        alsa-lib-devel dbus-devel pulseaudio-libs-devel systemd-devel wayland-devel
+        wayland-protocols-devel libX11-devel libXcursor-devel libXext-devel libXfixes-devel
+        libXi-devel libxkbcommon-devel libXrandr-devel libXScrnSaver-devel libXtst-devel
+        mesa-libGL-devel vulkan-loader mesa-vulkan-drivers weston dbus-daemon
+      # Stage B: GTK, the translation and resource tools, fonts and icons, and Xvfb.
+      FEDORA_PACKAGES_B: >-
+        gtk4-devel libadwaita-devel libsoup3-devel glib2-devel glib-networking gettext
+        adwaita-icon-theme hicolor-icon-theme dejavu-sans-fonts xorg-x11-server-Xvfb
+    steps:
+      - name: Install git and Python
+        # Before the checkout, so that it is a git clone.
+        run: dnf -y install --setopt=install_weak_deps=False git-core python3
+
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Check that the image is a GA Fedora release
+        run: |
+          # The container runs as root on a checkout (and submodules) that the runner user owns.
+          git config --global --add safe.directory '*'
+          python3 -B tools/ci/check_fedora_release.py /etc/os-release
+
+      - name: Install the stage A packages (no GTK)
+        run: |
+          # shellcheck disable=SC2086 # the package list is split on purpose
+          dnf -y install --setopt=install_weak_deps=False $FEDORA_PACKAGES_A
+          test -f "$VK_DRIVER_FILES"
+          for module in gtk4 libadwaita-1 libsoup-3.0; do
+            if pkg-config --exists "$module"; then
+              echo "::error::stage A must not have $module"
+              exit 1
+            fi
+          done
+          for package in gtk4 gtk4-devel libadwaita libadwaita-devel libsoup3 libsoup3-devel; do
+            if rpm -q "$package"; then
+              echo "::error::stage A must not have $package"
+              exit 1
+            fi
+          done
+
+      - name: Show the tool versions
+        run: |
+          cmake --version
+          ninja --version
+          clang++ --version
+          ld.lld --version
+          glslangValidator --version
+
+      - name: Set the ccache directory
+        run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
+
+      - name: Restore and save ccache
+        uses: actions/cache@v6
+        with:
+          path: _Build/ccache
+          key: ccache-fedora-${{ github.sha }}
+          restore-keys: ccache-fedora-
+
+      - name: Stage A - configure without the launcher
+        run: |
+          cmake -S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DKYTY_RELEASE_TAG="$KYTY_RELEASE_TAG" -DKYTY_BUILD_LAUNCHER=OFF
+
+      - name: Stage A - build
+        run: cmake --build "$BUILD_DIR" --target all kyty_tests
+
+      - name: Stage A - run every test
+        run: |
+          status=0
+          ctest --test-dir "$BUILD_DIR" --output-on-failure --test-output-size-passed 262144 \
+            --output-junit "$PWD/$BUILD_DIR/ctest-stage-a.xml" || status=$?
+          echo "ctest exit status: $status"
+          if [[ $status != 0 && $status != 8 ]]; then exit "$status"; fi
+          ctest --test-dir "$BUILD_DIR" --show-only=json-v1 > "$BUILD_DIR/ctest-tests-stage-a.json"
+
+      - name: Stage A - check the test results
+        # Stage A has no UI tests, so no timing test can be rerun.
+        run: |
+          status=0
+          python3 -B tools/checks/junit_check.py "$BUILD_DIR/ctest-stage-a.xml" \
+            --registered "$BUILD_DIR/ctest-tests-stage-a.json" --expected-failures "$EXPECTED_FAILURES" \
+            --retry-list "$TIMING_RETRIES" > "$BUILD_DIR/junit-check-stage-a.txt" || status=$?
+          cat "$BUILD_DIR/junit-check-stage-a.txt"
+          { echo '### Fedora stage A test results'; echo '```'; cat "$BUILD_DIR/junit-check-stage-a.txt"
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [[ $status != 0 ]]; then exit "$status"; fi
+          python3 -B tools/checks/check_regression.py "$BUILD_DIR/ctest-stage-a.xml"
+
+      - name: Install the stage B packages
+        run: |
+          # shellcheck disable=SC2086 # the package list is split on purpose
+          dnf -y install --setopt=install_weak_deps=False $FEDORA_PACKAGES_B
+
+      - name: Stage B - configure everything
+        run: cmake -S . -B "$BUILD_DIR" -DKYTY_BUILD_LAUNCHER=ON
+
+      - name: Stage B - build
+        run: cmake --build "$BUILD_DIR" --target all kyty_tests
+
+      - name: Stage B - run every test
+        id: tests
+        run: |
+          status=0
+          ctest --test-dir "$BUILD_DIR" --output-on-failure --test-output-size-passed 262144 \
+            --output-junit "$PWD/$BUILD_DIR/ctest-stage-b.xml" || status=$?
+          echo "ctest exit status: $status"
+          if [[ $status != 0 && $status != 8 ]]; then exit "$status"; fi
+          ctest --test-dir "$BUILD_DIR" --show-only=json-v1 > "$BUILD_DIR/ctest-tests-stage-b.json"
+
+      - name: Stage B - rerun the listed timing tests that failed
+        id: timing-rerun
+        # Only after the full run, only tests of $TIMING_RETRIES, and only those that failed there.
+        run: |
+          candidates=$(python3 -B tools/checks/junit_check.py "$BUILD_DIR/ctest-stage-b.xml" \
+            --retry-list "$TIMING_RETRIES" --print-retry-candidates)
+          if [[ -z $candidates ]]; then
+            echo "No test of $TIMING_RETRIES failed in the full run."
+            exit 0
+          fi
+          mapfile -t names <<< "$candidates"
+          regex="^($(IFS='|'; echo "${names[*]}"))\$"
+          echo "Rerunning up to 3 times: ${names[*]}"
+          status=0
+          ctest --test-dir "$BUILD_DIR" -R "$regex" --repeat until-pass:3 --output-on-failure \
+            --test-output-size-passed 262144 --output-junit "$PWD/$BUILD_DIR/ctest-rerun.xml" || status=$?
+          echo "ctest exit status: $status"
+          if [[ $status != 0 && $status != 8 ]]; then exit "$status"; fi
+
+      - name: Stage B - check the test results
+        run: |
+          rerun=()
+          if [[ -f $BUILD_DIR/ctest-rerun.xml ]]; then rerun=(--rerun "$BUILD_DIR/ctest-rerun.xml"); fi
+          status=0
+          python3 -B tools/checks/junit_check.py "$BUILD_DIR/ctest-stage-b.xml" \
+            --registered "$BUILD_DIR/ctest-tests-stage-b.json" --expected-failures "$EXPECTED_FAILURES" \
+            --retry-list "$TIMING_RETRIES" "${rerun[@]}" > "$BUILD_DIR/junit-check-stage-b.txt" || status=$?
+          cat "$BUILD_DIR/junit-check-stage-b.txt"
+          { echo '### Fedora stage B test results'; echo '```'; cat "$BUILD_DIR/junit-check-stage-b.txt"
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [[ $status != 0 ]]; then exit "$status"; fi
+          python3 -B tools/checks/check_regression.py "$BUILD_DIR/ctest-stage-b.xml"
+
+      - name: Upload the test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fedora-ctest
+          path: |
+            _Build/fedora/ctest*.xml
+            _Build/fedora/ctest-tests-*.json
+            _Build/fedora/junit-check-*.txt
+          if-no-files-found: error
+
+  coverage:
+    name: Coverage (Ubuntu 24.04, Debug)
+    needs: metadata
+    runs-on: ubuntu-24.04
+    env:
+      # The GPU tests run on Mesa's software Vulkan driver (lavapipe, Vulkan 1.3).
+      VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+      BUILD_DIR: _Build/coverage
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          # check.py diffs a pull request against its base branch.
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086 # the package list is split on purpose
+          sudo apt-get install --no-install-recommends --yes $UBUNTU_PACKAGES
+          test -f "$VK_DRIVER_FILES"
+
+      - name: Configure with coverage
+        run: |
+          # llvm-profdata and llvm-cov of Clang's own LLVM version. No compiler launcher (ccache
+          # off), as in the coverage build the design describes.
+          llvm_bin="/usr/lib/llvm-$(clang++ -dumpversion | cut -d. -f1)/bin"
+          cmake --version
+          clang++ --version
+          "$llvm_bin/llvm-cov" --version
+          cmake -S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DKYTY_ENABLE_COVERAGE=ON \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= \
+            -DKYTY_LLVM_PROFDATA="$llvm_bin/llvm-profdata" -DKYTY_LLVM_COV="$llvm_bin/llvm-cov"
+
+      - name: Build
+        id: build
+        run: cmake --build "$BUILD_DIR" --target all kyty_tests
+
+      - name: Build the coverage target
+        id: coverage
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          # The target runs every test unfiltered, writes the reports even when a test failed, and
+          # then exits non-zero. Its exit status is recorded here and judged in the last step.
+          status=0
+          cmake --build "$BUILD_DIR" --target coverage 2>&1 | tee "$BUILD_DIR/coverage-target.log" || status=$?
+          echo "coverage target exit status: $status"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: |
+            _Build/coverage/coverage/html
+            _Build/coverage/coverage/summary.json
+            _Build/coverage/coverage/coverage.lcov
+            _Build/coverage/coverage/ctest.xml
+          if-no-files-found: error
+
+      - name: Check the test results
+        id: junit
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        # The Debug build does not assert the 100 ms timing limit, so nothing is rerun here.
+        run: |
+          ctest --test-dir "$BUILD_DIR" --show-only=json-v1 > "$BUILD_DIR/ctest-tests.json"
+          status=0
+          python3 -B tools/checks/junit_check.py "$BUILD_DIR/coverage/ctest.xml" \
+            --registered "$BUILD_DIR/ctest-tests.json" --expected-failures "$EXPECTED_FAILURES" \
+            --retry-list "$TIMING_RETRIES" > "$BUILD_DIR/junit-check.txt" || status=$?
+          cat "$BUILD_DIR/junit-check.txt"
+          { echo '### Coverage run test results'; echo '```'; cat "$BUILD_DIR/junit-check.txt"; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Check the coverage thresholds
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        # Event, ref, and pull request base come from the GitHub environment. The baseline file is
+        # committed by the maintainer (Requirement 18.5); without it the check fails and prints the
+        # measured value (Requirement 18.11).
+        run: |
+          python3 -B tools/coverage/check.py --summary "$BUILD_DIR/coverage/summary.json" \
+            --lcov "$BUILD_DIR/coverage/coverage.lcov" --groups tools/coverage/groups.json \
+            --source-dir . --baseline .github/coverage-baseline.txt
+
+      - name: Check how the coverage target ended
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        # A failed test makes the target exit non-zero after it wrote the reports; the test results
+        # are judged by the junit step above. Any other failure of the target fails here.
+        env:
+          STATUS: ${{ steps.coverage.outputs.status }}
+        run: |
+          if [[ $STATUS != 0 ]] && ! grep -Fq 'ctest failed (exit 8); reports written to' \
+               "$BUILD_DIR/coverage-target.log"; then
+            echo "::error::the coverage target exited with $STATUS before its reports were complete"
+            exit 1
+          fi
+
+  flatpak:
+    name: Flatpak bundle and validations
+    needs: metadata
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
+      options: --privileged
+    env:
+      BUNDLE: ${{ needs.metadata.outputs.tag }}-x86_64.flatpak
+      MANIFEST: packaging/flatpak/io.github.MrG00gle.KytyPS5_GTK.yml
+      METAINFO: packaging/linux/io.github.MrG00gle.KytyPS5_GTK.metainfo.xml
+      # Outside the checkout: the manifest's dir source copies the whole checkout into the build.
+      FLATPAK_BUILD_DIR: /var/tmp/kyty-flatpak/build
+      FLATPAK_REPO_DIR: /var/tmp/kyty-flatpak/repo
+      FLATPAK_STATE_DIR: /var/tmp/kyty-flatpak/state
+      # The lint exceptions (design.md, the lint-exceptions.json bullet): runs on main use the
+      # committed file unchanged; every other ref uses the per-run copy written below.
+      LINT_EXCEPTIONS: ${{ github.ref == 'refs/heads/main' && 'packaging/flatpak/lint-exceptions.json' || '/var/tmp/kyty-lint-exceptions.json' }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Add the pre-merge lint exception
+        id: lint-exceptions-not-main
+        # Not on main: the metainfo's screenshot URL points at main and resolves only after the
+        # merge, so the per-run copy also excepts appstream-missing-screenshots.
+        if: github.ref != 'refs/heads/main'
+        run: |
+          python3 -B tools/ci/lint_exceptions.py --exceptions packaging/flatpak/lint-exceptions.json \
+            --app-id "$APP_ID" --add appstream-missing-screenshots --output "$LINT_EXCEPTIONS"
+
+      - name: Show the image's tools
+        run: |
+          git config --global --add safe.directory '*'
+          flatpak --version
+          flatpak-builder --version
+          flatpak-builder-lint --version
+          appstreamcli --version
+          command -v desktop-file-validate
+          python3 --version
+          flatpak list --runtime
+
+      # design.md "Release metadata in the metainfo": the committed metainfo keeps an empty
+      # <releases/>. One of the next two steps rewrites the checkout's copy, which the manifest's
+      # dir source builds from; assume-unchanged keeps the built version string free of "-dirty".
+      - name: Write the release entries (official run)
+        id: releases-official
+        # The published releases plus this tag, which the release job then publishes.
+        if: needs.metadata.outputs.official == 'true'
+        env:
+          RELEASES: ${{ needs.metadata.outputs.releases }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          printf '%s\n' "$RELEASES" > /var/tmp/kyty-releases.jsonl
+          git update-index --assume-unchanged "$METAINFO"
+          python3 -B tools/ci/metainfo_releases.py write --metainfo "$METAINFO" \
+            --releases /var/tmp/kyty-releases.jsonl --tag "$TAG" --date "$(date -u +%F)"
+          python3 -B tools/ci/metainfo_releases.py check --metainfo "$METAINFO" --tag "$TAG"
+
+      - name: Write the release entries (development run)
+        id: releases-development
+        # Every other run: the published releases plus this run's tag as a development entry,
+        # because flatpak-builder-lint rejects an empty release list (releases-info-missing).
+        if: needs.metadata.outputs.official != 'true'
+        env:
+          RELEASES: ${{ needs.metadata.outputs.releases }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          printf '%s\n' "$RELEASES" > /var/tmp/kyty-releases.jsonl
+          git update-index --assume-unchanged "$METAINFO"
+          python3 -B tools/ci/metainfo_releases.py write --metainfo "$METAINFO" \
+            --releases /var/tmp/kyty-releases.jsonl --tag "$TAG" --date "$(date -u +%F)" \
+            --type development
+
+      - name: Build the bundle
+        id: build
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: ${{ env.MANIFEST }}
+          bundle: ${{ env.BUNDLE }}
+          upload-artifact: false
+          build-dir: ${{ env.FLATPAK_BUILD_DIR }}
+          repo-dir: ${{ env.FLATPAK_REPO_DIR }}
+          state-dir: ${{ env.FLATPAK_STATE_DIR }}
+
+      - name: Upload the bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flatpak-bundle
+          path: ${{ env.BUNDLE }}
+          if-no-files-found: error
+
+      - name: Lint the manifest
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          cat "$LINT_EXCEPTIONS"
+          flatpak-builder-lint --exceptions --user-exceptions "$LINT_EXCEPTIONS" manifest "$MANIFEST"
+
+      - name: Lint the repository
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: flatpak-builder-lint --exceptions --user-exceptions "$LINT_EXCEPTIONS" repo "$FLATPAK_REPO_DIR"
+
+      - name: Validate the desktop entry
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: desktop-file-validate "$FLATPAK_BUILD_DIR/files/share/applications/$APP_ID.desktop"
+
+      - name: Validate the metainfo
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: appstreamcli validate --no-net "$FLATPAK_BUILD_DIR/files/share/metainfo/$APP_ID.metainfo.xml"
+
+      - name: Check the license files
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          python3 -B tools/checks/check_licenses.py \
+            --manifest "$FLATPAK_BUILD_DIR/files/share/kyty/licenses-manifest.txt" \
+            --dir "$FLATPAK_BUILD_DIR/files/share/licenses/$APP_ID" --repo .
+
+      - name: Install the bundle and run the Emulator
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          flatpak install --user --noninteractive --bundle "$BUNDLE"
+          # The image sets no XDG_RUNTIME_DIR and runs no session bus.
+          XDG_RUNTIME_DIR=$(mktemp -d)
+          export XDG_RUNTIME_DIR
+          dbus-run-session -- flatpak run --command=kyty_emulator "$APP_ID" --help
+
   release:
-    name: Release KytyPS5
-    if: >-
-      always() &&
-      github.event_name == 'push' &&
-      github.repository == 'KytyPS5/KytyPS5' &&
-      needs.linux.result == 'success'
-    needs: [metadata, linux]
-    runs-on: ubuntu-latest
+    name: Publish the release
+    needs: [metadata, ubuntu, fedora, coverage, flatpak]
+    # Only a push to main in this repository, and only when every job above succeeded.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'MrG00gle/KytyPS5-GTK'
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
-      RELEASE_NAME: ${{ needs.metadata.outputs.release_tag }}
-
+      TAG: ${{ needs.metadata.outputs.tag }}
     steps:
-      - name: Download Linux build
-        if: needs.linux.result == 'success'
-        uses: actions/download-artifact@v4
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Download the release archive
+        uses: actions/download-artifact@v8
         with:
-          name: KytyPS5-Linux-x86_64
-          path: artifacts/KytyPS5-Linux-x86_64
+          name: linux-archive
+          path: dist
 
-      - name: Package Linux build
-        if: needs.linux.result == 'success'
-        shell: bash
+      - name: Download the bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: flatpak-bundle
+          path: dist
+
+      - name: Check the bundle's metainfo release entry
         run: |
-          linux_dir="artifacts/KytyPS5-Linux-x86_64"
-          test -d "$linux_dir"
-          chmod a+x \
-            "$linux_dir/kyty_launcher" \
-            "$linux_dir/kyty_emulator" \
-            "$linux_dir/kyty_updater"
-          tar -C "$linux_dir" -czf \
-            "$GITHUB_WORKSPACE/$RELEASE_NAME-Linux-x86_64.tar.gz" .
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes flatpak ostree
+          mkdir -p _Build
+          ostree init --repo=_Build/bundle-repo --mode=archive
+          flatpak build-import-bundle --no-update-summary _Build/bundle-repo "dist/$TAG-x86_64.flatpak"
+          ref=$(ostree --repo=_Build/bundle-repo refs | grep "^app/$APP_ID/")
+          ostree --repo=_Build/bundle-repo cat "$ref" "/files/share/metainfo/$APP_ID.metainfo.xml" \
+            > _Build/bundle-metainfo.xml
+          python3 -B tools/ci/metainfo_releases.py check --metainfo _Build/bundle-metainfo.xml --tag "$TAG"
 
-      - name: Create release
-        shell: bash
+      - name: Write the checksum files
+        working-directory: dist
+        run: |
+          for asset in "$TAG-Linux-x86_64.tar.gz" "$TAG-x86_64.flatpak"; do
+            test -s "$asset"
+            sha256sum "$asset" > "$asset.sha256"
+            sha256sum -c "$asset.sha256"
+          done
+
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          assets=()
-          for artifact in \
-            "$RELEASE_NAME-Linux-x86_64.tar.gz"; do
-            if [[ -f "$artifact" ]]; then
-              assets+=("$artifact")
-            fi
-          done
-          test "${#assets[@]}" -gt 0
-          if gh release view "$RELEASE_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$RELEASE_NAME" "${assets[@]}" \
-              --clobber \
-              --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$RELEASE_NAME" "${assets[@]}" \
-              --generate-notes \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "$RELEASE_NAME"
-          fi
+          python3 -B tools/ci/publish_release.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" \
+            --target "$GITHUB_SHA" \
+            "dist/$TAG-Linux-x86_64.tar.gz" "dist/$TAG-x86_64.flatpak" \
+            "dist/$TAG-Linux-x86_64.tar.gz.sha256" "dist/$TAG-x86_64.flatpak.sha256"

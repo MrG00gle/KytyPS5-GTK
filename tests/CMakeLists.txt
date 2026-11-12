@@ -292,8 +292,12 @@ kyty_add_test(NAME shader_vertex_metadata COMMAND $<TARGET_FILE:shader_vertex_me
 kyty_add_test(NAME resource_materialization COMMAND $<TARGET_FILE:resource_materialization_tests>)
 kyty_add_test(NAME resource_tracking COMMAND $<TARGET_FILE:resource_tracking_tests>)
 kyty_add_test(NAME event_queue_lifetime COMMAND $<TARGET_FILE:event_queue_lifetime_tests>)
-# Creates a Vulkan instance (WindowContext::CreateVulkan).
-kyty_add_test(NAME kernel_file_system COMMAND $<TARGET_FILE:kernel_file_system_tests>
+# Creates a Vulkan instance and a window (WindowContext::CreateVulkan), so it runs inside a private
+# headless Wayland session (ui/with-display.sh; it exits 77 when weston or dbus-daemon is missing).
+find_program(KYTY_TESTS_BASH bash REQUIRED)
+kyty_add_test(NAME kernel_file_system
+	COMMAND "${KYTY_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh" wayland --
+	        $<TARGET_FILE:kernel_file_system_tests>
 	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME sync_on_address COMMAND $<TARGET_FILE:sync_on_address_tests>)
 kyty_add_test(NAME audio_out2_port COMMAND $<TARGET_FILE:audio_out2_port_tests>)
@@ -604,6 +608,13 @@ foreach(kyty_tool IN ITEMS report check)
 		TIMEOUT 120
 		ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 endforeach()
+# Unit tests of the CI helpers in tools/ci/ (task 28.2): the Fedora GA check, the metainfo release
+# list of official builds, and the release publisher, which runs against a fake gh. They need no
+# build output, so they are registered with KYTY_BUILD_LAUNCHER OFF too.
+kyty_add_test(NAME ci_tools
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/ci/tests" -v
+	TIMEOUT 120
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 
 # Process test helpers (task 15.6): argv_echo writes its arguments NUL-terminated and fake_emulator
 # stands in for the Emulator in spawn tests (tests/support/helperPaths.h finds both). Each one has a

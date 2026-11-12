@@ -4,7 +4,8 @@
 #
 #   KYTY_INSTALL_LAYOUT (STRING)
 #       portable  Flat, the default: the executables and assets/ at the top of the prefix. Release
-#                 archives and the Updater depend on it, so it installs what it always did.
+#                 archives and the Updater depend on it, so it installs what it always did, plus
+#                 LICENSE and the license files under LICENSES/ (cmake/KytyLicenses.cmake).
 #       fhs       bin/ for the executables, share/kyty/assets for the Emulator assets, and, with
 #                 KYTY_BUILD_LAUNCHER, the desktop entry in share/applications, the metainfo in
 #                 share/metainfo, and the icons in share/icons/hicolor, under the App_ID names.

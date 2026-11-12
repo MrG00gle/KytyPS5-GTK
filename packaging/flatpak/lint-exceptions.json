@@ -1,5 +1,6 @@
 {
     "io.github.MrG00gle.KytyPS5_GTK": [
+        "appid-url-not-reachable",
         "appstream-screenshots-not-mirrored-in-ostree"
     ]
 }

@@ -1,0 +1,12 @@
+# Timing tests that CI may rerun (tools/checks/junit_check.py --retry-list; docs/testing.md).
+#
+# The painted-frame search timing cases assert a median of at most 100 ms (Requirement 7.13), with
+# little headroom on a quiet machine; shared CI runners are noisier. The repository owner approved
+# this policy for exactly the tests below: CI runs the whole suite once, unfiltered. When the only
+# failures are tests of this list, the timing-rerun step reruns exactly those tests, up to 3 times
+# (ctest --repeat until-pass:3), and the run passes only if each of them passed in the rerun and
+# every other test passed in the full run. Every miss is printed with its median in the job
+# summary. Adding a test here needs the owner's approval; tools/checks/tests/test_junit_check.py
+# pins this list.
+launcher_ui_library_search_timing_wayland
+launcher_ui_library_search_timing_x11

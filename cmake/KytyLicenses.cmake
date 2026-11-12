@@ -19,8 +19,10 @@
 #       Beside it, licenses-sources.txt has one line per manifest path for the tests:
 #       "<path>|<component source dir>|<installed from>", plus "|<file>|<a>-<b>" for an extracted
 #       NOTICE. In the fhs layout it installs every listed file under ${KYTY_INSTALL_LICENSEDIR} and
-#       the manifest as ${KYTY_INSTALL_DATADIR}/kyty/licenses-manifest.txt; the portable layout
-#       installs neither (cmake/KytyInstallLayout.cmake).
+#       the manifest as ${KYTY_INSTALL_DATADIR}/kyty/licenses-manifest.txt. The portable layout (the
+#       release archive) installs every listed file the way the repository holds the two root files:
+#       LICENSE at the top of the prefix and every other path under LICENSES/, so LICENSES/Kyty-MIT.txt
+#       and LICENSES/<component>/<file>; it installs no manifest (cmake/KytyInstallLayout.cmake).
 include_guard(GLOBAL)
 include(FetchContent)
 
@@ -188,14 +190,18 @@ function(kyty_install_licenses)
 		list(GET kyty_lic_fields 2 kyty_lic_from)
 		string(APPEND kyty_lic_manifest_text "${kyty_lic_path}\n")
 		string(APPEND kyty_lic_sources_text "${kyty_lic_entry}\n")
+		get_filename_component(kyty_lic_subdir "${kyty_lic_path}" DIRECTORY)
 		if(KYTY_INSTALL_LAYOUT STREQUAL "fhs")
-			get_filename_component(kyty_lic_subdir "${kyty_lic_path}" DIRECTORY)
 			set(kyty_lic_destination "${KYTY_INSTALL_LICENSEDIR}")
-			if(kyty_lic_subdir)
-				string(APPEND kyty_lic_destination "/${kyty_lic_subdir}")
-			endif()
-			install(FILES "${kyty_lic_from}" DESTINATION "${kyty_lic_destination}")
+		elseif(kyty_lic_path STREQUAL "LICENSE")
+			set(kyty_lic_destination ".")
+		else()
+			set(kyty_lic_destination "LICENSES")
 		endif()
+		if(kyty_lic_subdir)
+			string(APPEND kyty_lic_destination "/${kyty_lic_subdir}")
+		endif()
+		install(FILES "${kyty_lic_from}" DESTINATION "${kyty_lic_destination}")
 	endforeach()
 
 	# Rewritten only when the content changes.
@@ -212,7 +218,7 @@ function(kyty_install_licenses)
 		install(FILES "${CMAKE_BINARY_DIR}/licenses-manifest.txt" DESTINATION "${KYTY_INSTALL_DATADIR}/kyty")
 		set(kyty_lic_where "installed under ${KYTY_INSTALL_LICENSEDIR}")
 	else()
-		set(kyty_lic_where "not installed in the ${KYTY_INSTALL_LAYOUT} layout")
+		set(kyty_lic_where "installed as LICENSE and under LICENSES (${KYTY_INSTALL_LAYOUT} layout)")
 	endif()
 	message(STATUS "KytyLicenses: ${kyty_lic_component_count} components, ${kyty_lic_file_count} files "
 		"in licenses-manifest.txt, ${kyty_lic_where}")

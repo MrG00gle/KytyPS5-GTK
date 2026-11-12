@@ -1,10 +1,12 @@
-"""Unit tests for tools/checks/check_licenses.py (task 26.5, Requirements 21.1, 21.4, 21.7)."""
+"""Unit tests for tools/checks/check_licenses.py (task 26.5, Requirements 21.1, 21.4, 21.7; the
+release archive mode)."""
 
 import contextlib
 import io
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -172,6 +174,111 @@ class BadManifest(CheckLicensesRun):
                 self.assertIn("is not a path inside the licenses directory", stderr)
 
 
+class ReleaseArchive(CheckLicensesRun):
+    """--archive: a .tar.gz of the portable install, LICENSE at the top and LICENSES/<path>."""
+
+    def setUp(self):
+        super().setUp()
+        self.portable = Path(self.temp.name) / "portable"
+        self.write(self.portable / "kyty_emulator", b"\x7fELF\n")
+        self.write(self.portable / "LICENSE", LICENSE_TEXT)
+        for entry in MANIFEST[1:]:
+            self.write(self.portable / "LICENSES" / entry, (self.dir / entry).read_bytes())
+        self.archive = Path(self.temp.name) / "KytyPS5-GTK-2026-11-12-abcdef0-Linux-x86_64.tar.gz"
+
+    def pack(self, prefix="./"):
+        """Pack the portable tree the way the workflow does (tar -C <dir> -czf <archive> .)."""
+        with tarfile.open(self.archive, "w:gz") as archive:
+            archive.add(self.portable, arcname=prefix.rstrip("/") or ".", recursive=True)
+        return self.archive
+
+    def run_archive(self, repo=True, archive=None):
+        arguments = ["--manifest", str(self.manifest), "--archive", str(archive or self.pack())]
+        if repo:
+            arguments += ["--repo", str(self.repo)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = check_licenses.main(arguments)
+        return status, stdout.getvalue().splitlines(), stderr.getvalue()
+
+    def test_complete_archive_passes(self):
+        status, lines, _ = self.run_archive()
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("All 6 listed license files are present in", lines[0])
+        self.assertIn("LICENSE and Kyty-MIT.txt equal the checkout's", lines[0])
+
+    def test_member_names_without_the_dot_prefix_pass(self):
+        with tarfile.open(self.archive, "w:gz") as archive:
+            for path in sorted(self.portable.rglob("*")):
+                archive.add(path, arcname=path.relative_to(self.portable).as_posix(),
+                            recursive=False)
+        status, lines, _ = self.run_archive(archive=self.archive)
+        self.assertEqual(status, 0, lines)
+
+    def test_missing_component_file_is_printed_with_its_archive_path(self):
+        (self.portable / "LICENSES" / "zstd" / "COPYING").unlink()
+        status, lines, _ = self.run_archive()
+        self.assertEqual(status, 1)
+        self.assertEqual([line for line in lines if line.startswith("missing")],
+                         ["missing: LICENSES/zstd/COPYING"])
+        self.assertTrue(lines[-1].startswith("FAILED: 1 of 6 listed license files missing"))
+
+    def test_component_file_at_the_flatpak_path_does_not_count(self):
+        (self.portable / "LICENSES" / "opus" / "COPYING").unlink()
+        self.write(self.portable / "opus" / "COPYING", b"x\n")
+        status, lines, _ = self.run_archive(repo=False)
+        self.assertEqual(status, 1)
+        self.assertIn("missing: LICENSES/opus/COPYING", lines)
+
+    def test_changed_license_fails(self):
+        self.write(self.portable / "LICENSE", LICENSE_TEXT.replace(b"\r\n", b"\n"))
+        status, lines, _ = self.run_archive()
+        self.assertEqual(status, 1)
+        self.assertIn(f"differs: LICENSE ({self.repo / 'LICENSE'})", lines)
+        self.assertFalse([line for line in lines if line.startswith("missing")])
+
+    def test_changed_kyty_mit_fails(self):
+        self.write(self.portable / "LICENSES" / "Kyty-MIT.txt", b"changed\n")
+        status, lines, _ = self.run_archive()
+        self.assertEqual(status, 1)
+        self.assertIn(f"differs: LICENSES/Kyty-MIT.txt ({self.repo / 'LICENSES' / 'Kyty-MIT.txt'})",
+                      lines)
+
+    def test_missing_license_with_repo_is_printed_once(self):
+        (self.portable / "LICENSE").unlink()
+        status, lines, _ = self.run_archive()
+        self.assertEqual(status, 1)
+        self.assertEqual([line for line in lines if "LICENSE" in line and "LICENSES/" not in line],
+                         ["missing: LICENSE"])
+
+    def test_a_directory_member_is_not_a_license_file(self):
+        (self.portable / "LICENSES" / "xbyak" / "NOTICE").unlink()
+        (self.portable / "LICENSES" / "xbyak" / "NOTICE").mkdir()
+        status, lines, _ = self.run_archive(repo=False)
+        self.assertEqual(status, 1)
+        self.assertIn("missing: LICENSES/xbyak/NOTICE", lines)
+
+    def test_non_gzip_file_is_an_input_error(self):
+        self.archive.write_bytes(b"not a tar file\n")
+        status, lines, stderr = self.run_archive(archive=self.archive)
+        self.assertEqual(status, 2)
+        self.assertEqual(lines, [])
+        self.assertIn("is not a readable gzip-compressed tar file", stderr)
+
+    def test_truncated_archive_is_an_input_error(self):
+        data = self.pack().read_bytes()
+        self.archive.write_bytes(data[:len(data) // 2])
+        status, _, stderr = self.run_archive(archive=self.archive)
+        self.assertEqual(status, 2)
+        self.assertIn("is not a readable gzip-compressed tar file", stderr)
+
+    def test_absent_archive_is_an_input_error(self):
+        status, _, stderr = self.run_archive(archive=Path(self.temp.name) / "absent.tar.gz")
+        self.assertEqual(status, 2)
+        self.assertIn("is not a readable gzip-compressed tar file", stderr)
+
+
 class CommandLine(CheckLicensesRun):
     def run_script(self, *arguments):
         environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
@@ -189,6 +296,17 @@ class CommandLine(CheckLicensesRun):
         result = self.run_script("--dir", str(self.dir))
         self.assertEqual(result.returncode, 2)
         self.assertIn("--manifest", result.stderr)
+
+    def test_script_requires_a_directory_or_an_archive(self):
+        result = self.run_script("--manifest", str(self.manifest))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--dir", result.stderr)
+
+    def test_script_rejects_a_directory_and_an_archive_together(self):
+        result = self.run_script("--manifest", str(self.manifest), "--dir", str(self.dir),
+                                 "--archive", str(self.manifest))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not allowed with", result.stderr)
 
 
 if __name__ == "__main__":
