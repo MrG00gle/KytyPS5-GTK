@@ -54,11 +54,12 @@ VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
   ctest --test-dir _Build/linux -L gpu --output-on-failure
 ```
 
-On Arch Linux the file is `/usr/share/vulkan/icd.d/lvp_icd.json`. Without `VK_DRIVER_FILES` the tests
-use the machine's own GPU. lavapipe lacks fragment shader barycentrics and 64-bit LDS and image
-atomics, so the Vulkan harness modes of `shader_recompiler_compute_tests` fail on it with "no Vulkan
-graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics". Run the `gpu`
-label on a real GPU to test them (see the [manual checklist](#manual-checklist)).
+On Ubuntu 24.04 and Arch Linux the file is `/usr/share/vulkan/icd.d/lvp_icd.json`. Without
+`VK_DRIVER_FILES` the tests use the machine's own GPU. lavapipe lacks fragment shader barycentrics
+and 64-bit LDS and image atomics, so the Vulkan harness modes of `shader_recompiler_compute_tests`
+fail on it with "no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image
+atomics". Run the `gpu` label on a real GPU to test them (see the
+[manual checklist](#manual-checklist)).
 
 ### UI tests and the headless display
 

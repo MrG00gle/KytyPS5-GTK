@@ -28,8 +28,9 @@ both are accepted) and checks:
              docs/testing.md): it takes its test names from junit_check.py --retry-list ...
              --print-retry-candidates and comes after the job's test run.
   results    the ubuntu, fedora, and coverage jobs each run tests (an unfiltered ctest call, or
-             the coverage target, which runs ctest itself) with VK_DRIVER_FILES set to Mesa's
-             software Vulkan driver; after every test step, and after its timing-rerun step if
+             the coverage target, which runs ctest itself) with VK_DRIVER_FILES set to the
+             manifest of Mesa's software Vulkan driver on the job's distribution
+             (VK_DRIVER_FILES below); after every test step, and after its timing-rerun step if
              there is one, a later step runs junit_check.py with --registered before the next test
              step. No job or step sets continue-on-error.
   release    the release job's if is exactly the push, refs/heads/main, and MrG00gle/KytyPS5-GTK
@@ -82,7 +83,13 @@ RUNNERS = {
 }
 REMOVED_RUNNER = re.compile(r"(?i)^\s*(?:windows|macos)")
 TEST_JOBS = ("ubuntu", "fedora", "coverage")
-VK_DRIVER_FILES = "/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"
+# Test job -> the lavapipe manifest of its distribution: Ubuntu 24.04's Mesa names it without the
+# architecture, Fedora's with it.
+VK_DRIVER_FILES = {
+    "ubuntu": "/usr/share/vulkan/icd.d/lvp_icd.json",
+    "fedora": "/usr/share/vulkan/icd.d/lvp_icd.x86_64.json",
+    "coverage": "/usr/share/vulkan/icd.d/lvp_icd.json",
+}
 RELEASE_JOB = "release"
 RELEASE_CONDITIONS = {"github.event_name == 'push'", "github.ref == 'refs/heads/main'",
                       "github.repository == 'MrG00gle/KytyPS5-GTK'"}
@@ -475,15 +482,16 @@ class Checker:
         for scope in (self.workflow, self.jobs[job_id]):
             if isinstance(scope.get("env"), dict):
                 env.update(scope["env"])
-        if env.get("VK_DRIVER_FILES") != VK_DRIVER_FILES:
+        manifest = VK_DRIVER_FILES[job_id]
+        if env.get("VK_DRIVER_FILES") != manifest:
             self.report(self.job_label(job_id), f"sets VK_DRIVER_FILES to "
-                        f"{env.get('VK_DRIVER_FILES')!r}, not {VK_DRIVER_FILES} "
+                        f"{env.get('VK_DRIVER_FILES')!r}, not {manifest} "
                         "(Requirement 16.5)")
         for index in tests:
             _, step, where = steps[index]
-            value = (step.get("env") or {}).get("VK_DRIVER_FILES", VK_DRIVER_FILES)
-            if value != VK_DRIVER_FILES:
-                self.report(where, f"sets VK_DRIVER_FILES to {value!r}, not {VK_DRIVER_FILES}")
+            value = (step.get("env") or {}).get("VK_DRIVER_FILES", manifest)
+            if value != manifest:
+                self.report(where, f"sets VK_DRIVER_FILES to {value!r}, not {manifest}")
         for index in reruns:
             if not any(test < index for test in tests):
                 self.report(steps[index][2], "comes before the job's test run; it may only "

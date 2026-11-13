@@ -390,6 +390,19 @@ class TestResults(Workflow):
             step["env"] = {"VK_DRIVER_FILES": "/usr/share/vulkan/icd.d/intel_icd.x86_64.json"}
         self.assert_fails(change, 'job ubuntu, step "Run every test": sets VK_DRIVER_FILES to')
 
+    def test_the_other_distributions_lavapipe_manifest(self):
+        # Ubuntu 24.04's Mesa has no lvp_icd.x86_64.json, and Fedora's no lvp_icd.json.
+        def change(data):
+            data["jobs"]["ubuntu"]["env"]["VK_DRIVER_FILES"] = (
+                "/usr/share/vulkan/icd.d/lvp_icd.x86_64.json")
+            data["jobs"]["fedora"]["env"]["VK_DRIVER_FILES"] = (
+                "/usr/share/vulkan/icd.d/lvp_icd.json")
+        lines = self.assert_fails(change, "job ubuntu: sets VK_DRIVER_FILES to "
+                                  "'/usr/share/vulkan/icd.d/lvp_icd.x86_64.json', not "
+                                  "/usr/share/vulkan/icd.d/lvp_icd.json", count=2)
+        self.assertIn("job fedora: sets VK_DRIVER_FILES to '/usr/share/vulkan/icd.d/lvp_icd.json', "
+                      "not /usr/share/vulkan/icd.d/lvp_icd.x86_64.json (Requirement 16.5)", lines)
+
     def test_continue_on_error(self):
         def change(data):
             find_step(data, "ubuntu", "tests")["continue-on-error"] = True
