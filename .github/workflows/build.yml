@@ -280,10 +280,11 @@ jobs:
       KYTY_RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
       BUILD_DIR: _Build/fedora
       # Stage A: everything except GTK. gcc-c++ is for coverage_requires_clang; weston and
-      # dbus-daemon are for kernel_file_system, which runs in a headless Wayland session.
+      # dbus-daemon are for kernel_file_system, which runs in a headless Wayland session;
+      # glibc-gconv-extra has the CP932 converter that the ces test needs (iconv).
       FEDORA_PACKAGES_A: >-
         clang lld cmake ninja-build ccache pkgconf-pkg-config gcc gcc-c++ patch file binutils
-        tar gzip findutils diffutils which glslang python3-pyyaml
+        tar gzip findutils diffutils which glslang python3-pyyaml glibc-gconv-extra
         alsa-lib-devel dbus-devel pulseaudio-libs-devel systemd-devel wayland-devel
         wayland-protocols-devel libX11-devel libXcursor-devel libXext-devel libXfixes-devel
         libXi-devel libxkbcommon-devel libXrandr-devel libXScrnSaver-devel libXtst-devel
