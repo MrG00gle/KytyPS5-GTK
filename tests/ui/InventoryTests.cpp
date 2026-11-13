@@ -2026,6 +2026,13 @@ KYTY_UI_CASE(lfi_27) {
 		KytyUi::WaitFor(
 		    [&]() { return stored() == States {{"Infinite Health", true}, {"Max Coins", true}}; },
 		    3000, "Apply selection to save both cheats on");
+		// Apply selection reads the file again and rebuilds the rows: new check boxes.
+		health = check("Infinite Health");
+		coins  = check("Max Coins");
+		if (!Check(health != nullptr && coins != nullptr,
+		           "the local cheats have check boxes after Apply selection")) {
+			return;
+		}
 		Check(KytyUi::Activate(KytyUi::FindByBuildableId(root, "disable_all_button")),
 		      "a click on Disable all");
 		Check(gtk_check_button_get_active(health) == FALSE &&
