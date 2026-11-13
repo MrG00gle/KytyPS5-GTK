@@ -39,6 +39,10 @@ Two CI policies that the repository owner approved for named tests only
     <name>"). It is a problem when it failed without the text ("failed"), when
     it passed ("unexpected pass": remove it from the list), when it was skipped
     or not run, and when the JUnit file has no testcase for it ("missing").
+    The option may be given more than once; the lists may not share a test.
+    The ubuntu and coverage jobs also pass
+    tools/checks/ci-expected-failures-ubuntu.txt, which names the one test
+    that fails only on Ubuntu 24.04's software Vulkan driver.
 --retry-list FILE (tools/checks/ci-timing-retries.txt): timing tests that a
     noisy CI machine may push over their limit. One test name per line. A
     listed test that failed in this (full, unfiltered) run is accepted only
@@ -54,7 +58,7 @@ With either option the summary line also counts the expected failures and the
 retried tests. The two lists may not share a test.
 
 Usage:
-    junit_check.py JUNIT [--registered TESTS_JSON] [--expected-failures FILE]
+    junit_check.py JUNIT [--registered TESTS_JSON] [--expected-failures FILE ...]
                    [--retry-list FILE [--rerun RERUN_JUNIT | --print-retry-candidates]]
 
 Exit status: 0 when every testcase passed or was accepted by a policy (and,
@@ -159,6 +163,19 @@ def read_expected_failures(path):
         if len(parts) != 2:
             raise InputError(f"{path}:{number}: not a '<test name> <failure text>' line")
         expected[checked_name(path, number, parts[0], expected)] = parts[1].strip()
+    return expected
+
+
+def read_expected_failure_lists(paths):
+    """Return {test name: exact failure text} of every list; a test on two lists is an error."""
+    expected = {}
+    where = {}
+    for path in paths:
+        for name, text in read_expected_failures(path).items():
+            if name in expected:
+                raise InputError(f"{name} is in both {where[name]} and {path}")
+            expected[name] = text
+            where[name] = path
     return expected
 
 
@@ -284,9 +301,9 @@ def main(argv=None):
     parser.add_argument("--registered", metavar="TESTS_JSON",
                         help="ctest --show-only=json-v1 output for the same build tree: every "
                         "test it lists must appear in the JUnit file")
-    parser.add_argument("--expected-failures", metavar="FILE",
+    parser.add_argument("--expected-failures", metavar="FILE", action="append",
                         help="'<test name> <exact failure text>' lines: those tests must fail "
-                        "with that text")
+                        "with that text (repeatable; the lists may not share a test)")
     parser.add_argument("--retry-list", metavar="FILE",
                         help="one test name per line: those tests may pass in a rerun instead")
     mode = parser.add_mutually_exclusive_group()
@@ -301,14 +318,14 @@ def main(argv=None):
     try:
         cases = read_testcases(args.junit)
         registered = read_registered(args.registered) if args.registered is not None else None
-        expected = (read_expected_failures(args.expected_failures)
+        expected = (read_expected_failure_lists(args.expected_failures)
                     if args.expected_failures is not None else None)
         retry = read_retry_list(args.retry_list) if args.retry_list is not None else None
         if expected and retry:
             shared = sorted(set(expected) & set(retry))
             if shared:
-                raise InputError(f"{', '.join(shared)} is in both {args.expected_failures} and "
-                                 f"{args.retry_list}")
+                raise InputError(f"{', '.join(shared)} is in both "
+                                 f"{' and '.join(args.expected_failures)} and {args.retry_list}")
         rerun = read_testcases(args.rerun) if args.rerun is not None else None
     except InputError as error:
         print(f"error: {error}", file=sys.stderr)

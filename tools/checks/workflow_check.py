@@ -43,9 +43,16 @@ both are accepted) and checks:
              check on the workflow, tools/docs/check_links.py on the checkout, and
              tools/docs/check_help_options.py on the kyty_emulator it built, against
              docs/running.md (task 29.6).
+  lists      tools/checks/ci-expected-failures-ubuntu.txt, the expected failure that the
+             repository owner approved for Ubuntu 24.04's lavapipe only (docs/testing.md), is
+             named only inside the ubuntu and coverage jobs (not in the workflow's own env, and
+             in no other job), and the file in the repository holds exactly the one approved
+             entry (UBUNTU_EXPECTED_FAILURES below).
 
 Usage:
-    workflow_check.py --workflow FILE
+    workflow_check.py --workflow FILE [--repo DIR]
+
+--repo is the checkout whose list files are read (default: the one that holds this script).
 
 It prints one line per problem, naming the job and the step, then "FAILED: workflow_structure:
 <n> problem(s)", or one "PASS: workflow_structure: ..." line.
@@ -61,9 +68,12 @@ import re
 import shlex
 import sys
 
-# The Qt patterns of the qt_remnants content check.
+# The Qt patterns of the qt_remnants content check, and junit_check.py's list reader.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import content_checks  # noqa: E402
+import junit_check  # noqa: E402
+
+DEFAULT_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 NAME = "workflow_structure"
 YAML_MISSING = "workflow_check.py needs PyYAML (python3-pyyaml or python3-yaml)"
@@ -89,6 +99,14 @@ VK_DRIVER_FILES = {
     "ubuntu": "/usr/share/vulkan/icd.d/lvp_icd.json",
     "fedora": "/usr/share/vulkan/icd.d/lvp_icd.x86_64.json",
     "coverage": "/usr/share/vulkan/icd.d/lvp_icd.json",
+}
+# The expected failure that the repository owner approved for Ubuntu 24.04's lavapipe (Mesa 25.2.8)
+# only, on 2026-11-13: the jobs that may use its list, and the list's only entry.
+UBUNTU_LIST = "tools/checks/ci-expected-failures-ubuntu.txt"
+UBUNTU_LIST_JOBS = ("ubuntu", "coverage")
+UBUNTU_EXPECTED_FAILURES = {
+    "kernel_file_system": "llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; "
+                          "depthBounds is not supported",
 }
 RELEASE_JOB = "release"
 RELEASE_CONDITIONS = {"github.event_name == 'push'", "github.ref == 'refs/heads/main'",
@@ -278,8 +296,9 @@ def names_retry_candidates(step):
 
 
 class Checker:
-    def __init__(self, workflow):
+    def __init__(self, workflow, repo=DEFAULT_REPO):
         self.workflow = workflow
+        self.repo = repo
         self.jobs = workflow["jobs"]
         self.problems = []
         self.ctest_runs = 0
@@ -318,6 +337,7 @@ class Checker:
         for job_id, required in REQUIRED_STEPS.items():
             if job_id in self.jobs:
                 self.check_required_steps(job_id, required)
+        self.check_ubuntu_list()
         return self.problems
 
     # ---- triggers
@@ -545,12 +565,37 @@ class Checker:
             if not any(pattern.search(line) for line in lines):
                 self.report(self.job_label(job_id), f"has no step that runs {description}")
 
+    # ---- the Ubuntu-only expected-failure list
+    def check_ubuntu_list(self):
+        name = os.path.basename(UBUNTU_LIST)
+        allowed = " and ".join(UBUNTU_LIST_JOBS)
+        outside_jobs = {key: value for key, value in self.workflow.items() if key != "jobs"}
+        if any(name in text for text in strings_in(outside_jobs)):
+            self.report("workflow", f"names {UBUNTU_LIST} outside the jobs; only the {allowed} "
+                        "jobs may use it")
+        for job_id, job in self.jobs.items():
+            if job_id not in UBUNTU_LIST_JOBS and any(name in text for text in strings_in(job)):
+                self.report(self.job_label(job_id), f"uses {UBUNTU_LIST}, which only the "
+                            f"{allowed} jobs may use (Ubuntu 24.04's lavapipe)")
+        path = os.path.join(self.repo, UBUNTU_LIST)
+        try:
+            entries = junit_check.read_expected_failures(path)
+        except junit_check.InputError as error:
+            self.report("lists", f"{UBUNTU_LIST}: {error}")
+            return
+        if entries != UBUNTU_EXPECTED_FAILURES:
+            listed = ", ".join(sorted(entries)) or "nothing"
+            self.report("lists", f"{UBUNTU_LIST} lists {listed}, not exactly the approved entry "
+                        "for kernel_file_system with its text")
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Check the structure of the CI workflow; print each problem and exit 1 if "
         "there is one.")
     parser.add_argument("--workflow", required=True, help="the workflow file (build.yml)")
+    parser.add_argument("--repo", default=DEFAULT_REPO,
+                        help="the checkout whose list files are read (default: %(default)s)")
     args = parser.parse_args(argv)
     try:
         workflow = load_workflow(args.workflow)
@@ -560,7 +605,7 @@ def main(argv=None):
     except InputError as error:
         print(f"error: {NAME}: {error}", file=sys.stderr)
         return 2
-    checker = Checker(workflow)
+    checker = Checker(workflow, args.repo)
     problems = checker.run()
     for problem in problems:
         print(problem)

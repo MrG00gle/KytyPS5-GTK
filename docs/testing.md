@@ -200,20 +200,29 @@ with an error, prints no option, or prints an option that the
 [running guide](running.md#emulator-options) does not name, and prints each missing option. The
 CTests `docs_links` and `docs_help_options` run the same checks locally.
 
-The repository owner approved two exceptions, each for the listed tests only:
+The repository owner approved these exceptions, each for the listed tests only:
 
 - **Expected GPU failures** (`tools/checks/ci-expected-failures.txt`). The Vulkan harness modes of
   `shader_recompiler_compute_tests` need features that lavapipe lacks. CI still runs them. A listed
   test is accepted only when it fails with exactly the listed text. It fails CI when it fails for
   another reason, is skipped, or passes (then remove it from the list). These tests run on a real
   GPU in the manual checklist before each merge.
+- **The Ubuntu-only expected failure** (`tools/checks/ci-expected-failures-ubuntu.txt`, approved on
+  2026-11-13, a deviation from Requirements 16.5 and 16.10 for this one test in two jobs).
+  Ubuntu 24.04's lavapipe (Mesa 25.2.8) lacks `imageViewMinLod` and `depthBounds`, so the
+  emulator rejects it and `kernel_file_system` stops with "Could not find suitable device:
+  llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; depthBounds is not
+  supported". Only the Ubuntu and Coverage jobs pass this list, and the same rules apply: the test
+  still runs, and it fails CI there when it fails for another reason or passes. On Fedora it is on
+  no list and must pass. `tools/checks/workflow_check.py` checks that only those two jobs use the
+  file and that it holds only this entry.
 - **Timing reruns** (`tools/checks/ci-timing-retries.txt`). The two search timing tests
   (`launcher_ui_library_search_timing_wayland` and `_x11`) have little headroom on shared CI runners.
   When the only failures of the full run are listed tests, the `timing-rerun` step runs exactly
   those again, up to 3 times. The job passes only when every other test passed in the full run and
   each listed test passed in the rerun. Every miss is printed with its median in the job summary.
 
-Adding a test to either list needs the owner's approval.
+Adding a test to any of these lists needs the owner's approval.
 
 ## Manual checklist
 

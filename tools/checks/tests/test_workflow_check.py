@@ -493,6 +493,80 @@ class Release(Workflow):
                           "workflow: permissions is 'write-all', not contents: read")
 
 
+UBUNTU_LIST = "tools/checks/ci-expected-failures-ubuntu.txt"
+UBUNTU_TEXT = ("llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; "
+               "depthBounds is not supported")
+
+
+class UbuntuList(Workflow):
+    """The Ubuntu-only expected failure (docs/testing.md): used only by the ubuntu and coverage
+    jobs, and the list holds exactly the approved entry."""
+
+    def run_with_list(self, text):
+        repo = Path(self.temp.name) / "repo"
+        (repo / "tools" / "checks").mkdir(parents=True, exist_ok=True)
+        if text is not None:
+            (repo / UBUNTU_LIST).write_text(text, encoding="utf-8")
+        self.path.write_text(self.text, encoding="utf-8")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = workflow_check.main(["--workflow", str(self.path), "--repo", str(repo)])
+        return status, stdout.getvalue().splitlines()
+
+    def test_the_committed_list_holds_the_approved_entry(self):
+        self.assertEqual(workflow_check.UBUNTU_EXPECTED_FAILURES, {"kernel_file_system":
+                                                                   UBUNTU_TEXT})
+        status, lines = self.run_with_list(f"# header\nkernel_file_system {UBUNTU_TEXT}\n")
+        self.assertEqual(status, 0, lines)
+
+    def test_the_ubuntu_jobs_pass_the_list(self):
+        for job in ("ubuntu", "coverage"):
+            with self.subTest(job=job):
+                self.assertEqual(self.data["jobs"][job]["env"]["UBUNTU_EXPECTED_FAILURES"],
+                                 UBUNTU_LIST)
+                step = find_step(self.data, job, "Check the test results")
+                self.assertIn('--expected-failures "$UBUNTU_EXPECTED_FAILURES"', step["run"])
+
+    def test_the_list_in_the_fedora_job(self):
+        def change(data):
+            option = '--expected-failures "$EXPECTED_FAILURES"'
+            replace_in_run(data, "fedora", "Stage B - check the test results", option,
+                           f"{option} --expected-failures {UBUNTU_LIST}")
+        self.assert_fails(change, f"job fedora: uses {UBUNTU_LIST}, which only the ubuntu and "
+                          "coverage jobs may use")
+
+    def test_the_list_in_the_fedora_env(self):
+        def change(data):
+            data["jobs"]["fedora"]["env"]["UBUNTU_EXPECTED_FAILURES"] = UBUNTU_LIST
+        self.assert_fails(change, f"job fedora: uses {UBUNTU_LIST}")
+
+    def test_the_list_in_the_workflow_env(self):
+        self.assert_fails(lambda data: data["env"].update(UBUNTU_EXPECTED_FAILURES=UBUNTU_LIST),
+                          f"workflow: names {UBUNTU_LIST} outside the jobs; only the ubuntu and "
+                          "coverage jobs may use it")
+
+    def test_a_list_with_another_entry_or_text_fails(self):
+        other = ("ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan "
+                 "graphics+compute device")
+        for text in (f"kernel_file_system {UBUNTU_TEXT}\nlld_linked_executables x\n",
+                     "kernel_file_system image view minLod is not supported\n",
+                     f"gpu_tiler {other}\n"):
+            with self.subTest(text=text):
+                status, lines = self.run_with_list(text)
+                self.assertEqual(status, 1, lines)
+                self.assertTrue(any(line.startswith(f"lists: {UBUNTU_LIST} lists ") and
+                                    "not exactly the approved entry" in line for line in lines),
+                                lines)
+
+    def test_a_missing_or_empty_list_fails(self):
+        for text, fragment in ((None, "cannot read"), ("# only a comment\n", "lists no tests")):
+            with self.subTest(text=text):
+                status, lines = self.run_with_list(text)
+                self.assertEqual(status, 1, lines)
+                self.assertTrue(any(line.startswith(f"lists: {UBUNTU_LIST}: ") and fragment in line
+                                    for line in lines), lines)
+
+
 class Uploads(Workflow):
     def test_upload_without_if_always(self):
         def change(data):

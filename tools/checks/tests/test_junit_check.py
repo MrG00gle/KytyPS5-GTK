@@ -408,6 +408,44 @@ class ExpectedFailures(PolicyFiles):
         self.assertEqual(status, 1)
         self.assertIn("failed: gpu_c", lines)
 
+    def test_a_second_list_adds_its_tests(self):
+        # The ubuntu and coverage jobs pass ci-expected-failures-ubuntu.txt after the main list.
+        second = self.root / "ci-expected-failures-ubuntu.txt"
+        second.write_text("kernel_fs depthBounds is not supported\n", encoding="utf-8")
+        path = self.junit(output_case("gpu_a", "fail", FAILURE_TEXT, "<failure/>") +
+                          output_case("gpu_b", "fail", FAILURE_TEXT, "<failure/>") +
+                          output_case("kernel_fs", "fail", "x: depthBounds is not supported in y\n",
+                                      "<failure/>"))
+        status, lines, _ = run_main(path, "--expected-failures", self.list,
+                                    "--expected-failures", second)
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(lines[-1], "junit-check: 3 tests, 0 passed, 3 expected failures, "
+                         "0 retried, 0 problems")
+        # Without the second list the same failure is a problem; with it, another text or a pass is.
+        status, lines, _ = run_main(path, "--expected-failures", self.list)
+        self.assertEqual(status, 1)
+        self.assertIn("failed: kernel_fs", lines)
+        for body, line in ((output_case("kernel_fs", "fail", "Segmentation fault\n", "<failure/>"),
+                            "failed: kernel_fs (its output lacks the listed failure text)"),
+                           (case("kernel_fs"), "unexpected pass: kernel_fs (listed as an expected "
+                            "failure; remove it from the list)")):
+            with self.subTest(line=line):
+                other = self.junit(output_case("gpu_a", "fail", FAILURE_TEXT, "<failure/>") +
+                                   output_case("gpu_b", "fail", FAILURE_TEXT, "<failure/>") + body)
+                status, lines, _ = run_main(other, "--expected-failures", self.list,
+                                            "--expected-failures", second)
+                self.assertEqual(status, 1)
+                self.assertIn(line, lines)
+
+    def test_a_test_on_two_expected_failure_lists_is_an_input_error(self):
+        second = self.root / "second.txt"
+        second.write_text(f"gpu_b {FAILURE_TEXT}\n", encoding="utf-8")
+        status, lines, stderr = run_main(self.junit(case("one")), "--expected-failures",
+                                         self.list, "--expected-failures", second)
+        self.assertEqual(status, 2)
+        self.assertEqual(lines, [])
+        self.assertIn("gpu_b is in both", stderr)
+
     def test_bad_lists_are_input_errors(self):
         path = self.junit(case("one"))
         for text, message in (("", "lists no tests"), ("# only a comment\n", "lists no tests"),
@@ -639,6 +677,18 @@ class CommittedLists(unittest.TestCase):
         expected = junit_check.read_expected_failures(
             os.path.join(CHECKS_DIR, "ci-expected-failures.txt"))
         self.assertEqual(expected, {name: FAILURE_TEXT for name in self.VULKAN_HARNESS_MODES})
+
+    def test_the_ubuntu_list_is_kernel_file_system_with_its_text(self):
+        expected = junit_check.read_expected_failures(
+            os.path.join(CHECKS_DIR, "ci-expected-failures-ubuntu.txt"))
+        self.assertEqual(expected, {"kernel_file_system": "llvmpipe (LLVM 20.1.2, 256 bits): "
+                                    "image view minLod is not supported; depthBounds is not "
+                                    "supported"})
+        # Both lists together are valid: they share no test.
+        both = junit_check.read_expected_failure_lists(
+            [os.path.join(CHECKS_DIR, "ci-expected-failures.txt"),
+             os.path.join(CHECKS_DIR, "ci-expected-failures-ubuntu.txt")])
+        self.assertEqual(len(both), len(self.VULKAN_HARNESS_MODES) + 1)
 
     def test_the_retry_list_is_the_two_search_timing_cases(self):
         names = junit_check.read_retry_list(os.path.join(CHECKS_DIR, "ci-timing-retries.txt"))

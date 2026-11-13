@@ -1,0 +1,12 @@
+# The test that fails only in the ubuntu and coverage CI jobs (Ubuntu 24.04), on that release's
+# software Vulkan driver (tools/checks/junit_check.py --expected-failures, given after
+# ci-expected-failures.txt; docs/testing.md). One "<test name> <exact failure text>" per line.
+#
+# Ubuntu 24.04's lavapipe (Mesa 25.2.8) lacks imageViewMinLod and depthBounds, so the Emulator's
+# Vulkan device selection rejects it and kernel_file_system stops. Mesa 26.2 (Fedora) has both, and
+# the test must pass there. The repository owner approved this policy for exactly the test below on
+# 2026-11-13: CI still runs it unfiltered in every job, and on Ubuntu it is accepted only when it
+# fails with exactly the text given here. It fails CI when it fails for another reason, is skipped,
+# or passes (then remove it from this list). Only the ubuntu and coverage jobs pass this file;
+# tools/checks/workflow_check.py checks that, and that the file holds only this entry.
+kernel_file_system llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; depthBounds is not supported

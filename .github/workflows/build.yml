@@ -3,7 +3,9 @@
 #
 # Two CI policies that the repository owner approved for named tests only (docs/testing.md):
 # - tools/checks/ci-expected-failures.txt: GPU tests that fail on lavapipe for a missing Vulkan
-#   feature are accepted only when they fail with exactly the listed text;
+#   feature are accepted only when they fail with exactly the listed text; the ubuntu and coverage
+#   jobs also pass tools/checks/ci-expected-failures-ubuntu.txt, the one test that fails only on
+#   Ubuntu 24.04's lavapipe;
 # - tools/checks/ci-timing-retries.txt: the search timing tests may pass in a rerun (the
 #   timing-rerun steps) after failing in the full run.
 # tools/checks/junit_check.py enforces both; every other test must pass in the full run.
@@ -100,6 +102,8 @@ jobs:
       # The GPU tests run on Mesa's software Vulkan driver (lavapipe, Vulkan 1.3). Ubuntu 24.04's
       # Mesa names its manifest without the architecture.
       VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.json
+      # The one test that fails only on Ubuntu 24.04's lavapipe (owner-approved; docs/testing.md).
+      UBUNTU_EXPECTED_FAILURES: tools/checks/ci-expected-failures-ubuntu.txt
       KYTY_RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
       BUILD_DIR: _Build/linux
       ARCHIVE: _Build/${{ needs.metadata.outputs.tag }}-Linux-x86_64.tar.gz
@@ -215,6 +219,7 @@ jobs:
           status=0
           python3 -B tools/checks/junit_check.py "$BUILD_DIR/ctest.xml" \
             --registered "$BUILD_DIR/ctest-tests.json" --expected-failures "$EXPECTED_FAILURES" \
+            --expected-failures "$UBUNTU_EXPECTED_FAILURES" \
             --retry-list "$TIMING_RETRIES" "${rerun[@]}" > "$BUILD_DIR/junit-check.txt" || status=$?
           cat "$BUILD_DIR/junit-check.txt"
           { echo '### Ubuntu test results'; echo '```'; cat "$BUILD_DIR/junit-check.txt"; echo '```'; } \
@@ -505,6 +510,8 @@ jobs:
       # The GPU tests run on Mesa's software Vulkan driver (lavapipe, Vulkan 1.3). Ubuntu 24.04's
       # Mesa names its manifest without the architecture.
       VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.json
+      # The one test that fails only on Ubuntu 24.04's lavapipe (owner-approved; docs/testing.md).
+      UBUNTU_EXPECTED_FAILURES: tools/checks/ci-expected-failures-ubuntu.txt
       BUILD_DIR: _Build/coverage
     steps:
       - name: Check out
@@ -585,6 +592,7 @@ jobs:
           status=0
           python3 -B tools/checks/junit_check.py "$BUILD_DIR/coverage/ctest.xml" \
             --registered "$BUILD_DIR/ctest-tests.json" --expected-failures "$EXPECTED_FAILURES" \
+            --expected-failures "$UBUNTU_EXPECTED_FAILURES" \
             --retry-list "$TIMING_RETRIES" > "$BUILD_DIR/junit-check.txt" || status=$?
           cat "$BUILD_DIR/junit-check.txt"
           { echo '### Coverage run test results'; echo '```'; cat "$BUILD_DIR/junit-check.txt"; echo '```'; } \
