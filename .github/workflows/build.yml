@@ -37,11 +37,12 @@ env:
   EXPECTED_FAILURES: tools/checks/ci-expected-failures.txt
   TIMING_RETRIES: tools/checks/ci-timing-retries.txt
   # Ubuntu 24.04 packages of the ubuntu and coverage jobs. No Qt package. CMake is the runner
-  # image's (3.29 or newer), not Ubuntu's 3.28.
+  # image's (3.29 or newer), not Ubuntu's 3.28. librsvg2-common is GTK's SVG image loader, which
+  # libgtk-4-1 only recommends: without it the launcher's SVG icons do not load.
   UBUNTU_PACKAGES: >-
     clang lld llvm gcc g++ ninja-build ccache pkg-config patch file binutils
     glslang-tools python3 python3-yaml gettext
-    libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev glib-networking
+    libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev glib-networking librsvg2-common
     adwaita-icon-theme hicolor-icon-theme fonts-dejavu-core
     libasound2-dev libdbus-1-dev libpulse-dev libudev-dev libwayland-dev wayland-protocols
     libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxi-dev libxkbcommon-dev libxrandr-dev
