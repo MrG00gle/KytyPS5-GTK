@@ -11,6 +11,11 @@
 # - weston --backend=headless (wayland) or Xvfb (x11) at 1280x800. weston gets a fake seat
 #   (--fake-seat): nothing can type on it, but the shell gives a new window the keyboard focus,
 #   so windows become active as on a desktop (GTK's focus handling depends on it).
+#   --fake-seat came with weston 14, and weston 13 (Ubuntu 24.04) exits on it. So the script asks
+#   weston for its version: for weston 13 and older, weston's x11 backend runs inside a private
+#   Xvfb instead, whose core keyboard and pointer are weston's seat; the command still sees only
+#   WAYLAND_DISPLAY. A line on stderr names the mode of each Wayland session (the repository
+#   owner approved this fallback on 2026-11-13; docs/testing.md).
 # - The command runs in the foreground with SIGINT and SIGTERM at their default actions, with
 #   WAYLAND_DISPLAY or DISPLAY, GDK_BACKEND, GSETTINGS_BACKEND=memory, GIO_USE_VFS=local,
 #   GIO_USE_VOLUME_MONITOR=unix, GIO_USE_PROXY_RESOLVER=dummy, GTK_A11Y=test (GTK's test
@@ -54,8 +59,17 @@ missing() {
 	exit 77
 }
 command -v "$dbus_exe" > /dev/null 2>&1 || missing dbus-daemon "$dbus_exe"
+weston_mode=""
 if [ "$backend" = wayland ]; then
 	command -v "$weston_exe" > /dev/null 2>&1 || missing weston "$weston_exe"
+	# "weston 13.0.0": the major version decides whether weston knows --fake-seat (14 and newer).
+	weston_version=$("$weston_exe" --version 2>&1 < /dev/null | sed -n 's/^weston \([0-9][0-9.]*\).*/\1/p' | head -n 1)
+	if [ -n "$weston_version" ] && [ "${weston_version%%.*}" -lt 14 ]; then
+		weston_mode=x11-in-xvfb
+		command -v "$xvfb_exe" > /dev/null 2>&1 || missing Xvfb "$xvfb_exe"
+	else
+		weston_mode=headless
+	fi
 else
 	command -v "$xvfb_exe" > /dev/null 2>&1 || missing Xvfb "$xvfb_exe"
 fi
@@ -141,7 +155,24 @@ if [ -n "$portal" ]; then
 	wait_until "$!" grep -q '^ui_fake_portal: ready' "$root/portal.log" || fail "the portal $portal" "$root/portal.log"
 fi
 
-if [ "$backend" = wayland ]; then
+if [ "$backend" = wayland ] && [ "$weston_mode" = x11-in-xvfb ]; then
+	# weston 13 and older: the x11 backend in a private Xvfb (only weston gets its DISPLAY).
+	"$xvfb_exe" -displayfd 4 -screen 0 1280x800x24 -nolisten tcp \
+		4> "$root/weston-xvfb-display" > "$root/weston-xvfb.log" 2>&1 < /dev/null &
+	pids+=("$!")
+	wait_until "$!" test -s "$root/weston-xvfb-display" || fail "Xvfb ($xvfb_exe) for weston" "$root/weston-xvfb.log"
+	weston_display=":$(head -n 1 "$root/weston-xvfb-display")"
+	echo "with-display.sh: wayland session: weston $weston_version has no --fake-seat;" \
+		"weston --backend=x11 in a private Xvfb ($weston_display)" >&2
+	socket=kyty-ui-$$
+	DISPLAY="$weston_display" "$weston_exe" --backend=x11 --renderer=pixman --socket="$socket" \
+		--width=1280 --height=800 --idle-time=0 > "$root/weston.log" 2>&1 < /dev/null &
+	pids+=("$!")
+	wait_until "$!" test -S "$XDG_RUNTIME_DIR/$socket" || fail "weston ($weston_exe)" "$root/weston.log"
+	export GDK_BACKEND=wayland WAYLAND_DISPLAY="$socket"
+elif [ "$backend" = wayland ]; then
+	echo "with-display.sh: wayland session: weston${weston_version:+ $weston_version}" \
+		"--backend=headless --fake-seat" >&2
 	socket=kyty-ui-$$
 	"$weston_exe" --backend=headless --fake-seat --socket="$socket" --width=1280 --height=800 \
 		--idle-time=0 > "$root/weston.log" 2>&1 < /dev/null &

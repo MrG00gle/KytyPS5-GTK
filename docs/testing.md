@@ -74,9 +74,13 @@ bash tests/ui/with-display.sh x11 -- <command> [<argument>...]
 The session has a private `dbus-daemon` that activates nothing on the host, a fake desktop portal
 when a test asks for one, and either `weston --backend=headless` or `Xvfb` at 1280×800, with its own
 temporary home, runtime, configuration, and data directories, the C.UTF-8 locale, and GTK's test
-accessibility backend. The script returns the command's exit status, and 77 only when `dbus-daemon`,
-weston, or Xvfb is missing. A GTK, libadwaita, or launcher critical or warning message during a UI
-test fails it and prints the message; `ui_harness_selftest` checks that.
+accessibility backend. weston 13 and older (Ubuntu 24.04 has weston 13) lack the fake seat that the
+headless backend needs, so for them the script runs `weston --backend=x11` inside a private Xvfb,
+whose keyboard and pointer become the session's seat, and prints which mode it used; the test
+still sees only Wayland (the repository owner approved this fallback on 2026-11-13). The script
+returns the command's exit status, and 77 only when `dbus-daemon`, weston, or Xvfb is missing. A
+GTK, libadwaita, or launcher critical or warning message during a UI test fails it and prints the
+message; `ui_harness_selftest` checks that.
 
 ### Reproducing a property test failure
 
