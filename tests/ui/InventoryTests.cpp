@@ -924,7 +924,9 @@ KYTY_UI_CASE(lfi_09) {
 			KytyUi::WaitFor([window]() { return !kyty::gtk::MainWindowGameRunning(window); }, 8000,
 			                "the game to stop");
 		}
-		gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(context.library.Selection()));
+		// GTK 4.14's GtkSingleSelection has no unselect_all (the call does nothing there); this
+		// clears the selection on every GTK version.
+		gtk_single_selection_set_selected(context.library.Selection(), GTK_INVALID_LIST_POSITION);
 		KytyUi::WaitFor([&]() { return !sound.Playing(); }, 1000,
 		                "the sound to stop without a selection");
 	}

@@ -119,7 +119,9 @@ KYTY_UI_CASE(title_sound_start_within_2s) {
 	KytyGame* delta = KytyUi::GameByTitle(library, "Delta Sound");
 	Check(delta != nullptr && kyty_game_get_entry(delta).kind == core::GameEntry::Kind::Archive,
 	      "Delta Sound is a .zar game");
-	gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(library.Selection()));
+	// GTK 4.14's GtkSingleSelection has no unselect_all (the call does nothing there); this clears
+	// the selection on every GTK version.
+	gtk_single_selection_set_selected(library.Selection(), GTK_INVALID_LIST_POSITION);
 	KytyUi::WaitFor([&]() { return !sound.Playing(); }, 1000, "the sound to stop");
 }
 
@@ -156,8 +158,9 @@ KYTY_UI_CASE(title_sound_stop_within_100ms) {
 	    [&]() { return sound.PlayingEntry() == core::EntryId(PathOf(library, "Beta Quest")); },
 	    5000, "Beta Quest's sound to play next");
 	// To no selection.
-	stop("on clearing the selection",
-	     [&]() { gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(library.Selection())); });
+	stop("on clearing the selection", [&]() {
+		gtk_single_selection_set_selected(library.Selection(), GTK_INVALID_LIST_POSITION);
+	});
 	// A sound still decoding for the previous selection is discarded: Delta Sound, then at once
 	// Gamma Archive (no sound): nothing plays afterwards.
 	KytyUi::SelectTitle(library, "Delta Sound");
