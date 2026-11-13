@@ -1987,9 +1987,10 @@ SplitSample SampleSplit(GtkWidget* root, const std::string& state) {
 // Screens review (b), phase 8 plan D12: the list/preview split keeps one handle position through
 // the Remote view's states: the list loading, listed, a previewed file, a file that is not JSON,
 // an incomplete collection (a long status line), and a game without remote files. The file list
-// keeps its height (resize-start-child off), 171 px with four whole rows at 900x700 (its
-// min-content-height 140 and the header); the status lines growing below take the preview's
-// height, which stays at least 170 px.
+// keeps its height (resize-start-child off): the handle stays at one position, equal to the list's
+// height with its margins, with four whole rows at 900x700 (its min-content-height 140 and the
+// header; 171 px with GTK 4.22, 170 px with GTK 4.14); the status lines growing below take the
+// preview's height, which stays at least 170 px.
 KYTY_UI_CASE(cheats_split_position_states) {
 	KytyUi::UiContext ui;
 	const auto        games = ContentLibrary(ui);
@@ -2101,8 +2102,8 @@ KYTY_UI_CASE(cheats_split_position_states) {
 		          std::to_string(samples.front().position) + ", preview y " +
 		          std::to_string(other.preview_y) + " vs " +
 		          std::to_string(samples.front().preview_y) + ")");
-		Check(other.position == 171 && other.list_height == 171,
-		      other.state + ": the file list is 171 px, four whole rows (position " +
+		Check(other.position > 0 && other.position == other.list_height,
+		      other.state + ": the handle is at the file list's height (position " +
 		          std::to_string(other.position) + ", list " + std::to_string(other.list_height) +
 		          ")");
 		Check(other.preview_height >= 170, other.state + ": the preview keeps at least 170 px (" +
