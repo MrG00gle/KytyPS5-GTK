@@ -377,13 +377,20 @@ void OnRefresh(GtkButton* /*button*/, gpointer data) {
 
 // The columns keep their widths while the list loads (FEAT-010 (8)): the Version header, in its
 // size group with the rows' version cells, reserves the width of the widest usual cell, a version
-// with " (installed)" in the header's (bold) font. The Format header is wider than its cells.
+// with " (installed)", in the header's (bold) font or in the cells' font, whichever is wider.
+// libadwaita 1.5 gives headings a fixed 11pt size, so with a larger text font the cell is the
+// wider one there. The Format header is wider than its cells.
 void ReserveVersionColumn(KytyCheatsWindow* self) {
-	const std::string probe  = Format(_("%s (installed)"), "00.000");
-	auto              layout = GObjectPtr<PangoLayout>::Adopt(
-	    gtk_widget_create_pango_layout(self->version_header, probe.c_str()));
-	int width = 0;
-	pango_layout_get_pixel_size(layout.get(), &width, nullptr);
+	const std::string probe = Format(_("%s (installed)"), "00.000");
+	int               width = 0;
+	// The file list's font is its cells' font: they are plain labels in its rows.
+	for (GtkWidget* widget: {self->version_header, GTK_WIDGET(self->files_list)}) {
+		auto layout =
+		    GObjectPtr<PangoLayout>::Adopt(gtk_widget_create_pango_layout(widget, probe.c_str()));
+		int probe_width = 0;
+		pango_layout_get_pixel_size(layout.get(), &probe_width, nullptr);
+		width = std::max(width, probe_width);
+	}
 	gtk_widget_set_size_request(self->version_header, width, -1);
 	g_debug("cheats: the Version column reserves %d px", width);
 }

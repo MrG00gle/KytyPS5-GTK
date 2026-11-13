@@ -1851,8 +1851,9 @@ KYTY_UI_CASE(content_cheats_apply_enable_disable) {
 }
 
 // p7-u7-3: the Version column follows a font change and a text scale change while the window is
-// open: its width stays that of "00.000 (installed)" in the header's font, the width the column
-// reserves.
+// open: its width stays that of "00.000 (installed)" in the header's font or in a version cell's
+// font, whichever is wider, the width the column reserves (libadwaita 1.5 gives headings a fixed
+// 11pt size, so with a larger text font the cell is the wider one).
 KYTY_UI_CASE(cheats_version_column_font_change) {
 	KytyUi::UiContext ui;
 	const auto        games = ContentLibrary(ui);
@@ -1871,29 +1872,46 @@ KYTY_UI_CASE(cheats_version_column_font_change) {
 	KytyUi::WaitForPaintedFrame(root);
 	GtkWidget*   header   = Widget(root, "version_header");
 	GtkSettings* settings = gtk_widget_get_settings(root);
-	// The width the column must have: the probe text in the header's current font.
-	const auto reserved = [header]() {
+	// The installed version's cell: a plain label in a row of the file list.
+	GtkWidget* cell = KytyUi::FindFirst(Widget(root, "files_list"), [](GtkWidget* widget) {
+		return GTK_IS_LABEL(widget) && KytyUi::WidgetText(widget).ends_with(" (installed)");
+	});
+	if (!Check(cell != nullptr, "the file list has the installed version's cell")) {
+		KytyUi::CloseWithEscape(cheats, "the cheats window");
+		return;
+	}
+	const auto probe = [](GtkWidget* widget) {
 		auto layout = GObjectPtr<PangoLayout>::Adopt(
-		    gtk_widget_create_pango_layout(header, "00.000 (installed)"));
+		    gtk_widget_create_pango_layout(widget, "00.000 (installed)"));
 		int width = 0;
 		pango_layout_get_pixel_size(layout.get(), &width, nullptr);
+		return width;
+	};
+	// The width the column must reserve: the probe text in the header's current font or in the
+	// cell's, whichever is wider.
+	const auto reserved  = [&]() { return std::max(probe(header), probe(cell)); };
+	const auto requested = [header]() {
+		int width = -1;
+		gtk_widget_get_size_request(header, &width, nullptr);
 		return width;
 	};
 	const auto follows = [&](const std::string& what, int previous) {
 		const bool done = KytyUi::WaitFor(
 		    [&]() {
-			    return gtk_widget_get_width(header) == reserved() &&
+			    return requested() == reserved() && gtk_widget_get_width(header) == reserved() &&
 			           gtk_widget_get_width(header) != previous;
 		    },
 		    3000, "the Version column to follow " + what);
-		std::printf("%s: %s: Version column %d px, \"00.000 (installed)\" %d px (was %d px)\n",
+		std::printf("%s: %s: Version column %d px (requested %d px), \"00.000 (installed)\" %d px "
+		            "in the header's font, %d px in the cell's (was %d px)\n",
 		            KytyUi::CaseName().c_str(), what.c_str(), gtk_widget_get_width(header),
-		            reserved(), previous);
+		            requested(), probe(header), probe(cell), previous);
 		return done;
 	};
 	const int before = gtk_widget_get_width(header);
-	Check(before == reserved(), "the column reserves the probe's width (" + std::to_string(before) +
-	                                " px, probe " + std::to_string(reserved()) + " px)");
+	Check(before == reserved() && requested() == reserved(),
+	      "the column reserves the probe's width (" + std::to_string(before) + " px, requested " +
+	          std::to_string(requested()) + " px, probe " + std::to_string(reserved()) + " px)");
 	gchar* font = nullptr;
 	int    dpi  = 0;
 	g_object_get(settings, "gtk-font-name", &font, "gtk-xft-dpi", &dpi, nullptr);
