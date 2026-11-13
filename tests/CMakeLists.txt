@@ -387,6 +387,12 @@ kyty_add_test(NAME buffer_cache_ranges
 	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME sse4a_emulation COMMAND $<TARGET_FILE:sse4a_emulation_tests> TIMEOUT 30)
 
+# The unit tests of tools/checks/check_lld.py, on small ELF64 files.
+kyty_add_test(NAME check_lld_tool
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/checks/tests"
+	        -p test_check_lld.py -v
+	TIMEOUT 60
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 # Every first-party executable listed by the configure-time lld check was linked by LLD.
 kyty_add_test(NAME lld_linked_executables
 	COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/check_lld.py"

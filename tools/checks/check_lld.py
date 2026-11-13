@@ -6,7 +6,8 @@ executable are linked with lld. The configure step writes the manifest
 ${CMAKE_BINARY_DIR}/kyty_lld_executables.txt (one executable path per line,
 see kyty_check_lld_executables in cmake/KytyLinker.cmake). This script reads
 the .comment section of each ELF64 file, where LLD records
-"Linker: LLD <version>", without needing readelf.
+"Linker: LLD <version>", without needing readelf. A distribution's build of
+LLD may put its name in front ("Linker: Ubuntu LLD 18.1.3" on Ubuntu 24.04).
 
 Usage:
     check_lld.py MANIFEST
@@ -19,11 +20,13 @@ is missing or was not linked by LLD, 2 on a usage or input error.
 """
 
 import argparse
+import re
 import struct
 import sys
 from pathlib import Path
 
-LLD_MARKER = b"Linker: LLD "
+# "Linker: LLD 22.1.8", or with one vendor word: "Linker: Ubuntu LLD 18.1.3".
+LLD_NOTE = re.compile(rb"Linker: (?:[A-Za-z][\w.+-]* )?LLD (\S+)")
 SHN_XINDEX = 0xFFFF
 
 
@@ -89,10 +92,9 @@ def read_comment_section(path):
 def lld_version(comment):
     """Return the LLD version recorded in a .comment section, or None."""
     for item in comment.split(b"\0"):
-        position = item.find(LLD_MARKER)
-        if position >= 0:
-            rest = item[position + len(LLD_MARKER):].split()
-            return rest[0].decode("utf-8", "replace") if rest else "unknown version"
+        match = LLD_NOTE.search(item)
+        if match:
+            return match.group(1).decode("utf-8", "replace")
     return None
 
 
