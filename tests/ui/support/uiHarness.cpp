@@ -34,6 +34,16 @@ struct WatchedLog {
 	std::vector<std::string> messages;
 };
 
+// The one message that does not fail a case (docs/testing.md; a deviation from Requirement 17.11
+// that the repository owner approved on 2026-11-13): GTK 4.24's X11 backend logs it when a popup
+// or dialog paints in the same frame as its parent in a session without a window manager. Only
+// this exact text, only from the Gdk domain at warning level, and only while GTK 4.24.x runs; it
+// is printed as a note. Every other message still fails the case.
+constexpr const char* kToleratedDomain = "Gdk";
+constexpr const char* kToleratedMessage =
+    "gdk_frame_timings_submitted() called on submitted frame.";
+constexpr guint kToleratedMinor = 24;
+
 // The harness state. The log writer may run on any thread (GTask workers log too), so everything
 // it touches is under the mutex. Never destroyed: GLib may log while the process exits.
 struct HarnessState {
@@ -46,6 +56,9 @@ struct HarnessState {
 	std::vector<WatchedLog>        watched;
 	std::filesystem::path          capture_directory;
 	std::filesystem::path          screenshot_output;
+	// The GTK minor version that the tolerated message is checked against; the harness self-test
+	// sets it, -1 means gtk_get_minor_version().
+	int gtk_minor_for_testing = -1;
 };
 
 HarnessState& State() {
@@ -70,6 +83,17 @@ std::string FieldText(const GLogField& field) {
 	const auto* text = static_cast<const char*>(field.value);
 	return field.length < 0 ? std::string(text)
 	                        : std::string(text, static_cast<std::size_t>(field.length));
+}
+
+// Whether a warning, critical, or error is the tolerated message (kToleratedMessage). The caller
+// holds the state's mutex.
+bool Tolerated(const HarnessState& state, GLogLevelFlags severity, const std::string& domain,
+               const std::string& message, guint* minor) {
+	*minor = state.gtk_minor_for_testing >= 0 ? static_cast<guint>(state.gtk_minor_for_testing)
+	                                          : gtk_get_minor_version();
+	return severity == G_LOG_LEVEL_WARNING && domain == kToleratedDomain &&
+	       message == kToleratedMessage && gtk_get_major_version() == 4 &&
+	       *minor == kToleratedMinor;
 }
 
 // D11: warnings, criticals, and errors of every domain fail the case unless they were expected.
@@ -131,6 +155,13 @@ GLogWriterOutput Writer(GLogLevelFlags level, const GLogField* fields, gsize cou
 			return G_LOG_WRITER_HANDLED;
 		}
 	}
+	if (guint minor = 0; Tolerated(state, severity, domain, message, &minor)) {
+		std::fprintf(stderr,
+		             "%s: NOTE: tolerated on GTK 4.%u (a GTK 4.24 bug; docs/testing.md): WARNING "
+		             "from %s: %s\n",
+		             state.current.c_str(), minor, domain.c_str(), message.c_str());
+		return G_LOG_WRITER_HANDLED;
+	}
 	state.failures++;
 	std::string where;
 	if (!file.empty()) {
@@ -148,7 +179,8 @@ int Usage() {
 	             "usage: %s --list\n"
 	             "       %s --case <name> [--capture-dir <directory>] [--screenshot-out <file>]\n"
 	             "       %s --selftest critical|warning|expected-warning|missing-expected|clean|"
-	             "accessible-untyped\n",
+	             "accessible-untyped|frame-timings-gtk-4-24|frame-timings-gtk-4-22|"
+	             "frame-timings-near-miss|frame-timings-critical|frame-timings-other-domain\n",
 	             kProgram, kProgram, kProgram);
 	return 1;
 }
@@ -193,6 +225,43 @@ void SelfTestAccessibleUntyped() {
 	g_object_unref(label);
 }
 
+// Logs message with the GTK minor version that the tolerated message is checked against set to
+// minor (the version is injected: the self-test runs on any GTK).
+void LogWithGtkMinor(int minor, const char* domain, GLogLevelFlags level, const char* message) {
+	{
+		auto&                             state = State();
+		const std::lock_guard<std::mutex> lock(state.mutex);
+		state.gtk_minor_for_testing = minor;
+	}
+	g_log(domain, level, "%s", message);
+}
+
+// The tolerated message on GTK 4.24: a note, not a failure (exit 0).
+void SelfTestFrameTimingsGtk424() {
+	LogWithGtkMinor(24, kToleratedDomain, G_LOG_LEVEL_WARNING, kToleratedMessage);
+}
+
+// The same message on GTK 4.22: the exception is off (exit 1).
+void SelfTestFrameTimingsGtk422() {
+	LogWithGtkMinor(22, kToleratedDomain, G_LOG_LEVEL_WARNING, kToleratedMessage);
+}
+
+// A near miss on GTK 4.24, another frame state in the text (exit 1).
+void SelfTestFrameTimingsNearMiss() {
+	LogWithGtkMinor(24, kToleratedDomain, G_LOG_LEVEL_WARNING,
+	                "gdk_frame_timings_submitted() called on discarded frame.");
+}
+
+// The exact text as a critical on GTK 4.24 (exit 1).
+void SelfTestFrameTimingsCritical() {
+	LogWithGtkMinor(24, kToleratedDomain, G_LOG_LEVEL_CRITICAL, kToleratedMessage);
+}
+
+// The exact text from another domain on GTK 4.24 (exit 1).
+void SelfTestFrameTimingsOtherDomain() {
+	LogWithGtkMinor(24, "Gtk", G_LOG_LEVEL_WARNING, kToleratedMessage);
+}
+
 struct SelfTest {
 	std::string_view kind;
 	CaseFn           run;
@@ -205,6 +274,11 @@ constexpr SelfTest kSelfTests[] = {
     {"missing-expected", &SelfTestMissingExpected},
     {"clean", &SelfTestClean},
     {"accessible-untyped", &SelfTestAccessibleUntyped},
+    {"frame-timings-gtk-4-24", &SelfTestFrameTimingsGtk424},
+    {"frame-timings-gtk-4-22", &SelfTestFrameTimingsGtk422},
+    {"frame-timings-near-miss", &SelfTestFrameTimingsNearMiss},
+    {"frame-timings-critical", &SelfTestFrameTimingsCritical},
+    {"frame-timings-other-domain", &SelfTestFrameTimingsOtherDomain},
 };
 
 CaseFn FindSelfTest(std::string_view kind) {

@@ -82,6 +82,13 @@ returns the command's exit status, and 77 only when `dbus-daemon`, weston, or Xv
 GTK, libadwaita, or launcher critical or warning message during a UI test fails it and prints the
 message; `ui_harness_selftest` checks that.
 
+On 2026-11-13 the repository owner approved one exception to that rule, a deviation from
+Requirement 17.11: with GTK 4.24.x, the Gdk warning
+`gdk_frame_timings_submitted() called on submitted frame.`, which GTK 4.24's X11 backend prints
+in a session without a window manager, is printed as a note and does not fail the test. Only that
+exact text from the Gdk domain at warning level is accepted, and only while GTK 4.24 runs;
+`ui_harness_selftest` checks that too.
+
 ### Reproducing a property test failure
 
 RapidCheck prints `Using configuration: seed=<N>` before each property and the shrunk

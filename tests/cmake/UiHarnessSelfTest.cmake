@@ -1,7 +1,9 @@
 # ui_harness_selftest (task 22.6; Requirements 16.6, 17.11; phase 7 plan D38): the UI test harness
 # fails a case on a deliberate critical or warning and prints the message, passes a declared
-# expected warning, fails when a declared warning never arrives, passes a clean run, and fails a
-# case that reads an accessible property of no supported type (phase 8 plan D17), on every
+# expected warning, fails when a declared warning never arrives, passes a clean run, fails a case
+# that reads an accessible property of no supported type (phase 8 plan D17), and tolerates GTK
+# 4.24's frame-timings warning only as its exact text from Gdk at warning level on GTK 4.24 (the
+# frame-timings-* kinds inject the GTK version; docs/testing.md), on every
 # backend inside tests/ui/with-display.sh ("launcher_ui_tests --selftest <kind>"); the case
 # harness_locale passes with the caller's LC_MESSAGES, LC_NUMERIC, and LC_TIME set (p7-u2-1); and
 # the wrapper exits 77 when the display server executable it is told to use does not exist. Run as
@@ -89,10 +91,28 @@ set(kyty_text_clean "PASS")
 set(kyty_exit_accessible-untyped 1)
 string(CONCAT kyty_text_accessible-untyped "FAILED: AccessibleProperty: the accessible property 31 "
 	"has no boolean, integer, number, string, or token value")
+# GTK 4.24's frame-timings warning (docs/testing.md): tolerated, with a note, only as the exact
+# text from Gdk at warning level while GTK 4.24.x runs; the kinds inject the GTK version.
+set(kyty_frame "gdk_frame_timings_submitted() called on submitted frame.")
+set(kyty_exit_frame-timings-gtk-4-24 0)
+string(CONCAT kyty_text_frame-timings-gtk-4-24 "NOTE: tolerated on GTK 4.24 (a GTK 4.24 bug; "
+	"docs/testing.md): WARNING from Gdk: ${kyty_frame}")
+set(kyty_exit_frame-timings-gtk-4-22 1)
+set(kyty_text_frame-timings-gtk-4-22 "FAILED: WARNING from Gdk: ${kyty_frame}")
+set(kyty_exit_frame-timings-near-miss 1)
+string(CONCAT kyty_text_frame-timings-near-miss "FAILED: WARNING from Gdk: "
+	"gdk_frame_timings_submitted() called on discarded frame.")
+set(kyty_exit_frame-timings-critical 1)
+set(kyty_text_frame-timings-critical "FAILED: CRITICAL from Gdk: ${kyty_frame}")
+set(kyty_exit_frame-timings-other-domain 1)
+set(kyty_text_frame-timings-other-domain "FAILED: WARNING from Gtk: ${kyty_frame}")
+set(kyty_kinds critical warning expected-warning missing-expected clean accessible-untyped
+	frame-timings-gtk-4-24 frame-timings-gtk-4-22 frame-timings-near-miss frame-timings-critical
+	frame-timings-other-domain)
+list(LENGTH kyty_kinds kyty_kind_count)
 
 foreach(kyty_backend IN ITEMS wayland x11)
-	foreach(kyty_kind IN ITEMS critical warning expected-warning missing-expected clean
-		accessible-untyped)
+	foreach(kyty_kind IN LISTS kyty_kinds)
 		set(kyty_expected_exit ${kyty_exit_${kyty_kind}})
 		set(kyty_expected_text "selftest-${kyty_kind}: ${kyty_text_${kyty_kind}}")
 		kyty_selftest_run(${kyty_backend} --selftest ${kyty_kind})
@@ -112,6 +132,9 @@ foreach(kyty_backend IN ITEMS wayland x11)
 		else()
 			kyty_expect_text("${kyty_what}" "${kyty_output}"
 				"selftest-${kyty_kind}: FAIL (1 failure(s))")
+		endif()
+		if(kyty_kind MATCHES "^frame-timings-" AND NOT kyty_kind STREQUAL "frame-timings-gtk-4-24")
+			kyty_expect_no_text("${kyty_what}" "${kyty_output}" "NOTE: tolerated")
 		endif()
 	endforeach()
 endforeach()
@@ -180,5 +203,5 @@ if(kyty_missing_backends)
 	message(STATUS "${kyty_skip_text}; skipping with exit 77")
 	cmake_language(EXIT 77)
 endif()
-message(STATUS "UiHarnessSelfTest: PASS (6 kinds on wayland and x11, harness_locale with the "
-	"caller's LC_* set; missing servers give 77)")
+message(STATUS "UiHarnessSelfTest: PASS (${kyty_kind_count} kinds on wayland and x11, "
+	"harness_locale with the caller's LC_* set; missing servers give 77)")
