@@ -25,9 +25,9 @@ of Ubuntu 24.04. Older distributions can still build the emulator alone (see
 Each command installs everything needed to build the emulator, the launcher, the Updater, and the
 test suite. A few packages are needed only by the tests: the headless display servers (weston,
 Xvfb, and the D-Bus daemon) and Mesa's software Vulkan driver for the UI and GPU tests, GCC for the
-test that checks the coverage build's Clang requirement, PyYAML for the packaging checks, and the
-fonts and icon themes for the UI tests. LLVM provides `llvm-profdata` and `llvm-cov` for the
-coverage build.
+test that checks the coverage build's Clang requirement, PyYAML for the packaging checks, glibc's
+extra character set converters (CP932) for the `ces` test on Fedora, and the fonts and icon themes
+for the UI tests. LLVM provides `llvm-profdata` and `llvm-cov` for the coverage build.
 
 The bundled SDL3 needs the ALSA, PulseAudio, Wayland, X11, libudev, and D-Bus development files.
 Configure stops with an error that names every SDL3 backend it cannot enable, so a build without
@@ -38,7 +38,7 @@ audio or gamepad hotplug support cannot happen by accident.
 ```bash
 sudo dnf install \
   clang lld llvm cmake ninja-build ccache git pkgconf-pkg-config patch file binutils \
-  glslang python3 python3-pyyaml gettext \
+  glslang python3 python3-pyyaml gettext glibc-gconv-extra \
   gtk4-devel libadwaita-devel libsoup3-devel glib2-devel glib-networking \
   adwaita-icon-theme hicolor-icon-theme dejavu-sans-fonts \
   alsa-lib-devel dbus-devel pulseaudio-libs-devel systemd-devel \
@@ -68,7 +68,7 @@ Ubuntu 24.04 or newer, or a Debian release with at least the library versions li
 sudo apt-get install --no-install-recommends \
   clang lld llvm cmake ninja-build ccache git pkg-config patch file binutils \
   glslang-tools python3 python3-yaml gettext \
-  libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev glib-networking \
+  libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev glib-networking librsvg2-common \
   adwaita-icon-theme hicolor-icon-theme fonts-dejavu-core \
   libasound2-dev libdbus-1-dev libpulse-dev libudev-dev libwayland-dev wayland-protocols \
   libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxi-dev libxkbcommon-dev libxrandr-dev \
