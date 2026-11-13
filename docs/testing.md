@@ -179,6 +179,7 @@ GPU tests and with headless display servers for the UI tests. `tools/checks/juni
 fails the job for every failed, skipped, or not-run test, so a GPU test or UI test that skips counts
 as a failure. `tools/checks/check_regression.py` checks that every test in
 `tools/checks/main-passing-tests.txt`, the tests that passed on the original `main`, still passes.
+Failed checks, timing reruns, and the measured coverage also show as annotations on the run page.
 
 The Ubuntu job also checks the documentation. `tools/docs/check_links.py --repo .` fails on a
 relative link or image in `README.md`, `CONTRIBUTING.md`, or `docs/` whose file does not exist or

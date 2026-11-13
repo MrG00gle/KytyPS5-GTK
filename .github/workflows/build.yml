@@ -112,10 +112,19 @@ jobs:
 
       - name: Install packages
         run: |
-          sudo apt-get update
+          mkdir -p _Build
+          status=0
           # shellcheck disable=SC2086 # the package list is split on purpose
-          sudo apt-get install --no-install-recommends --yes $UBUNTU_PACKAGES
-          test -f "$VK_DRIVER_FILES"
+          { sudo apt-get update && sudo apt-get install --no-install-recommends --yes $UBUNTU_PACKAGES; } \
+            2>&1 | tee _Build/install-packages.log || status=$?
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py log _Build/install-packages.log --title "Ubuntu packages"
+            exit "$status"
+          fi
+          if [[ ! -f $VK_DRIVER_FILES ]]; then
+            echo "::error::$VK_DRIVER_FILES is missing; lavapipe manifests:" /usr/share/vulkan/icd.d/lvp*
+            exit 1
+          fi
 
       - name: Show the tool versions
         run: |
@@ -158,7 +167,13 @@ jobs:
 
       - name: Build
         id: build
-        run: cmake --build "$BUILD_DIR" --target all kyty_tests
+        run: |
+          status=0
+          cmake --build "$BUILD_DIR" --target all kyty_tests 2>&1 | tee "$BUILD_DIR/build.log" || status=$?
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py log "$BUILD_DIR/build.log" --title "Ubuntu build"
+          fi
+          exit "$status"
 
       - name: Run every test
         id: tests
@@ -185,6 +200,7 @@ jobs:
           mapfile -t names <<< "$candidates"
           regex="^($(IFS='|'; echo "${names[*]}"))\$"
           echo "Rerunning up to 3 times: ${names[*]}"
+          echo "::warning::timing-rerun: ${names[*]}"
           status=0
           ctest --test-dir "$BUILD_DIR" -R "$regex" --repeat until-pass:3 --output-on-failure \
             --test-output-size-passed 262144 --output-junit "$PWD/$BUILD_DIR/ctest-rerun.xml" || status=$?
@@ -202,6 +218,9 @@ jobs:
           cat "$BUILD_DIR/junit-check.txt"
           { echo '### Ubuntu test results'; echo '```'; cat "$BUILD_DIR/junit-check.txt"; echo '```'; } \
             >> "$GITHUB_STEP_SUMMARY"
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py junit "$BUILD_DIR/junit-check.txt" --title "Ubuntu tests"
+          fi
           exit "$status"
 
       - name: Check against the Main_Branch baseline
@@ -312,9 +331,19 @@ jobs:
 
       - name: Install the stage A packages (no GTK)
         run: |
+          mkdir -p _Build
+          status=0
           # shellcheck disable=SC2086 # the package list is split on purpose
-          dnf -y install --setopt=install_weak_deps=False $FEDORA_PACKAGES_A
-          test -f "$VK_DRIVER_FILES"
+          dnf -y install --setopt=install_weak_deps=False $FEDORA_PACKAGES_A 2>&1 \
+            | tee _Build/install-stage-a.log || status=$?
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py log _Build/install-stage-a.log --title "Fedora stage A packages"
+            exit "$status"
+          fi
+          if [[ ! -f $VK_DRIVER_FILES ]]; then
+            echo "::error::$VK_DRIVER_FILES is missing; lavapipe manifests:" /usr/share/vulkan/icd.d/lvp*
+            exit 1
+          fi
           for module in gtk4 libadwaita-1 libsoup-3.0; do
             if pkg-config --exists "$module"; then
               echo "::error::stage A must not have $module"
@@ -353,7 +382,13 @@ jobs:
             -DKYTY_RELEASE_TAG="$KYTY_RELEASE_TAG" -DKYTY_BUILD_LAUNCHER=OFF
 
       - name: Stage A - build
-        run: cmake --build "$BUILD_DIR" --target all kyty_tests
+        run: |
+          status=0
+          cmake --build "$BUILD_DIR" --target all kyty_tests 2>&1 | tee "$BUILD_DIR/build-stage-a.log" || status=$?
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py log "$BUILD_DIR/build-stage-a.log" --title "Fedora stage A build"
+          fi
+          exit "$status"
 
       - name: Stage A - run every test
         run: |
@@ -374,19 +409,34 @@ jobs:
           cat "$BUILD_DIR/junit-check-stage-a.txt"
           { echo '### Fedora stage A test results'; echo '```'; cat "$BUILD_DIR/junit-check-stage-a.txt"
             echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          if [[ $status != 0 ]]; then exit "$status"; fi
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py junit "$BUILD_DIR/junit-check-stage-a.txt" --title "Fedora stage A tests"
+            exit "$status"
+          fi
           python3 -B tools/checks/check_regression.py "$BUILD_DIR/ctest-stage-a.xml"
 
       - name: Install the stage B packages
         run: |
+          status=0
           # shellcheck disable=SC2086 # the package list is split on purpose
-          dnf -y install --setopt=install_weak_deps=False $FEDORA_PACKAGES_B
+          dnf -y install --setopt=install_weak_deps=False $FEDORA_PACKAGES_B 2>&1 \
+            | tee _Build/install-stage-b.log || status=$?
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py log _Build/install-stage-b.log --title "Fedora stage B packages"
+          fi
+          exit "$status"
 
       - name: Stage B - configure everything
         run: cmake -S . -B "$BUILD_DIR" -DKYTY_BUILD_LAUNCHER=ON
 
       - name: Stage B - build
-        run: cmake --build "$BUILD_DIR" --target all kyty_tests
+        run: |
+          status=0
+          cmake --build "$BUILD_DIR" --target all kyty_tests 2>&1 | tee "$BUILD_DIR/build-stage-b.log" || status=$?
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py log "$BUILD_DIR/build-stage-b.log" --title "Fedora stage B build"
+          fi
+          exit "$status"
 
       - name: Stage B - run every test
         id: tests
@@ -411,6 +461,7 @@ jobs:
           mapfile -t names <<< "$candidates"
           regex="^($(IFS='|'; echo "${names[*]}"))\$"
           echo "Rerunning up to 3 times: ${names[*]}"
+          echo "::warning::timing-rerun: ${names[*]}"
           status=0
           ctest --test-dir "$BUILD_DIR" -R "$regex" --repeat until-pass:3 --output-on-failure \
             --test-output-size-passed 262144 --output-junit "$PWD/$BUILD_DIR/ctest-rerun.xml" || status=$?
@@ -428,7 +479,10 @@ jobs:
           cat "$BUILD_DIR/junit-check-stage-b.txt"
           { echo '### Fedora stage B test results'; echo '```'; cat "$BUILD_DIR/junit-check-stage-b.txt"
             echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          if [[ $status != 0 ]]; then exit "$status"; fi
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py junit "$BUILD_DIR/junit-check-stage-b.txt" --title "Fedora stage B tests"
+            exit "$status"
+          fi
           python3 -B tools/checks/check_regression.py "$BUILD_DIR/ctest-stage-b.xml"
 
       - name: Upload the test results
@@ -461,10 +515,19 @@ jobs:
 
       - name: Install packages
         run: |
-          sudo apt-get update
+          mkdir -p _Build
+          status=0
           # shellcheck disable=SC2086 # the package list is split on purpose
-          sudo apt-get install --no-install-recommends --yes $UBUNTU_PACKAGES
-          test -f "$VK_DRIVER_FILES"
+          { sudo apt-get update && sudo apt-get install --no-install-recommends --yes $UBUNTU_PACKAGES; } \
+            2>&1 | tee _Build/install-packages.log || status=$?
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py log _Build/install-packages.log --title "Coverage packages"
+            exit "$status"
+          fi
+          if [[ ! -f $VK_DRIVER_FILES ]]; then
+            echo "::error::$VK_DRIVER_FILES is missing; lavapipe manifests:" /usr/share/vulkan/icd.d/lvp*
+            exit 1
+          fi
 
       - name: Configure with coverage
         run: |
@@ -481,7 +544,13 @@ jobs:
 
       - name: Build
         id: build
-        run: cmake --build "$BUILD_DIR" --target all kyty_tests
+        run: |
+          status=0
+          cmake --build "$BUILD_DIR" --target all kyty_tests 2>&1 | tee "$BUILD_DIR/build.log" || status=$?
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py log "$BUILD_DIR/build.log" --title "Coverage build"
+          fi
+          exit "$status"
 
       - name: Build the coverage target
         id: coverage
@@ -519,17 +588,24 @@ jobs:
           cat "$BUILD_DIR/junit-check.txt"
           { echo '### Coverage run test results'; echo '```'; cat "$BUILD_DIR/junit-check.txt"; echo '```'; } \
             >> "$GITHUB_STEP_SUMMARY"
+          if [[ $status != 0 ]]; then
+            python3 -B tools/ci/annotate.py junit "$BUILD_DIR/junit-check.txt" --title "Coverage tests"
+          fi
           exit "$status"
 
       - name: Check the coverage thresholds
         if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
         # Event, ref, and pull request base come from the GitHub environment. The baseline file is
         # committed by the maintainer (Requirement 18.5); without it the check fails and prints the
-        # measured value (Requirement 18.11).
+        # measured value (Requirement 18.11). The measured values are also a notice on the run page.
         run: |
+          status=0
           python3 -B tools/coverage/check.py --summary "$BUILD_DIR/coverage/summary.json" \
             --lcov "$BUILD_DIR/coverage/coverage.lcov" --groups tools/coverage/groups.json \
-            --source-dir . --baseline .github/coverage-baseline.txt
+            --source-dir . --baseline .github/coverage-baseline.txt 2>&1 \
+            | tee "$BUILD_DIR/coverage-check.txt" || status=$?
+          python3 -B tools/ci/annotate.py coverage "$BUILD_DIR/coverage-check.txt" --title "Coverage check"
+          exit "$status"
 
       - name: Check how the coverage target ended
         if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
@@ -541,6 +617,7 @@ jobs:
           if [[ $STATUS != 0 ]] && ! grep -Fq 'ctest failed (exit 8); reports written to' \
                "$BUILD_DIR/coverage-target.log"; then
             echo "::error::the coverage target exited with $STATUS before its reports were complete"
+            python3 -B tools/ci/annotate.py log "$BUILD_DIR/coverage-target.log" --title "Coverage target"
             exit 1
           fi
 
