@@ -12,7 +12,8 @@ both are accepted) and checks:
   jobs       exactly metadata, ubuntu, fedora, coverage, flatpak, and release, each on
              ubuntu-24.04; fedora in registry.fedoraproject.org/fedora:latest and flatpak in
              ghcr.io/flathub-infra/flatpak-github-actions:gnome-49 (RUNNERS); no other container;
-             and no windows-* or macos-* runner label in runs-on or a matrix.
+             and no windows-* or macos-* runner label in runs-on or a matrix. Only the release job
+             has a job-level if (release below): on any other job it could skip the whole job.
   packages   no install command (apt-get, apt, dnf, yum, pacman, zypper, pip) names a Qt package:
              no word on that line, and none in an env variable that the line expands, matches
              content_checks.py's Qt package pattern or contains "qt" in any case. No run line and
@@ -32,7 +33,13 @@ both are accepted) and checks:
              manifest of Mesa's software Vulkan driver on the job's distribution
              (VK_DRIVER_FILES below); after every test step, and after its timing-rerun step if
              there is one, a later step runs junit_check.py with --registered before the next test
-             step. No job or step sets continue-on-error.
+             step. No job or step sets continue-on-error. Each test step, timing-rerun step, and
+             result check has no if, or an if that skips it only when the run is cancelled or an
+             earlier step of the job failed (ALLOWED_CONDITIONS below): always(), !cancelled(),
+             success(), or !cancelled() && steps.<id>.outcome == 'success', where <id> is an
+             earlier step of the same job whose own if is one of these; with or without ${{ }}.
+             Any other if (false, failure(), a github., env., or needs. term, a later or unknown
+             id, ||) is a problem that names the job, the step, and the if.
   release    the release job's if is exactly the push, refs/heads/main, and MrG00gle/KytyPS5-GTK
              conditions joined by && (success() may be added; no other status function and no ||);
              it needs every other job; it alone has write permission (contents: write), and the
@@ -42,7 +49,9 @@ both are accepted) and checks:
   steps      the steps the design requires in a job (REQUIRED_STEPS): the ubuntu job runs this
              check on the workflow, tools/docs/check_links.py on the checkout, and
              tools/docs/check_help_options.py on the kyty_emulator it built, against
-             docs/running.md (task 29.6).
+             docs/running.md (task 29.6). Every step that runs one of them follows the if rule of
+             the results paragraph, and a step whose if could skip it does not count: the check
+             names the step and its if.
   lists      tools/checks/ci-expected-failures-ubuntu.txt, the expected failure that the
              repository owner approved for Ubuntu 24.04's lavapipe only (docs/testing.md), is
              named only inside the ubuntu and coverage jobs (not in the workflow's own env, and
@@ -151,6 +160,13 @@ PREFIXES = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "tim
             "exec", "command", "nice"}
 ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
 STATUS_FUNCTION = re.compile(r"\b(?:always|failure|cancelled|success)\s*\(")
+# The if conditions of a test step, a timing-rerun step, a result check, or a required step. Each
+# skips the step only when the run is cancelled or an earlier step of the job failed, which fails
+# the job anyway; OUTCOME_CONDITION's step must itself have one of these conditions.
+ALLOWED_CONDITIONS = ("always()", "!cancelled()", "success()")
+OUTCOME_CONDITION = re.compile(r"!cancelled\(\) && steps\.([A-Za-z_][\w-]*)\.outcome == 'success'")
+ALLOWED_TEXT = ("no if, or only always(), !cancelled(), success(), or !cancelled() && "
+                "steps.<id>.outcome == 'success' with an earlier step's id")
 
 
 class MissingYaml(Exception):
@@ -195,6 +211,11 @@ def expression(value):
     if text.startswith("${{") and text.endswith("}}"):
         text = text[3:-2].strip()
     return text
+
+
+def condition(value):
+    """An if: value as expression() gives it, with one space around each == and &&."""
+    return re.sub(r"\s*(==|&&)\s*", r" \1 ", expression(value))
 
 
 def strings_in(value):
@@ -303,6 +324,8 @@ class Checker:
         self.problems = []
         self.ctest_runs = 0
         self.uploads = 0
+        # (job id, step number) of each step already reported for its if.
+        self.gated = set()
 
     def report(self, where, text):
         self.problems.append(f"{where}: {text}")
@@ -319,6 +342,33 @@ class Checker:
     def steps(self, job_id):
         for number, step in enumerate(self.jobs[job_id].get("steps", []), 1):
             yield number, step, self.step_label(job_id, number, step)
+
+    # ---- if: on the steps that the design requires
+    def condition_allowed(self, job_id, number):
+        """Whether step number (from 1) of the job has no if or an allowed one (ALLOWED_TEXT), so
+        that it is skipped only when the run is cancelled or an earlier step failed."""
+        steps = self.jobs[job_id].get("steps", [])
+        value = steps[number - 1].get("if")
+        if value is None:
+            return True
+        text = condition(value)
+        if text in ALLOWED_CONDITIONS:
+            return True
+        match = OUTCOME_CONDITION.fullmatch(text)
+        if not match:
+            return False
+        # The earlier step must not be skipped by an if of its own while the job goes on.
+        earlier = [index for index, step in enumerate(steps[:number - 1], 1)
+                   if step.get("id") == match.group(1)]
+        return bool(earlier) and self.condition_allowed(job_id, earlier[0])
+
+    def check_condition(self, job_id, number, step, where, what):
+        """Report, once per step, an if that could skip what the step does."""
+        if self.condition_allowed(job_id, number) or (job_id, number) in self.gated:
+            return
+        self.gated.add((job_id, number))
+        self.report(where, f"if: {step.get('if')!r} can skip {what}; such a step may have "
+                    f"{ALLOWED_TEXT} (Requirement 16.10)")
 
     def run(self):
         self.check_triggers()
@@ -424,6 +474,9 @@ class Checker:
 
     def check_job_steps(self, job_id):
         job = self.jobs[job_id]
+        if job_id != RELEASE_JOB and job.get("if") is not None:
+            self.report(self.job_label(job_id), f"if: {job.get('if')!r} can skip the whole job; "
+                        "only the release job may have a job-level if (Requirement 16.10)")
         if job.get("continue-on-error"):
             self.report(self.job_label(job_id), "sets continue-on-error, so its failures would "
                         "not fail the run (Requirement 16.10)")
@@ -526,6 +579,12 @@ class Checker:
                 after = "this test run" if start == index else "its timing-rerun step"
                 self.report(steps[index][2], f"no later step runs junit_check.py --registered "
                             f"after {after} (Requirements 16.4-16.6)")
+        results = [index for index, (_, step, _) in enumerate(steps) if is_result_check(step)]
+        for index in sorted(set(tests) | set(reruns) | set(results)):
+            number, step, where = steps[index]
+            what = ("this test run" if index in tests else
+                    "this timing rerun" if index in reruns else "this result check")
+            self.check_condition(job_id, number, step, where, what)
 
     @staticmethod
     def runs_tests(step):
@@ -559,11 +618,15 @@ class Checker:
 
     # ---- required steps
     def check_required_steps(self, job_id, required):
-        lines = [line for _, step, _ in self.steps(job_id)
-                 for line in logical_lines(step.get("run") or "")]
         for description, pattern in required:
-            if not any(pattern.search(line) for line in lines):
+            matches = [(number, step, where) for number, step, where in self.steps(job_id)
+                       if any(pattern.search(line)
+                              for line in logical_lines(step.get("run") or ""))]
+            if not matches:
                 self.report(self.job_label(job_id), f"has no step that runs {description}")
+            # A match counts only in a step whose if cannot skip it; any other is reported.
+            for number, step, where in matches:
+                self.check_condition(job_id, number, step, where, description)
 
     # ---- the Ubuntu-only expected-failure list
     def check_ubuntu_list(self):

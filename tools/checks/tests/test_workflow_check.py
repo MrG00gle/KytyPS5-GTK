@@ -378,7 +378,10 @@ class TestResults(Workflow):
         def change(data):
             steps = data["jobs"]["coverage"]["steps"]
             steps.remove(find_step(data, "coverage", "coverage"))
-        self.assert_fails(change, "job coverage: runs no tests")
+        lines = self.assert_fails(change, "job coverage: runs no tests", count=2)
+        # The result check's if names the removed step, so it would always be skipped.
+        self.assertTrue(any(line.startswith('job coverage, step "Check the test results": if: ')
+                            and "steps.coverage.outcome" in line for line in lines), lines)
 
     def test_missing_vk_driver_files(self):
         self.assert_fails(lambda data: data["jobs"]["coverage"]["env"].pop("VK_DRIVER_FILES"),
@@ -447,6 +450,112 @@ class TestResults(Workflow):
             steps.remove(step)
             data["jobs"]["fedora"]["steps"].append(step)
         self.assert_fails(change, "job ubuntu: has no step that runs the documentation link check")
+
+
+class Conditions(Workflow):
+    """No if: may skip a test job, a test step, its timing rerun, its result check, or a required
+    step while the job goes on."""
+
+    LINKS = "Check the documentation links"
+    OPTIONS = "Check the emulator options in the running guide"
+    STRUCTURE = "Check the workflow structure"
+
+    @staticmethod
+    def set_if(job, key, value):
+        def change(data):
+            find_step(data, job, key)["if"] = value
+        return change
+
+    def test_documentation_link_check_off(self):
+        self.assert_fails(self.set_if("ubuntu", self.LINKS, False),
+                          f'job ubuntu, step "{self.LINKS}": if: False can skip the documentation '
+                          "link check; such a step may have no if")
+
+    def test_option_check_only_on_main(self):
+        self.assert_fails(self.set_if("ubuntu", self.OPTIONS,
+                                      "${{ github.ref == 'refs/heads/main' }}"),
+                          f'job ubuntu, step "{self.OPTIONS}": if: "${{{{ github.ref == '
+                          "'refs/heads/main' }}\" can skip the running guide's option check")
+
+    def test_job_level_if_on_a_test_job(self):
+        for job in ("ubuntu", "coverage"):
+            with self.subTest(job=job):
+                def change(data, job=job):
+                    data["jobs"][job]["if"] = "github.event_name == 'push'"
+                self.assert_fails(change, f"job {job}: if: \"github.event_name == 'push'\" can "
+                                  "skip the whole job; only the release job may have a "
+                                  "job-level if")
+
+    def test_failure_on_a_result_check(self):
+        self.assert_fails(self.set_if("fedora", "Stage B - check the test results", "failure()"),
+                          'job fedora, step "Stage B - check the test results": if: \'failure()\' '
+                          "can skip this result check")
+
+    def test_a_later_step_id(self):
+        self.assert_fails(
+            self.set_if("ubuntu", self.OPTIONS,
+                        "${{ !cancelled() && steps.install.outcome == 'success' }}"),
+            f'step "{self.OPTIONS}": if: ', "steps.install.outcome",
+            "can skip the running guide's option check")
+
+    def test_an_unknown_step_id(self):
+        self.assert_fails(
+            self.set_if("coverage", "junit",
+                        "${{ !cancelled() && steps.compile.outcome == 'success' }}"),
+            'job coverage, step "Check the test results": if: ', "steps.compile.outcome",
+            "can skip this result check")
+
+    def test_an_earlier_step_with_an_if_of_its_own(self):
+        # The option check needs the build step, which a push-only if would skip on pull requests.
+        self.assert_fails(self.set_if("ubuntu", "build", "github.event_name == 'push'"),
+                          f'job ubuntu, step "{self.OPTIONS}": if: ', "steps.build.outcome",
+                          "can skip the running guide's option check")
+
+    def test_a_test_run_and_a_timing_rerun_off(self):
+        for job, key, what in (("fedora", "Stage A - run every test", "this test run"),
+                               ("ubuntu", "tests", "this test run"),
+                               ("ubuntu", "timing-rerun", "this timing rerun")):
+            with self.subTest(key=key):
+                self.assert_fails(self.set_if(job, key, "${{ false }}"),
+                                  f"job {job}, step ", "if: '${{ false }}' can skip " + what)
+
+    def test_the_coverage_target_off_also_skips_its_result_check(self):
+        # The result check runs only when the coverage target step succeeded.
+        lines = self.assert_fails(self.set_if("coverage", "coverage", "${{ false }}"),
+                                  'job coverage, step "Build the coverage target": if: '
+                                  "'${{ false }}' can skip this test run", count=2)
+        self.assertTrue(lines[1].startswith('job coverage, step "Check the test results": if: '),
+                        lines)
+
+    def test_other_conditions_on_a_required_step(self):
+        for value in ("${{ false }}", "false", "true", "failure()", "cancelled()",
+                      "github.event_name == 'push'", "${{ env.CHECK_DOCS == 'true' }}",
+                      "needs.metadata.outputs.official == 'true'", "!cancelled() || failure()",
+                      "always() && github.event_name == 'push'",
+                      "!cancelled() && steps.build.outcome == 'success' && "
+                      "github.event_name == 'push'",
+                      "!cancelled() && steps.build.outcome != 'success'",
+                      "steps.build.outcome == 'success'"):
+            with self.subTest(value=value):
+                self.assert_fails(self.set_if("ubuntu", self.STRUCTURE, value),
+                                  f'step "{self.STRUCTURE}": if: ',
+                                  "can skip the workflow structure check")
+
+    def test_allowed_conditions_pass(self):
+        for value in (None, "always()", "${{ always() }}", "!cancelled()", "${{ !cancelled() }}",
+                      "success()", "${{ success() }}",
+                      "!cancelled() && steps.build.outcome == 'success'",
+                      "${{ !cancelled()&&steps.tests.outcome=='success' }}"):
+            for key in (self.LINKS, "timing-rerun", "Check the test results"):
+                with self.subTest(value=value, key=key):
+                    self.assert_passes(self.mutated(self.set_if("ubuntu", key, value)))
+
+    def test_the_committed_conditions_pass(self):
+        # The committed doc steps and coverage steps use !cancelled() and steps.<id>.outcome.
+        self.assertEqual(find_step(self.data, "ubuntu", self.LINKS)["if"], "${{ !cancelled() }}")
+        self.assertEqual(find_step(self.data, "coverage", "junit")["if"],
+                         "${{ !cancelled() && steps.coverage.outcome == 'success' }}")
+        self.assert_passes(self.text)
 
 
 class Release(Workflow):
