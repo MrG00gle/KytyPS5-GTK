@@ -218,9 +218,10 @@ The repository owner approved these exceptions, each for the listed tests only:
   file and that it holds only this entry.
 - **Timing reruns** (`tools/checks/ci-timing-retries.txt`). The two search timing tests
   (`launcher_ui_library_search_timing_wayland` and `_x11`) have little headroom on shared CI runners.
-  When the only failures of the full run are listed tests, the `timing-rerun` step runs exactly
-  those again, up to 3 times. The job passes only when every other test passed in the full run and
-  each listed test passed in the rerun. Every miss is printed with its median in the job summary.
+  After the full run, the `timing-rerun` step runs every listed test that failed there again, and
+  only those, up to 3 times, whatever else failed. A listed test is accepted only when it passed in
+  the rerun. The rerun does not change how the other tests are judged, so any other failure still
+  fails the job. Every miss is printed with its median in the job summary.
 
 Adding a test to any of these lists needs the owner's approval.
 

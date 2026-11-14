@@ -12,18 +12,14 @@ then save the log from the launcher's log view with **Save log…**.
 
 - Pull requests target the `dev` branch. Do not open pull requests against `main`.
 - `dev` is merged into `main` only after explicit approval from the repository owner. Every push to
-  `main` publishes a release.
+  `main` publishes a release. After a release is published, re-run only the `release` job of
+  its run, as the [packaging guide](docs/packaging.md#re-running-a-release) explains.
 - Every CI check must pass before a pull request is merged: the builds on Ubuntu and Fedora, the full
   test suite in each of them, the coverage check, and the Flatpak build with its validations. The
   [testing guide](docs/testing.md#ci) describes the jobs.
 
-Pull requests for general fixes, architectural changes, or refactoring that do not address a concrete
-bug or launch problem in a specific game will be automatically closed.
-
-Large, unfocused commits or pull requests that bundle unrelated changes without a clear purpose or
-game-related benefit will also be automatically closed.
-
-Keep each pull request focused. Name the affected game, describe the exact problem, and provide
+Keep each pull request focused on one change with a clear purpose, and do not bundle unrelated
+changes. Describe the exact problem, name the affected game when there is one, and provide
 evidence showing what the change fixes. Linux is the target platform, so changes should not
 introduce regressions on Linux. Because the emulator is still evolving quickly, consider opening an
 issue before starting a large change.

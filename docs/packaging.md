@@ -178,6 +178,15 @@ into the build's copy of the metainfo, and the release job checks that the bundl
 its tag. Every other run writes the published releases plus its own tag as a `type="development"`
 entry, because the linter rejects an empty release list.
 
+## Re-running a release
+
+After a push to `main` has published its release, re-run only the `release` job of that run:
+**Re-run failed jobs**, or **Re-run job** on `release` alone. That job finds the complete release
+and succeeds without changes. Never use **Re-run all jobs** on such a run. The rebuilt release
+archive and bundle no longer match the digests of the published assets, so the `release` job
+fails. On a later day the `flatpak` job fails first, because the tag is already published with an
+earlier date. Such a rerun fails without changing or deleting anything.
+
 ## Runtime and its support window
 
 The Flatpak targets GNOME 49: the runtime `org.gnome.Platform//49`, the SDK `org.gnome.Sdk//49`, and
