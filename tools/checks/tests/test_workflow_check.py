@@ -701,5 +701,81 @@ class Uploads(Workflow):
                           "action upload the bundle")
 
 
+class FlatpakInstallation(Workflow):
+    """Before the flatpak-builder action, the flatpak job copies the image's Flatpak installation
+    to the runner's file system and points FLATPAK_SYSTEM_DIR at the copy (docs/packaging.md)."""
+
+    MOVE = "Move the Flatpak installation off the image's overlay"
+    COPY = 'cp -a /var/lib/flatpak "$RUNNER_TEMP/flatpak-system"\n'
+    EXPORT = 'echo "FLATPAK_SYSTEM_DIR=$RUNNER_TEMP/flatpak-system" >> "$GITHUB_ENV"\n'
+    MISSING = ("job flatpak: has no step before the flatpak-builder action that runs the copy of "
+               "the image's Flatpak installation")
+
+    def test_the_committed_step_moves_the_installation(self):
+        step = find_step(self.data, "flatpak", self.MOVE)
+        self.assertTrue(workflow_check.moves_flatpak_installation(step))
+        self.assertLess(step_index(self.data, "flatpak", self.MOVE),
+                        step_index(self.data, "flatpak", "build"))
+
+    def test_missing_step(self):
+        def change(data):
+            data["jobs"]["flatpak"]["steps"].remove(find_step(data, "flatpak", self.MOVE))
+        self.assert_fails(change, self.MISSING)
+
+    def test_step_after_the_action(self):
+        def change(data):
+            move_step(data, "flatpak", self.MOVE, after="build")
+        self.assert_fails(change, self.MISSING)
+
+    def test_copy_or_export_missing_or_reversed(self):
+        cases = {
+            "no copy": lambda data: replace_in_run(data, "flatpak", self.MOVE, self.COPY, ""),
+            "no export": lambda data: replace_in_run(data, "flatpak", self.MOVE, self.EXPORT, ""),
+            "export before the copy": lambda data: replace_in_run(
+                data, "flatpak", self.MOVE, self.COPY + self.EXPORT, self.EXPORT + self.COPY),
+            "another directory": lambda data: replace_in_run(
+                data, "flatpak", self.MOVE, "/var/lib/flatpak ", "/var/tmp/flatpak "),
+        }
+        for name, change in cases.items():
+            with self.subTest(name):
+                self.assert_fails(change, self.MISSING)
+
+    def test_if_that_can_skip_the_step(self):
+        def change(data):
+            find_step(data, "flatpak", self.MOVE)["if"] = "github.ref == 'refs/heads/main'"
+        self.assert_fails(change, f'job flatpak, step "{self.MOVE}": if: '
+                          "\"github.ref == 'refs/heads/main'\" can skip the copy of the image's "
+                          "Flatpak installation")
+
+    def test_allowed_if_passes(self):
+        def change(data):
+            find_step(data, "flatpak", self.MOVE)["if"] = "${{ !cancelled() }}"
+        self.assert_passes(self.mutated(change))
+
+    def test_braced_variables_pass(self):
+        def change(data):
+            replace_in_run(data, "flatpak", self.MOVE, self.COPY + self.EXPORT,
+                           'cp -a /var/lib/flatpak "${RUNNER_TEMP}/flatpak-system"\n'
+                           'echo "FLATPAK_SYSTEM_DIR=${RUNNER_TEMP}/flatpak-system" >> '
+                           '"${GITHUB_ENV}"\n')
+        self.assert_passes(self.mutated(change))
+
+    def test_env_that_overrides_the_copy(self):
+        def on_the_action(data):
+            find_step(data, "flatpak", "build")["env"] = {"FLATPAK_SYSTEM_DIR": "/var/lib/flatpak"}
+
+        def on_the_job(data):
+            data["jobs"]["flatpak"]["env"]["FLATPAK_SYSTEM_DIR"] = "/var/lib/flatpak"
+
+        def on_the_workflow(data):
+            data["env"]["FLATPAK_SYSTEM_DIR"] = "/var/lib/flatpak"
+
+        for change, where in ((on_the_action, 'job flatpak, step "Build the bundle"'),
+                              (on_the_job, "job flatpak"), (on_the_workflow, "workflow")):
+            with self.subTest(where):
+                self.assert_fails(change, f"{where}: sets FLATPAK_SYSTEM_DIR to "
+                                  "'/var/lib/flatpak' in env:")
+
+
 if __name__ == "__main__":
     unittest.main()

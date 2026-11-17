@@ -178,6 +178,22 @@ into the build's copy of the metainfo, and the release job checks that the bundl
 its tag. Every other run writes the published releases plus its own tag as a `type="development"`
 entry, because the linter rejects an empty release list.
 
+## The runtimes in CI
+
+The `flatpak` job runs in the `ghcr.io/flathub-infra/flatpak-github-actions:gnome-49` image, which
+has the GNOME 49 runtime and SDK preinstalled in `/var/lib/flatpak`. The flatpak-builder action
+passes `--install-deps-from=flathub`, so flatpak-builder updates the SDK and the runtime to the
+newest build of their branches and installs the LLVM 20 extension: CI builds against the same
+`49` and `25.08` branches as a local build from the manifest.
+
+The image keeps `/var/lib/flatpak` in a read-only image layer. On some runners the container's
+overlay file system cannot rename the directories of such a layer, so updating a runtime in place
+failed with `Invalid cross-device link`. flatpak-builder 1.4.9 then crashed on that error with a
+segmentation fault (exit code 139) instead of reporting it. The job therefore copies
+`/var/lib/flatpak` to the runner's own file system (`$RUNNER_TEMP/flatpak-system`, about 4 GB)
+before the action, and points `FLATPAK_SYSTEM_DIR` at the copy for the later steps.
+`tools/checks/workflow_check.py` checks that this step comes before the action.
+
 ## Re-running a release
 
 After a push to `main` has published its release, re-run only the `release` job of that run:

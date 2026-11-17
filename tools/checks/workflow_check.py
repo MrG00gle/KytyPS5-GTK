@@ -52,6 +52,13 @@ both are accepted) and checks:
              docs/running.md (task 29.6). Every step that runs one of them follows the if rule of
              the results paragraph, and a step whose if could skip it does not count: the check
              names the step and its if.
+  flatpak    before the flatpak-builder action, a step of the flatpak job copies /var/lib/flatpak
+             to $RUNNER_TEMP/flatpak-system and then writes FLATPAK_SYSTEM_DIR=<that copy> to
+             $GITHUB_ENV; the step follows the if rule of the results paragraph, and no env: of
+             the workflow, the job, or a step sets FLATPAK_SYSTEM_DIR. The image keeps its Flatpak
+             installation in a read-only image layer whose directories the overlay file system of
+             some runners cannot rename, so the action's runtime update fails there, and
+             flatpak-builder 1.4.9 crashes on that error (docs/packaging.md, "The runtimes in CI").
   lists      tools/checks/ci-expected-failures-ubuntu.txt, the expected failure that the
              repository owner approved for Ubuntu 24.04's lavapipe only (docs/testing.md), is
              named only inside the ubuntu and coverage jobs (not in the workflow's own env, and
@@ -117,6 +124,15 @@ UBUNTU_EXPECTED_FAILURES = {
     "kernel_file_system": "llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; "
                           "depthBounds is not supported",
 }
+# The flatpak job's copy of the image's Flatpak installation on the runner's file system
+# (docs/packaging.md, "The runtimes in CI"): the copy, then FLATPAK_SYSTEM_DIR for later steps.
+FLATPAK_JOB = "flatpak"
+FLATPAK_ACTION = "flatpak/flatpak-github-actions/flatpak-builder"
+FLATPAK_COPY = re.compile(r'cp\s+-a\s+/var/lib/flatpak\s+"?\$\{?RUNNER_TEMP\}?/flatpak-system"?')
+FLATPAK_SYSTEM_DIR = re.compile(r'echo\s+"FLATPAK_SYSTEM_DIR=\$\{?RUNNER_TEMP\}?/flatpak-system"'
+                                r'\s*>>\s*"\$\{?GITHUB_ENV\}?"')
+FLATPAK_MOVE = ("the copy of the image's Flatpak installation to $RUNNER_TEMP/flatpak-system, "
+                "with FLATPAK_SYSTEM_DIR set to it in $GITHUB_ENV")
 RELEASE_JOB = "release"
 RELEASE_CONDITIONS = {"github.event_name == 'push'", "github.ref == 'refs/heads/main'",
                       "github.repository == 'MrG00gle/KytyPS5-GTK'"}
@@ -305,6 +321,15 @@ def has_option(line, option):
     return re.search(rf"(?<![\w-]){re.escape(option)}(?![\w-])", line) is not None
 
 
+def moves_flatpak_installation(step):
+    """A step whose run copies /var/lib/flatpak to $RUNNER_TEMP/flatpak-system and, on a later
+    line, writes FLATPAK_SYSTEM_DIR for that copy to $GITHUB_ENV."""
+    lines = [line.strip() for line in logical_lines(step.get("run") or "")]
+    copies = [index for index, line in enumerate(lines) if FLATPAK_COPY.fullmatch(line)]
+    exports = [index for index, line in enumerate(lines) if FLATPAK_SYSTEM_DIR.fullmatch(line)]
+    return bool(copies) and any(index > copies[0] for index in exports)
+
+
 def is_result_check(step):
     """A step that runs junit_check.py on a full run's JUnit file, with --registered."""
     return any(has_option(line, "--registered") and not has_option(line, "--print-retry-candidates")
@@ -387,6 +412,8 @@ class Checker:
         for job_id, required in REQUIRED_STEPS.items():
             if job_id in self.jobs:
                 self.check_required_steps(job_id, required)
+        if FLATPAK_JOB in self.jobs:
+            self.check_flatpak_installation()
         self.check_ubuntu_list()
         return self.problems
 
@@ -627,6 +654,32 @@ class Checker:
             # A match counts only in a step whose if cannot skip it; any other is reported.
             for number, step, where in matches:
                 self.check_condition(job_id, number, step, where, description)
+
+    # ---- the flatpak job: the Flatpak installation off the image's overlay
+    def check_flatpak_installation(self):
+        steps = list(self.steps(FLATPAK_JOB))
+        actions = [index for index, (_, step, _) in enumerate(steps)
+                   if isinstance(step.get("uses"), str)
+                   and step["uses"].split("@", 1)[0] == FLATPAK_ACTION]
+        moves = [index for index, (_, step, _) in enumerate(steps)
+                 if moves_flatpak_installation(step)
+                 and (not actions or index < actions[0])]
+        if actions and not moves:
+            self.report(self.job_label(FLATPAK_JOB), f"has no step before the flatpak-builder "
+                        f"action that runs {FLATPAK_MOVE}; the action's runtime update can fail "
+                        "on the image's overlay file system (docs/packaging.md)")
+        for index in moves:
+            number, step, where = steps[index]
+            self.check_condition(FLATPAK_JOB, number, step, where, FLATPAK_MOVE)
+        scopes = [("workflow", self.workflow),
+                  (self.job_label(FLATPAK_JOB), self.jobs[FLATPAK_JOB])]
+        scopes += [(where, step) for _, step, where in steps]
+        for where, scope in scopes:
+            env = scope.get("env")
+            if isinstance(env, dict) and "FLATPAK_SYSTEM_DIR" in env:
+                self.report(where, f"sets FLATPAK_SYSTEM_DIR to {env['FLATPAK_SYSTEM_DIR']!r} in "
+                            "env:, which overrides the copy that the flatpak job's step writes "
+                            "to $GITHUB_ENV")
 
     # ---- the Ubuntu-only expected-failure list
     def check_ubuntu_list(self):

@@ -706,6 +706,17 @@ jobs:
             --releases /var/tmp/kyty-releases.jsonl --tag "$TAG" --date "$(date -u +%F)" \
             --type development
 
+      - name: Move the Flatpak installation off the image's overlay
+        # The image's runtimes sit in a read-only image layer, and on some runners the container's
+        # overlay file system cannot rename those directories. The action's runtime update then
+        # fails with "Invalid cross-device link", and flatpak-builder 1.4.9 crashes on that error
+        # (exit 139). A copy on the runner's file system can be updated in place
+        # (docs/packaging.md, "The runtimes in CI"; tools/checks/workflow_check.py checks it).
+        run: |
+          cp -a /var/lib/flatpak "$RUNNER_TEMP/flatpak-system"
+          echo "FLATPAK_SYSTEM_DIR=$RUNNER_TEMP/flatpak-system" >> "$GITHUB_ENV"
+          du -sh "$RUNNER_TEMP/flatpak-system"
+
       - name: Build the bundle
         id: build
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
