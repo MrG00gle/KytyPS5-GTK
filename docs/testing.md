@@ -227,8 +227,9 @@ Adding a test to any of these lists needs the owner's approval.
 
 ## Manual checklist
 
-Run these checks before asking for the approval to merge `dev` into `main`, and record the results
-in the pull request:
+Run these checks before asking for the approval to merge `dev` into `main`. The merge is a
+fast-forward push without a pull request, so record the results in an issue that names the tested
+commit:
 
 - [ ] The Flatpak on a Wayland session and on an X11-only session: `flatpak run
       io.github.MrG00gle.KytyPS5_GTK` shows the main window within 10 seconds, and the launcher and

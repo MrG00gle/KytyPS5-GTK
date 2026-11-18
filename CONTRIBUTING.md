@@ -12,8 +12,8 @@ then save the log from the launcher's log view with **Save log…**.
 
 - Pull requests target the `dev` branch. Do not open pull requests against `main`.
 - `dev` is merged into `main` only after explicit approval from the repository owner. Every push to
-  `main` publishes a release. After a release is published, re-run only the `release` job of
-  its run, as the [packaging guide](docs/packaging.md#re-running-a-release) explains.
+  `main` publishes a release. To re-run a run that has published its release, re-run only its
+  `release` job, as the [packaging guide](docs/packaging.md#re-running-a-release) explains.
 - Every CI check must pass before a pull request is merged: the builds on Ubuntu and Fedora, the full
   test suite in each of them, the coverage check, and the Flatpak build with its validations. The
   [testing guide](docs/testing.md#ci) describes the jobs.

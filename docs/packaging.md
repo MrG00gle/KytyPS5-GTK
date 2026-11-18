@@ -200,7 +200,7 @@ before the action, and points `FLATPAK_SYSTEM_DIR` at the copy for the later ste
 
 ## Re-running a release
 
-After a push to `main` has published its release, re-run only the `release` job of that run:
+To re-run a run that has published its release, re-run only its `release` job:
 **Re-run failed jobs**, or **Re-run job** on `release` alone. That job finds the complete release
 and succeeds without changes. Never use **Re-run all jobs** on such a run. The rebuilt release
 archive and bundle no longer match the digests of the published assets, so the `release` job
