@@ -196,7 +196,8 @@ failed with `Invalid cross-device link`. flatpak-builder 1.4.9 then crashed on t
 segmentation fault (exit code 139) instead of reporting it. The job therefore copies
 `/var/lib/flatpak` to the runner's own file system (`$RUNNER_TEMP/flatpak-system`, about 4 GB)
 before the action, and points `FLATPAK_SYSTEM_DIR` at the copy for the later steps.
-`tools/checks/workflow_check.py` checks that this step comes before the action.
+`tools/checks/workflow_check.py` checks that the job builds with that action and that this step
+comes before it.
 
 ## Re-running a release
 

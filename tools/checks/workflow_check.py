@@ -17,7 +17,10 @@ both are accepted) and checks:
   packages   no install command (apt-get, apt, dnf, yum, pacman, zypper, pip) names a Qt package:
              no word on that line, and none in an env variable that the line expands, matches
              content_checks.py's Qt package pattern or contains "qt" in any case. No run line and
-             no action matches content_checks.py's Qt build and installation pattern.
+             no action matches content_checks.py's Qt build and installation pattern. In every
+             string of an action's with: inputs (nested values too), no word matches the Qt
+             package pattern, and the string does not match the Qt build and installation
+             pattern.
   ctest      no ctest call has any of -R, -E, -L, -LE, -I, -U, -FA, -FS, -FC, --tests-regex,
              --exclude-regex, --label-regex, --label-exclude, --tests-information, --union,
              --fixture-exclude-any, --fixture-exclude-setup, --fixture-exclude-cleanup,
@@ -28,6 +31,13 @@ both are accepted) and checks:
              timing-rerun (the timing policy in tools/checks/ci-timing-retries.txt,
              docs/testing.md): it takes its test names from junit_check.py --retry-list ...
              --print-retry-candidates and comes after the job's test run.
+             A ctest call is found as a command of a run line (after shell keywords, NAME=value
+             words, and the operators ; & | && || ( )) and behind the commands that run another
+             command, with their options and operands: env, timeout, nice, nohup, stdbuf, sudo,
+             xvfb-run, dbus-run-session, time, exec, command (not command -v or -V, which only
+             look it up), and cmake -E env; and in the script of bash, sh, dash, zsh, or ksh -c
+             (also in a cluster such as -ec). Not followed: script files, shell functions, eval,
+             aliases, a command held in a variable, xargs, find -exec, and env -S.
   results    the ubuntu, fedora, and coverage jobs each run tests (an unfiltered ctest call, or
              the coverage target, which runs ctest itself) with VK_DRIVER_FILES set to the
              manifest of Mesa's software Vulkan driver on the job's distribution
@@ -44,7 +54,8 @@ both are accepted) and checks:
              conditions joined by && (success() may be added; no other status function and no ||);
              it needs every other job; it alone has write permission (contents: write), and the
              workflow's permissions are contents: read.
-  uploads    every actions/upload-artifact step has if: always(), and the flatpak-builder action
+  uploads    every actions/upload-artifact step has if: always() and if-no-files-found: error (so
+             that a path that matches nothing fails the step), and the flatpak-builder action
              does not upload on its own (upload-artifact: false).
   steps      the steps the design requires in a job (REQUIRED_STEPS): the ubuntu job runs this
              check on the workflow, tools/docs/check_links.py on the checkout, and
@@ -52,13 +63,15 @@ both are accepted) and checks:
              docs/running.md (task 29.6). Every step that runs one of them follows the if rule of
              the results paragraph, and a step whose if could skip it does not count: the check
              names the step and its if.
-  flatpak    before the flatpak-builder action, a step of the flatpak job copies /var/lib/flatpak
-             to $RUNNER_TEMP/flatpak-system and then writes FLATPAK_SYSTEM_DIR=<that copy> to
-             $GITHUB_ENV; the step follows the if rule of the results paragraph, and no env: of
-             the workflow, the job, or a step sets FLATPAK_SYSTEM_DIR. The image keeps its Flatpak
-             installation in a read-only image layer whose directories the overlay file system of
-             some runners cannot rename, so the action's runtime update fails there, and
-             flatpak-builder 1.4.9 crashes on that error (docs/packaging.md, "The runtimes in CI").
+  flatpak    the flatpak job builds the bundle with the flatpak-builder action
+             (flatpak/flatpak-github-actions/flatpak-builder, any version). Before the action, a
+             step of the job copies /var/lib/flatpak to $RUNNER_TEMP/flatpak-system and then
+             writes FLATPAK_SYSTEM_DIR=<that copy> to $GITHUB_ENV; the step follows the if rule of
+             the results paragraph, and no env: of the workflow, the job, or a step sets
+             FLATPAK_SYSTEM_DIR. The image keeps its Flatpak installation in a read-only image
+             layer whose directories the overlay file system of some runners cannot rename, so the
+             action's runtime update fails there, and flatpak-builder 1.4.9 crashes on that error
+             (docs/packaging.md, "The runtimes in CI").
   lists      tools/checks/ci-expected-failures-ubuntu.txt, the expected failure that the
              repository owner approved for Ubuntu 24.04's lavapipe only (docs/testing.md), is
              named only inside the ubuntu and coverage jobs (not in the workflow's own env, and
@@ -171,9 +184,32 @@ LONG_FILTERS = ("--tests-regex", "--exclude-regex", "--label-regex", "--label-ex
                 "--fixture-exclude-setup", "--fixture-exclude-cleanup", "--rerun-failed",
                 "--tests-from-file", "--exclude-from-file", "--stop-on-failure", "--repeat",
                 "--preset")
-# Words that keep the next word in command position.
-PREFIXES = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "time", "sudo",
-            "exec", "command", "nice"}
+# Shell keywords that keep the next word in command position.
+PREFIXES = {"if", "then", "else", "elif", "do", "while", "until", "!", "{"}
+# Commands that run the command after them: name -> (their options that take the next word as
+# the value, the number of operands before the command).
+WRAPPERS = {
+    "timeout": ({"-s", "--signal", "-k", "--kill-after"}, 1),
+    "nice": ({"-n", "--adjustment"}, 0),
+    "nohup": (set(), 0),
+    "stdbuf": ({"-i", "-o", "-e", "--input", "--output", "--error"}, 0),
+    "sudo": ({"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C",
+              "--close-from", "-D", "--chdir", "-R", "--chroot", "-r", "--role", "-t", "--type",
+              "-T", "--command-timeout", "-U", "--other-user"}, 0),
+    "xvfb-run": ({"-e", "--error-file", "-f", "--auth-file", "-n", "--server-num", "-p",
+                  "--xauth-protocol", "-s", "--server-args", "-w", "--wait"}, 0),
+    "dbus-run-session": ({"--config-file", "--dbus-daemon"}, 0),
+    "time": (set(), 0),
+    "exec": ({"-a"}, 0),
+    "command": (set(), 0),
+}
+ENV_VALUE_OPTIONS = {"-u", "--unset", "-C", "--chdir"}
+# Shells whose -c script is followed, and their options that take the next word as the value.
+SHELLS = {"bash", "sh", "dash", "zsh", "ksh"}
+SHELL_VALUE_OPTIONS = {"--rcfile", "--init-file"}
+SHELL_OPTIONS = re.compile(r"[-+][A-Za-z]+")
+# command -v and command -V look a command up and run nothing.
+LOOKUP = re.compile(r"-[A-Za-z]*[vV][A-Za-z]*")
 ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
 STATUS_FUNCTION = re.compile(r"\b(?:always|failure|cancelled|success)\s*\(")
 # The if conditions of a test step, a timing-rerun step, a result check, or a required step. Each
@@ -265,33 +301,102 @@ def is_operator(word):
 
 
 def commands(line):
-    """(command word, its arguments) for each simple command of one line."""
+    """(command word, its arguments) for each simple command of one line, and for the command that
+    a wrapper (env, WRAPPERS, cmake -E env) runs or a shell's -c script holds (simple_commands)."""
     found = []
     tokens = words(line)
     index = 0
-    at_command = True
     while index < len(tokens):
-        word = tokens[index]
-        index += 1
-        if is_operator(word):
-            at_command = True
-            continue
-        if not at_command:
-            continue
-        if word in PREFIXES or ASSIGNMENT.match(word):
-            continue
-        if word == "env":
-            while index < len(tokens) and (tokens[index].startswith("-")
-                                           or ASSIGNMENT.match(tokens[index])):
-                index += 2 if tokens[index] == "-u" else 1
-            continue
-        arguments = []
-        while index < len(tokens) and not is_operator(tokens[index]):
-            arguments.append(tokens[index])
+        if is_operator(tokens[index]):
             index += 1
-        found.append((word, arguments))
-        at_command = False
+            continue
+        end = index
+        while end < len(tokens) and not is_operator(tokens[end]):
+            end += 1
+        found += simple_commands(tokens[index:end])
+        index = end
     return found
+
+
+def after_options(arguments, value_options, assignments=False):
+    """The arguments after a command's options ("--" ends them, and an option of value_options
+    takes the next word) and, if assignments, its NAME=value words."""
+    index = 0
+    options = True
+    while index < len(arguments):
+        word = arguments[index]
+        if options and word == "--":
+            options = False
+            index += 1
+        elif options and word.startswith("-"):
+            index += 2 if word in value_options else 1
+        elif assignments and ASSIGNMENT.match(word):
+            index += 1
+        else:
+            break
+    return arguments[index:]
+
+
+def shell_script(arguments):
+    """The script of a shell's -c (in an option cluster such as -ec), or None when the shell runs
+    a script file or its standard input. -o, +o, -O, +O (also at the end of a cluster),
+    --rcfile, and --init-file take the next word."""
+    script = False
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word in ("--", "-"):
+            index += 1
+            break
+        if word.startswith("--"):
+            index += 2 if word in SHELL_VALUE_OPTIONS else 1
+        elif SHELL_OPTIONS.fullmatch(word):
+            script = script or (word.startswith("-") and "c" in word)
+            index += 2 if word[-1] in "oO" else 1
+        else:
+            break
+    return arguments[index] if script and index < len(arguments) else None
+
+
+def simple_commands(tokens):
+    """(command word, its arguments) of one simple command, past the shell keywords (PREFIXES) and
+    NAME=value words before it. A wrapper (env, WRAPPERS, cmake -E env) yields the command that
+    it runs instead, a command -v or -V lookup yields nothing, and a shell with -c yields the
+    commands of its script."""
+    index = 0
+    while index < len(tokens) and (tokens[index] in PREFIXES or ASSIGNMENT.match(tokens[index])):
+        index += 1
+    if index == len(tokens):
+        return []
+    word, arguments = tokens[index], tokens[index + 1:]
+    name = word.rsplit("/", 1)[-1]
+    if name == "env":
+        return simple_commands(after_options(arguments, ENV_VALUE_OPTIONS, assignments=True))
+    if name == "cmake" and arguments[:2] == ["-E", "env"]:
+        rest = arguments[2:]
+        while rest:
+            if rest[0] == "--":
+                rest = rest[1:]
+                break
+            if rest[0] == "--modify":
+                rest = rest[2:]
+            elif rest[0].startswith(("--unset=", "--modify=")) or ASSIGNMENT.match(rest[0]):
+                rest = rest[1:]
+            else:
+                break
+        return simple_commands(rest)
+    if name in WRAPPERS:
+        value_options, operands = WRAPPERS[name]
+        rest = after_options(arguments, value_options, assignments=name == "sudo")
+        options = arguments[:len(arguments) - len(rest)]
+        if name == "command" and any(LOOKUP.fullmatch(option) for option in options):
+            return []
+        return simple_commands(rest[operands:])
+    if name in SHELLS:
+        script = shell_script(arguments)
+        if script is not None:
+            return [found for line in logical_lines(script) for found in commands(line)]
+    return [(word, arguments)]
 
 
 def is_option(argument, options):
@@ -524,11 +629,21 @@ class Checker:
             self.report(where, f"uses {uses}, a Qt installation action")
         action = uses.split("@", 1)[0]
         with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
+        for value in strings_in(with_):
+            for word in value.split():
+                if content_checks.QT_PACKAGE.search(word):
+                    self.report(where, f"passes {word} in with:, a Qt package (Requirement 16.3)")
+            if content_checks.QT_BUILD_PATTERN.search(value):
+                self.report(where, f"passes a Qt build or installation word in with: {value}")
         if action == "actions/upload-artifact":
             self.uploads += 1
             if expression(step.get("if", "")) != "always()":
                 self.report(where, f"uploads with if: {step.get('if')!r}, not if: always() "
                             "(Requirement 16.8)")
+            if with_.get("if-no-files-found") != "error":
+                self.report(where, f"uploads with if-no-files-found: "
+                            f"{with_.get('if-no-files-found')!r}, not error; a wrong path would "
+                            "upload nothing and leave the run green (Requirements 16.8, 16.10)")
         if action == "flatpak/flatpak-github-actions/flatpak-builder":
             if str(with_.get("upload-artifact")).lower() != "false":
                 self.report(where, "lets the flatpak-builder action upload the bundle; set "
@@ -664,7 +779,12 @@ class Checker:
         moves = [index for index, (_, step, _) in enumerate(steps)
                  if moves_flatpak_installation(step)
                  and (not actions or index < actions[0])]
-        if actions and not moves:
+        if not actions:
+            self.report(self.job_label(FLATPAK_JOB), f"has no step that uses the flatpak-builder "
+                        f"action ({FLATPAK_ACTION}); the flatpak job builds the bundle with it, "
+                        "and the copy of the image's Flatpak installation must come before it "
+                        "(docs/packaging.md)")
+        elif not moves:
             self.report(self.job_label(FLATPAK_JOB), f"has no step before the flatpak-builder "
                         f"action that runs {FLATPAK_MOVE}; the action's runtime update can fail "
                         "on the image's overlay file system (docs/packaging.md)")

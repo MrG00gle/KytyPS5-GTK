@@ -647,9 +647,9 @@ kyty_add_test(NAME ci_tools
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 # The CI workflow's structure (task 28.3, tools/checks/workflow_check.py): triggers, runners and
 # containers, no Qt package, unfiltered test runs with a JUnit check after each, the release job's
-# conditions and needs, and uploads with if: always(); then the unit tests over mutated copies of
-# the workflow. PyYAML is required. They need no build output, so they are registered with
-# KYTY_BUILD_LAUNCHER OFF too.
+# conditions and needs, and uploads with if: always() and if-no-files-found: error; then the unit
+# tests over mutated copies of the workflow. PyYAML is required. They need no build output, so
+# they are registered with KYTY_BUILD_LAUNCHER OFF too.
 kyty_add_test(NAME workflow_structure
 	COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tools/checks/workflow_check.py"
 	        --workflow "${CMAKE_SOURCE_DIR}/.github/workflows/build.yml"

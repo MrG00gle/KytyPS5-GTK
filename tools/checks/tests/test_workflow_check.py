@@ -34,6 +34,7 @@ except ImportError:
 QT_UBUNTU = "q" "t6-base-dev"
 QT_FEDORA = "q" "t6-qtbase-devel"
 QT_ACTION = "jurplel/install-q" "t-action@v4"
+QT_INSTALLER = "aqt" "install"
 RELEASE_IF = ("github.event_name == 'push' && github.ref == 'refs/heads/main' && "
               "github.repository == 'MrG00gle/KytyPS5-GTK'")
 
@@ -282,6 +283,31 @@ class QtPackages(Workflow):
         self.assert_fails(change, 'job ubuntu, step "Install the toolkit"',
                           f"uses {QT_ACTION}, a Qt installation action")
 
+    @staticmethod
+    def add_action(job, uses, inputs):
+        def change(data):
+            data["jobs"][job]["steps"].insert(1, {"name": "Install the build tools",
+                                                  "uses": uses, "with": inputs})
+        return change
+
+    def test_qt_package_in_an_action_input(self):
+        change = self.add_action("ubuntu", "some/apt-action@v1",
+                                 {"packages": f"cmake {QT_UBUNTU} ninja-build"})
+        self.assert_fails(change, 'job ubuntu, step "Install the build tools"',
+                          f"passes {QT_UBUNTU} in with:, a Qt package (Requirement 16.3)")
+
+    def test_qt_package_in_a_multi_line_action_input(self):
+        change = self.add_action("fedora", "some/dnf-action@v1",
+                                 {"packages": f"cmake\nninja-build\n{QT_FEDORA}\n"})
+        self.assert_fails(change, 'job fedora, step "Install the build tools"',
+                          f"passes {QT_FEDORA} in with:, a Qt package (Requirement 16.3)")
+
+    def test_qt_installer_in_an_action_input(self):
+        change = self.add_action("coverage", "some/pip-action@v1",
+                                 {"packages": f"{QT_INSTALLER}==3.1.21"})
+        self.assert_fails(change, 'job coverage, step "Install the build tools"',
+                          f"passes a Qt build or installation word in with: {QT_INSTALLER}==3.1.21")
+
 
 class CtestFilters(Workflow):
     MAIN_RUN = 'ctest --test-dir "$BUILD_DIR" --output-on-failure'
@@ -350,6 +376,70 @@ class CtestFilters(Workflow):
                                   "runs ctest with -R --repeat;", count=2)
         self.assertTrue(any('step "Run every test": no later step runs junit_check.py' in line
                             for line in lines), lines)
+
+    # The ubuntu main run as one line, for the forms that wrap all of it.
+    FULL_RUN = ('ctest --test-dir "$BUILD_DIR" --output-on-failure --test-output-size-passed '
+                '262144 \\\n  --output-junit "$PWD/$BUILD_DIR/ctest.xml"')
+    ONE_LINE_RUN = ('ctest --test-dir "$BUILD_DIR" --output-on-failure --test-output-size-passed '
+                    '262144 --output-junit "$PWD/$BUILD_DIR/ctest.xml"')
+    FILTERED_RUN = 'ctest --test-dir "$BUILD_DIR" -R x --output-on-failure'
+    # Commands that run the command after them, with their options, operands, and "--".
+    WRAPPERS = ("timeout --signal=KILL -k 10s 2h", "timeout -- 2h", "nice -n 10", "nice -5",
+                "nohup", "stdbuf -oL -e L", "sudo -E -u runner", "sudo VAR=1",
+                'xvfb-run -a -s "-screen 0 1x1x24"', "dbus-run-session --config-file=/x --",
+                "cmake -E env --unset=DISPLAY X=1 --", "env -C /tmp", "exec -a name", "time -p")
+
+    def assert_passes_with_runs(self, change, runs=5):
+        status, lines, stderr = self.run_check(self.mutated(change))
+        self.assertEqual(status, 0, (lines, stderr))
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn(f" {runs} ctest test runs, ", lines[0])
+
+    def test_filter_behind_timeout_in_fedora_stage_b(self):
+        def change(data):
+            replace_in_run(data, "fedora", "tests", self.MAIN_RUN,
+                           'timeout 2h ctest --test-dir "$BUILD_DIR" -E gpu --output-on-failure')
+        self.assert_fails(change, 'job fedora, step "Stage B - run every test": runs ctest with '
+                          "-E;", "Requirement 16.4")
+
+    def test_filter_behind_a_wrapper(self):
+        for wrapper in self.WRAPPERS:
+            with self.subTest(wrapper=wrapper):
+                def change(data, wrapper=wrapper):
+                    replace_in_run(data, "ubuntu", "tests", self.MAIN_RUN,
+                                   f"{wrapper} {self.FILTERED_RUN}")
+                self.assert_fails(change, 'job ubuntu, step "Run every test": runs ctest with -R;')
+
+    def test_filter_in_a_shell_script(self):
+        quoted = self.FILTERED_RUN.replace('"', '\\"')
+        for form in (f"bash -c '{self.FILTERED_RUN}'", f'sh -ec "{quoted}"',
+                     f"bash -o pipefail -c '{self.FILTERED_RUN}'"):
+            with self.subTest(form=form):
+                def change(data, form=form):
+                    replace_in_run(data, "ubuntu", "tests", self.FULL_RUN, form)
+                self.assert_fails(change, 'job ubuntu, step "Run every test": runs ctest with -R;')
+
+    def test_filtered_test_list_in_a_shell_script(self):
+        listing = 'ctest --test-dir "$BUILD_DIR" --show-only=json-v1'
+
+        def change(data):
+            replace_in_run(data, "ubuntu", "tests", listing, f"bash -c '{listing} -LE gpu'")
+        self.assert_fails(change, 'step "Run every test": lists the tests with -LE;')
+
+    def test_wrapped_unfiltered_runs_pass(self):
+        for name, new in (("timeout", f"timeout 6h {self.MAIN_RUN}"),
+                          ("bash -c", f"bash -c '{self.ONE_LINE_RUN}'")):
+            with self.subTest(name):
+                old = self.MAIN_RUN if name == "timeout" else self.FULL_RUN
+
+                def change(data, old=old, new=new):
+                    replace_in_run(data, "ubuntu", "tests", old, new)
+                self.assert_passes_with_runs(change)
+
+    def test_a_command_lookup_is_no_run(self):
+        def change(data):
+            find_step(data, "ubuntu", "tests")["run"] += "command -v ctest\ncommand -V ctest\n"
+        self.assert_passes_with_runs(change)
 
 
 class TestResults(Workflow):
@@ -700,6 +790,22 @@ class Uploads(Workflow):
         self.assert_fails(change, 'job flatpak, step "Build the bundle": lets the flatpak-builder '
                           "action upload the bundle")
 
+    def test_upload_without_if_no_files_found(self):
+        def change(data):
+            find_step(data, "ubuntu", "Upload the release archive")["with"].pop("if-no-files-found")
+        self.assert_fails(change, 'job ubuntu, step "Upload the release archive": uploads with '
+                          "if-no-files-found: None, not error; a wrong path would upload nothing "
+                          "and leave the run green (Requirements 16.8, 16.10)")
+
+    def test_upload_that_only_warns_or_ignores(self):
+        for value in ("warn", "ignore"):
+            with self.subTest(value=value):
+                def change(data, value=value):
+                    find_step(data, "flatpak", "Upload the bundle")["with"]["if-no-files-found"] = (
+                        value)
+                self.assert_fails(change, 'job flatpak, step "Upload the bundle": uploads with '
+                                  f"if-no-files-found: '{value}', not error;")
+
 
 class FlatpakInstallation(Workflow):
     """Before the flatpak-builder action, the flatpak job copies the image's Flatpak installation
@@ -775,6 +881,31 @@ class FlatpakInstallation(Workflow):
             with self.subTest(where):
                 self.assert_fails(change, f"{where}: sets FLATPAK_SYSTEM_DIR to "
                                   "'/var/lib/flatpak' in env:")
+
+    NO_ACTION = ("job flatpak: has no step that uses the flatpak-builder action "
+                 "(flatpak/flatpak-github-actions/flatpak-builder); the flatpak job builds the "
+                 "bundle with it, and the copy of the image's Flatpak installation must come "
+                 "before it (docs/packaging.md)")
+
+    def test_the_action_replaced_by_a_run_step(self):
+        def change(data):
+            step = find_step(data, "flatpak", "build")
+            del step["uses"], step["with"]
+            step["run"] = ('flatpak-builder --install-deps-from=flathub --repo="$FLATPAK_REPO_DIR" '
+                           '"$FLATPAK_BUILD_DIR" "$MANIFEST"\n')
+        self.assert_fails(change, self.NO_ACTION)
+
+    def test_the_action_at_another_path(self):
+        def change(data):
+            find_step(data, "flatpak", "build")["uses"] = (
+                "someone/flatpak-github-actions/flatpak-builder@v6")
+        self.assert_fails(change, self.NO_ACTION)
+
+    def test_another_version_of_the_action_passes(self):
+        def change(data):
+            find_step(data, "flatpak", "build")["uses"] = (
+                "flatpak/flatpak-github-actions/flatpak-builder@v7")
+        self.assert_passes(self.mutated(change))
 
 
 if __name__ == "__main__":
