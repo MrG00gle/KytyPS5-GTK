@@ -659,7 +659,7 @@ CoreText SessionMessageText(const updater::SessionOutcome& outcome) {
 	if (!outcome.detail.installed_unverified) {
 		return sentence;
 	}
-	// TRANSLATORS: %s is the reason (an English message of the updater or of the network).
+	// TRANSLATORS: %s is the reason: another update message, or a network reason in English.
 	return Text(N_("Could not verify the currently installed release. %s"), {Render(sentence)});
 }
 
