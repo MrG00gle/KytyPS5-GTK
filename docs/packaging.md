@@ -166,10 +166,14 @@ its justification:
 |---|---|---|
 | `appid-url-not-reachable` | manifest and repository | The linter derives the URL `https://github.com/mrg00gle/kytyps5_gtk` from the App_ID and expects it to resolve. The repository's name contains a hyphen (`KytyPS5-GTK`), which an App_ID cannot contain, so that URL can never match. The metainfo's homepage is the real repository URL, `https://github.com/MrG00gle/KytyPS5-GTK`. |
 | `appstream-screenshots-not-mirrored-in-ostree` | repository | The metainfo screenshot is served from this repository (`https://raw.githubusercontent.com/MrG00gle/KytyPS5-GTK/main/docs/screenshots/kyty-launcher-main.png`). The check requires a `screenshots/x86_64` ref in the exported repository, which only exists when flatpak-builder mirrors the screenshots into it (`--mirror-screenshots-url`, which Flathub's build service passes). A single-file bundle built here has no such mirror. |
+| `appstream-external-screenshot-url` | repository | The check requires a screenshot URL on Flathub's media mirror (`https://dl.flathub.org/media`) in the exported repository's AppStream catalogue, and only Flathub's build infrastructure puts screenshots there when it publishes an app. This project does not publish on Flathub: its releases ship the `.flatpak` bundle and the Linux archive on GitHub Releases, so the screenshot stays at its URL in this repository on `raw.githubusercontent.com`. |
 
 On every ref other than `main`, CI lints with a per-run copy of that file that also excepts
 `appstream-missing-screenshots`: the screenshot URL points at `main` and resolves only after `dev`
 is merged. Runs on `main` lint with the committed file unchanged, so a missing screenshot fails them.
+The `appstream-external-screenshot-url` exception does not cover that case: when the URL does not
+serve the image, the build leaves the screenshot out of the catalogue, and the linter reports
+`appstream-missing-screenshots` instead.
 
 The committed metainfo has an empty `<releases/>` list, because a commit cannot contain its own
 release tag. On official runs (pushes to `main` of `MrG00gle/KytyPS5-GTK`), the `flatpak` job writes

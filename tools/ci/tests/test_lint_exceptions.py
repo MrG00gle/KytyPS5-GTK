@@ -58,7 +58,8 @@ class Committed(unittest.TestCase):
         with open(COMMITTED, encoding="utf-8") as handle:
             document = json.load(handle)
         self.assertEqual(document, {APP_ID: ["appid-url-not-reachable",
-                                             "appstream-screenshots-not-mirrored-in-ostree"]})
+                                             "appstream-screenshots-not-mirrored-in-ostree",
+                                             "appstream-external-screenshot-url"]})
 
     def test_main_runs_stay_strict_about_screenshots(self):
         with open(COMMITTED, encoding="utf-8") as handle:
@@ -71,9 +72,11 @@ class Copy(Run):
         self.assertEqual(status, 0)
         self.assertEqual(self.written(), {APP_ID: ["appid-url-not-reachable",
                                                    "appstream-screenshots-not-mirrored-in-ostree",
+                                                   "appstream-external-screenshot-url",
                                                    "appstream-missing-screenshots"]})
         self.assertEqual(lines, [f"{self.output}: {APP_ID}: appid-url-not-reachable, "
                                  "appstream-screenshots-not-mirrored-in-ostree, "
+                                 "appstream-external-screenshot-url, "
                                  "appstream-missing-screenshots"])
         with open(self.input, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), self.committed_text)
@@ -83,6 +86,7 @@ class Copy(Run):
         self.assertEqual(status, 0)
         self.assertEqual(self.written()[APP_ID], ["appid-url-not-reachable",
                                                   "appstream-screenshots-not-mirrored-in-ostree",
+                                                  "appstream-external-screenshot-url",
                                                   "x-y"])
 
     def test_other_app_ids_are_kept(self):
