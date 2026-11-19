@@ -139,6 +139,9 @@ jobs:
           ld.lld --version
           glslangValidator --version
           python3 -c 'import sys, yaml; print(sys.version, "PyYAML", yaml.__version__)'
+          # The core dump settings: writing a dump after a test aborts can take a minute.
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
+          echo "ulimit -c: $(ulimit -c)"
 
       - name: Set the ccache directory
         run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
@@ -370,6 +373,9 @@ jobs:
           clang++ --version
           ld.lld --version
           glslangValidator --version
+          # The core dump settings: writing a dump after a test aborts can take a minute.
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
+          echo "ulimit -c: $(ulimit -c)"
 
       - name: Set the ccache directory
         run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
@@ -537,13 +543,20 @@ jobs:
             exit 1
           fi
 
+      - name: Show the tool versions
+        run: |
+          cmake --version
+          ninja --version
+          clang++ --version
+          # The core dump settings: writing a dump after a test aborts can take a minute.
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
+          echo "ulimit -c: $(ulimit -c)"
+
       - name: Configure with coverage
         run: |
           # llvm-profdata and llvm-cov of Clang's own LLVM version. No compiler launcher (ccache
           # off), as in the coverage build the design describes.
           llvm_bin="/usr/lib/llvm-$(clang++ -dumpversion | cut -d. -f1)/bin"
-          cmake --version
-          clang++ --version
           "$llvm_bin/llvm-cov" --version
           cmake -S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DKYTY_ENABLE_COVERAGE=ON \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \

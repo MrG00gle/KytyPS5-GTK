@@ -648,6 +648,72 @@ class Conditions(Workflow):
         self.assert_passes(self.text)
 
 
+class CoreDumpPrints(Workflow):
+    """Each test job prints core_pattern and ulimit -c, in a step that no if can skip."""
+
+    STEP = "Show the tool versions"
+    PRINTS = (('echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"\n',
+               "the core dump pattern print"),
+              ('echo "ulimit -c: $(ulimit -c)"\n', "the core size limit print"))
+
+    def test_the_committed_jobs_print_both(self):
+        for job in ("ubuntu", "fedora", "coverage"):
+            for line, _ in self.PRINTS:
+                with self.subTest(job=job, line=line):
+                    self.assertIn(line, find_step(self.data, job, self.STEP)["run"])
+
+    def test_a_job_without_a_print(self):
+        for job in ("ubuntu", "fedora", "coverage"):
+            for line, what in self.PRINTS:
+                with self.subTest(job=job, what=what):
+                    def change(data, job=job, line=line):
+                        replace_in_run(data, job, self.STEP, line, "")
+                    self.assert_fails(change, f"job {job}: has no step that runs {what}")
+
+    def test_both_prints_only_in_another_job(self):
+        def change(data):
+            step = find_step(data, "coverage", self.STEP)
+            for line, _ in self.PRINTS:
+                step["run"] = step["run"].replace(line, "")
+            find_step(data, "ubuntu", self.STEP)["run"] += "".join(line for line, _ in self.PRINTS)
+        lines = self.assert_fails(change, "job coverage: has no step that runs the core dump "
+                                  "pattern print", count=2)
+        self.assertIn("job coverage: has no step that runs the core size limit print", lines)
+
+    def test_a_label_or_comment_without_the_command(self):
+        # Only the command counts: a label or a comment that names it is not a print.
+        cases = ((0, 'echo "core_pattern: see /proc/sys/kernel/core_pattern"\n'),
+                 (0, "# cat /proc/sys/kernel/core_pattern\n"),
+                 (1, 'echo "ulimit -c: unknown"\n'),
+                 (1, "# echo $(ulimit -c)\n"),
+                 (1, "ulimit -c 0\n"))
+        for index, new in cases:
+            line, what = self.PRINTS[index]
+            with self.subTest(new=new):
+                def change(data, line=line, new=new):
+                    replace_in_run(data, "fedora", self.STEP, line, new)
+                self.assert_fails(change, f"job fedora: has no step that runs {what}")
+
+    def test_the_plain_commands_pass(self):
+        cases = ((0, "cat /proc/sys/kernel/core_pattern\n"),
+                 (1, "ulimit -c\n"),
+                 (1, 'echo "core size limit $( ulimit -c ) blocks"\n'))
+        for index, new in cases:
+            line, _ = self.PRINTS[index]
+            with self.subTest(new=new):
+                self.assert_passes(self.mutated(
+                    lambda data, line=line, new=new: replace_in_run(data, "fedora", self.STEP,
+                                                                    line, new)))
+
+    def test_a_print_step_only_on_main(self):
+        # One step holds both prints, so its if is reported once.
+        def change(data):
+            find_step(data, "coverage", self.STEP)["if"] = "${{ github.ref == 'refs/heads/main' }}"
+        self.assert_fails(change, f'job coverage, step "{self.STEP}": if: "${{{{ github.ref == '
+                          "'refs/heads/main' }}\" can skip the core dump pattern print; such a "
+                          "step may have no if")
+
+
 class Release(Workflow):
     def test_release_if_without_the_repository_condition(self):
         def change(data):

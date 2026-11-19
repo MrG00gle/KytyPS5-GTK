@@ -60,9 +60,12 @@ both are accepted) and checks:
   steps      the steps the design requires in a job (REQUIRED_STEPS): the ubuntu job runs this
              check on the workflow, tools/docs/check_links.py on the checkout, and
              tools/docs/check_help_options.py on the kyty_emulator it built, against
-             docs/running.md (task 29.6). Every step that runs one of them follows the if rule of
-             the results paragraph, and a step whose if could skip it does not count: the check
-             names the step and its if.
+             docs/running.md (task 29.6). The ubuntu, fedora, and coverage jobs each print the core
+             dump settings, /proc/sys/kernel/core_pattern and ulimit -c (CORE_DUMP_PRINTS), so the
+             log shows whether the runner writes a core dump when a test aborts; only the commands
+             count (cat of the file, ulimit -c alone or in $(...)), not a comment or a label.
+             Every step that runs one of them follows the if rule of the results paragraph, and a
+             step whose if could skip it does not count: the check names the step and its if.
   flatpak    the flatpak job builds the bundle with the flatpak-builder action
              (flatpak/flatpak-github-actions/flatpak-builder, any version). Before the action, a
              step of the job copies /var/lib/flatpak to $RUNNER_TEMP/flatpak-system and then
@@ -150,9 +153,19 @@ RELEASE_JOB = "release"
 RELEASE_CONDITIONS = {"github.event_name == 'push'", "github.ref == 'refs/heads/main'",
                       "github.repository == 'MrG00gle/KytyPS5-GTK'"}
 TIMING_RERUN = "timing-rerun"
+# The core dump settings that the test jobs print: a dump after a test aborts can take a minute,
+# and the log shows whether the runner writes one. Each regex needs the command itself on a line
+# that is not a comment: cat of the file, and ulimit -c alone or as a $(...) substitution, so a
+# label such as "ulimit -c:" or a comment naming the file does not count.
+CORE_DUMP_PRINTS = [
+    ("the core dump pattern print",
+     re.compile(r"^(?!\s*#).*?(?<![\w./-])cat\s+/proc/sys/kernel/core_pattern(?![\w./-])")),
+    ("the core size limit print",
+     re.compile(r"^(?!\s*#)(?:.*?\$\(\s*|\s*)ulimit\s+-c\s*(?:\)|$|[;&|])")),
+]
 # Job id -> [(what the step does, a regex that one logical line of its run must match)].
 REQUIRED_STEPS = {
-    "ubuntu": [
+    "ubuntu": CORE_DUMP_PRINTS + [
         ("the workflow structure check",
          re.compile(r"(?<![\w./-])tools/checks/workflow_check\.py\s+--workflow\s+"
                     r"\.github/workflows/build\.yml(?![\w./-])")),
@@ -166,6 +179,8 @@ REQUIRED_STEPS = {
                     r"\$(?:BUILD_DIR|\{BUILD_DIR\})/kyty_emulator)\s+--doc\s+docs/running\.md"
                     r"(?![\w./-])")),
     ],
+    "fedora": CORE_DUMP_PRINTS,
+    "coverage": CORE_DUMP_PRINTS,
 }
 
 INSTALL_COMMAND = re.compile(content_checks.QT_PACKAGE_MANAGER.pattern
