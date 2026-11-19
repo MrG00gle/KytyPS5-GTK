@@ -653,9 +653,10 @@ class CoreDumpPrints(Workflow):
     """Each test job prints core_pattern and ulimit -c, in a step that no if can skip."""
 
     STEP = "Show the tool versions"
-    PRINTS = (('echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"\n',
+    # The prints are items of the environment fingerprint, which annotate.py prints to the log.
+    PRINTS = (('item core_pattern "$(cat /proc/sys/kernel/core_pattern)"\n',
                "the core dump pattern print"),
-              ('echo "ulimit -c: $(ulimit -c)"\n', "the core size limit print"))
+              ('item "ulimit -c" "$(ulimit -c)"\n', "the core size limit print"))
 
     def test_the_committed_jobs_print_both(self):
         for job in ("ubuntu", "fedora", "coverage"):
@@ -713,6 +714,45 @@ class CoreDumpPrints(Workflow):
         self.assert_fails(change, f'job coverage, step "{self.STEP}": if: "${{{{ github.ref == '
                           "'refs/heads/main' }}\" can skip the core dump pattern print; such a "
                           "step may have no if")
+
+
+class EnvironmentFingerprint(Workflow):
+    """The ubuntu, fedora, coverage, and flatpak jobs put their environment in the job summary and
+    a notice (tools/ci/annotate.py environment), in a step that no if can skip."""
+
+    JOBS = {"ubuntu": ["Show the tool versions"],
+            "fedora": ["Show the tool versions", "Show the stage B versions"],
+            "coverage": ["Show the tool versions"],
+            "flatpak": ["Show the image's tools"]}
+    MODE = "tools/ci/annotate.py environment"
+
+    def test_the_committed_jobs_have_it(self):
+        for job, keys in self.JOBS.items():
+            for key in keys:
+                with self.subTest(job=job, key=key):
+                    self.assertIn(self.MODE, find_step(self.data, job, key)["run"])
+
+    def test_a_job_without_it(self):
+        for job, keys in self.JOBS.items():
+            with self.subTest(job=job):
+                def change(data, job=job, keys=keys):
+                    for key in keys:
+                        replace_in_run(data, job, key, self.MODE, "tools/ci/annotate.py log")
+                self.assert_fails(change, f"job {job}: has no step that runs the environment "
+                                  "fingerprint")
+
+    def test_a_fingerprint_step_that_can_be_skipped(self):
+        def change(data):
+            find_step(data, "flatpak", "Show the image's tools")["if"] = "failure()"
+        self.assert_fails(change, "job flatpak, step \"Show the image's tools\": if: 'failure()' "
+                          "can skip the environment fingerprint; such a step may have no if")
+
+    def test_another_script_does_not_count(self):
+        def change(data):
+            replace_in_run(data, "coverage", "Show the tool versions", self.MODE,
+                           "tools/ci/annotate.py.bak environment")
+        self.assert_fails(change, "job coverage: has no step that runs the environment "
+                          "fingerprint")
 
 
 class Ccache(Workflow):

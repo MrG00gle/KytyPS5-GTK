@@ -146,9 +146,24 @@ jobs:
           ld.lld --version
           glslangValidator --version
           python3 -c 'import sys, yaml; print(sys.version, "PyYAML", yaml.__version__)'
-          # The core dump settings: writing a dump after a test aborts can take a minute.
-          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
-          echo "ulimit -c: $(ulimit -c)"
+          # The environment, in the log, the job summary, and one notice. The core dump settings
+          # are in it because writing a dump after a test aborts can take a minute.
+          item() { printf '%s\t%s\n' "$1" "${2//[$'\t\n']/ }"; }
+          package() { dpkg-query -W -f='${Version}' "$1" 2>/dev/null || echo "not installed"; }
+          {
+            item OS "$(. /etc/os-release && echo "$PRETTY_NAME")"
+            item "Runner image" "${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            item Kernel "$(uname -r)"
+            item core_pattern "$(cat /proc/sys/kernel/core_pattern)"
+            item "ulimit -c" "$(ulimit -c)"
+            item Clang "$(clang++ -dumpversion)"
+            item Mesa "$(package mesa-vulkan-drivers)"
+            item GTK "$(package libgtk-4-1)"
+            item libadwaita "$(package libadwaita-1-0)"
+            item weston "$(package weston)"
+            item Xvfb "$(package xvfb)"
+          } > _Build/environment.txt
+          python3 -B tools/ci/annotate.py environment _Build/environment.txt --title Ubuntu
 
       - name: Set the ccache directory
         run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
@@ -383,9 +398,21 @@ jobs:
           clang++ --version
           ld.lld --version
           glslangValidator --version
-          # The core dump settings: writing a dump after a test aborts can take a minute.
-          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
-          echo "ulimit -c: $(ulimit -c)"
+          # The environment, in the log, the job summary, and one notice. The core dump settings
+          # are in it because writing a dump after a test aborts can take a minute. GTK comes
+          # with stage B, so its versions follow in "Show the stage B versions".
+          item() { printf '%s\t%s\n' "$1" "${2//[$'\t\n']/ }"; }
+          package() { rpm -q --qf '%{VERSION}-%{RELEASE} ' "$1" || true; }
+          {
+            item OS "$(. /etc/os-release && echo "$PRETTY_NAME")"
+            item Kernel "$(uname -r)"
+            item core_pattern "$(cat /proc/sys/kernel/core_pattern)"
+            item "ulimit -c" "$(ulimit -c)"
+            item Clang "$(clang++ -dumpversion)"
+            item Mesa "$(package mesa-vulkan-drivers)"
+            item weston "$(package weston)"
+          } > _Build/environment.txt
+          python3 -B tools/ci/annotate.py environment _Build/environment.txt --title Fedora
 
       - name: Set the ccache directory
         run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
@@ -448,6 +475,19 @@ jobs:
             python3 -B tools/ci/annotate.py log _Build/install-stage-b.log --title "Fedora stage B packages"
           fi
           exit "$status"
+
+      - name: Show the stage B versions
+        run: |
+          # The packages that only stage B has, in the log, the job summary, and one notice.
+          item() { printf '%s\t%s\n' "$1" "${2//[$'\t\n']/ }"; }
+          package() { rpm -q --qf '%{VERSION}-%{RELEASE} ' "$1" || true; }
+          {
+            item GTK "$(package gtk4)"
+            item libadwaita "$(package libadwaita)"
+            item Xvfb "$(package xorg-x11-server-Xvfb)"
+          } > _Build/environment-stage-b.txt
+          python3 -B tools/ci/annotate.py environment _Build/environment-stage-b.txt \
+            --title "Fedora stage B"
 
       - name: Stage B - configure everything
         run: cmake -S . -B "$BUILD_DIR" -DKYTY_BUILD_LAUNCHER=ON
@@ -562,9 +602,24 @@ jobs:
           cmake --version
           ninja --version
           clang++ --version
-          # The core dump settings: writing a dump after a test aborts can take a minute.
-          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
-          echo "ulimit -c: $(ulimit -c)"
+          # The environment, in the log, the job summary, and one notice. The core dump settings
+          # are in it because writing a dump after a test aborts can take a minute.
+          item() { printf '%s\t%s\n' "$1" "${2//[$'\t\n']/ }"; }
+          package() { dpkg-query -W -f='${Version}' "$1" 2>/dev/null || echo "not installed"; }
+          {
+            item OS "$(. /etc/os-release && echo "$PRETTY_NAME")"
+            item "Runner image" "${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            item Kernel "$(uname -r)"
+            item core_pattern "$(cat /proc/sys/kernel/core_pattern)"
+            item "ulimit -c" "$(ulimit -c)"
+            item Clang "$(clang++ -dumpversion)"
+            item Mesa "$(package mesa-vulkan-drivers)"
+            item GTK "$(package libgtk-4-1)"
+            item libadwaita "$(package libadwaita-1-0)"
+            item weston "$(package weston)"
+            item Xvfb "$(package xvfb)"
+          } > _Build/environment.txt
+          python3 -B tools/ci/annotate.py environment _Build/environment.txt --title Coverage
 
       - name: Set the ccache directory
         run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
@@ -719,6 +774,25 @@ jobs:
           command -v desktop-file-validate
           python3 --version
           flatpak list --runtime
+          # The image's tools and runtimes, before the flatpak-builder action updates them, in the
+          # log, the job summary, and one notice. The file is outside the checkout, which the
+          # manifest's dir source copies. The image's digest is in the log of the job's
+          # "Initialize containers" step.
+          item() { printf '%s\t%s\n' "$1" "${2//[$'\t\n']/ }"; }
+          runtime() {
+            flatpak info "$1" | sed -n -e 's/^ *Version: *//p' -e 's/^ *Commit: */commit /p' \
+              -e 's/^ *Subject: *//p'
+          }
+          {
+            item OS "$(. /etc/os-release && echo "$PRETTY_NAME")"
+            item flatpak "$(flatpak --version)"
+            item flatpak-builder "$(flatpak-builder --version)"
+            item flatpak-builder-lint "$(flatpak-builder-lint --version)"
+            item appstreamcli "$(appstreamcli --version)"
+            item org.gnome.Platform//49 "$(runtime org.gnome.Platform//49)"
+            item org.gnome.Sdk//49 "$(runtime org.gnome.Sdk//49)"
+          } > /var/tmp/kyty-environment.txt
+          python3 -B tools/ci/annotate.py environment /var/tmp/kyty-environment.txt --title Flatpak
 
       # design.md "Release metadata in the metainfo": the committed metainfo keeps an empty
       # <releases/>. One of the next two steps rewrites the checkout's copy, which the manifest's

@@ -199,6 +199,10 @@ before the action, and points `FLATPAK_SYSTEM_DIR` at the copy for the later ste
 `tools/checks/workflow_check.py` checks that the job builds with that action and that this step
 comes before it.
 
+Before the action runs, the job lists the image's tools and the version and commit of the
+preinstalled GNOME runtime and SDK in its job summary and in one notice on the run page. The
+digest of the image itself is in the log of the job's "Initialize containers" step.
+
 ## Re-running a release
 
 To re-run a run that has published its release, re-run only its `release` job:

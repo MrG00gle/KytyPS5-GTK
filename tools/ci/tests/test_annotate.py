@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 CI_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(CI_DIR, "annotate.py")
@@ -176,6 +177,129 @@ class Log(Run):
         lines = self.annotate("log", text, title="t")
         self.assertEqual(len(lines), 10)
         self.assertEqual(lines[-1], "::error title=t::and 11 more error lines; see the job log")
+
+
+ENVIRONMENT = ("OS\tUbuntu 24.04.3 LTS\n"
+               "Kernel\t6.11.0-1018-azure\n"
+               "\n"
+               "core_pattern\t|/usr/lib/systemd/systemd-coredump %P %u\n"
+               "ulimit -c\tunlimited\n")
+
+
+class Environment(Run):
+    def environment(self, text, title="Ubuntu", summary=None, environ=None):
+        """The printed lines; summary is passed as --summary, and GITHUB_STEP_SUMMARY is set only
+        from environ (never the step summary of a CI run that runs these tests)."""
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        argv = ["environment", self.path, "--title", title]
+        if summary is not None:
+            argv += ["--summary", summary]
+        stdout = io.StringIO()
+        with mock.patch.dict(os.environ), contextlib.redirect_stdout(stdout):
+            os.environ.pop("GITHUB_STEP_SUMMARY", None)
+            os.environ.update(environ or {})
+            status = annotate.main(argv)
+        self.assertEqual(status, 0)
+        return stdout.getvalue().splitlines()
+
+    def read(self, path):
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_the_log_lines_and_one_notice(self):
+        summary = os.path.join(self.temp.name, "summary.md")
+        lines = self.environment(ENVIRONMENT, summary=summary)
+        self.assertEqual(lines, [
+            "OS: Ubuntu 24.04.3 LTS",
+            "Kernel: 6.11.0-1018-azure",
+            "core_pattern: |/usr/lib/systemd/systemd-coredump %P %u",
+            "ulimit -c: unlimited",
+            "::notice title=Ubuntu environment::OS Ubuntu 24.04.3 LTS; Kernel 6.11.0-1018-azure; "
+            "core_pattern |/usr/lib/systemd/systemd-coredump %25P %25u; ulimit -c unlimited",
+        ])
+
+    def test_the_table_is_appended_to_the_summary(self):
+        summary = os.path.join(self.temp.name, "summary.md")
+        with open(summary, "w", encoding="utf-8") as handle:
+            handle.write("### Earlier step\n")
+        self.environment(ENVIRONMENT, summary=summary)
+        self.assertEqual(self.read(summary), (
+            "### Earlier step\n"
+            "### Ubuntu environment\n"
+            "\n"
+            "| Item | Value |\n"
+            "| --- | --- |\n"
+            "| OS | Ubuntu 24.04.3 LTS |\n"
+            "| Kernel | 6.11.0-1018-azure |\n"
+            "| core_pattern | \\|/usr/lib/systemd/systemd-coredump %P %u |\n"
+            "| ulimit -c | unlimited |\n"
+            "\n"))
+
+    def test_the_step_summary_variable_is_the_default(self):
+        summary = os.path.join(self.temp.name, "step-summary.md")
+        self.environment("Kernel\t6.11\n", environ={"GITHUB_STEP_SUMMARY": summary})
+        self.assertIn("| Kernel | 6.11 |\n", self.read(summary))
+
+    def test_no_summary_without_the_option_or_the_variable(self):
+        for environ in ({}, {"GITHUB_STEP_SUMMARY": ""}):
+            with self.subTest(environ=environ):
+                lines = self.environment("Kernel\t6.11\n", environ=environ)
+                self.assertEqual(lines, ["Kernel: 6.11",
+                                         "::notice title=Ubuntu environment::Kernel 6.11"])
+                self.assertEqual(sorted(os.listdir(self.temp.name)), ["output.txt"])
+
+    def test_the_title_and_the_cells_are_escaped(self):
+        summary = os.path.join(self.temp.name, "summary.md")
+        lines = self.environment("Mesa\t25.2.8|a, 50%: b\n", title="Fedora: stage B, 50%",
+                                 summary=summary)
+        self.assertEqual(lines[-1], "::notice title=Fedora%3A stage B%2C 50%25 environment::"
+                         "Mesa 25.2.8|a, 50%25: b")
+        self.assertIn("### Fedora: stage B, 50% environment\n", self.read(summary))
+        self.assertIn("| Mesa | 25.2.8\\|a, 50%: b |\n", self.read(summary))
+
+    def test_a_line_without_a_tab_is_a_label_without_a_value(self):
+        summary = os.path.join(self.temp.name, "summary.md")
+        lines = self.environment("Runner image\nKernel\t6.11\n", summary=summary)
+        self.assertEqual(lines, ["Runner image:", "Kernel: 6.11",
+                                 "::notice title=Ubuntu environment::Runner image; Kernel 6.11"])
+        self.assertIn("| Runner image |  |\n", self.read(summary))
+
+    def test_a_file_without_items_is_an_error(self):
+        summary = os.path.join(self.temp.name, "summary.md")
+        lines = self.environment("\n  \n", summary=summary)
+        self.assertEqual(lines, ["::error title=Ubuntu::the environment file lists no items"])
+        self.assertFalse(os.path.exists(summary))
+
+    def test_a_summary_that_cannot_be_written_is_an_error(self):
+        lines = self.environment("Kernel\t6.11\n", summary=self.temp.name)
+        self.assertEqual(len(lines), 3, lines)
+        self.assertTrue(lines[1].startswith(f"::error title=Ubuntu::cannot write the job summary "
+                                            f"{self.temp.name}: "), lines)
+        self.assertEqual(lines[2], "::notice title=Ubuntu environment::Kernel 6.11")
+
+    def test_an_unreadable_file_is_one_error(self):
+        summary = os.path.join(self.temp.name, "summary.md")
+        missing = os.path.join(self.temp.name, "absent.txt")
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            status = annotate.main(["environment", missing, "--title", "Flatpak", "--summary",
+                                    summary])
+        self.assertEqual(status, 0)
+        lines = stdout.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith(f"::error title=Flatpak::cannot read {missing}: "),
+                        lines)
+        self.assertFalse(os.path.exists(summary))
+
+    def test_summary_with_another_mode_is_a_usage_error(self):
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write("FAILED: x.o\n")
+        with contextlib.redirect_stderr(io.StringIO()) as stderr, \
+                self.assertRaises(SystemExit) as raised:
+            annotate.main(["log", self.path, "--title", "t", "--summary", self.path])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--summary is only for the environment mode", stderr.getvalue())
 
 
 class Files(Run):

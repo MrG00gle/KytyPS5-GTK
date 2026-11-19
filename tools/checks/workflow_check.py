@@ -80,7 +80,10 @@ both are accepted) and checks:
              docs/running.md (task 29.6). The ubuntu, fedora, and coverage jobs each print the core
              dump settings, /proc/sys/kernel/core_pattern and ulimit -c (CORE_DUMP_PRINTS), so the
              log shows whether the runner writes a core dump when a test aborts; only the commands
-             count (cat of the file, ulimit -c alone or in $(...)), not a comment or a label.
+             count (cat of the file, ulimit -c alone or in $(...)), not a comment or a label. The
+             ubuntu, fedora, coverage, and flatpak jobs each run tools/ci/annotate.py environment
+             (ENVIRONMENT), which puts the job's OS, kernel, and package versions in the job
+             summary and one notice, so image and package drift shows on the run page.
              Every step that runs one of them follows the if rule of the results paragraph, and a
              step whose if could skip it does not count: the check names the step and its if.
   flatpak    the flatpak job builds the bundle with the flatpak-builder action
@@ -195,9 +198,15 @@ CORE_DUMP_PRINTS = [
     ("the core size limit print",
      re.compile(r"^(?!\s*#)(?:.*?\$\(\s*|\s*)ulimit\s+-c\s*(?:\)|$|[;&|])")),
 ]
+# The environment fingerprint (the OS, the kernel, package versions) in the job summary and one
+# notice: tools/ci/annotate.py's environment mode.
+ENVIRONMENT = [
+    ("the environment fingerprint",
+     re.compile(r"(?<![\w./-])tools/ci/annotate\.py\s+environment\s")),
+]
 # Job id -> [(what the step does, a regex that one logical line of its run must match)].
 REQUIRED_STEPS = {
-    "ubuntu": CORE_DUMP_PRINTS + [
+    "ubuntu": CORE_DUMP_PRINTS + ENVIRONMENT + [
         ("the workflow structure check",
          re.compile(r"(?<![\w./-])tools/checks/workflow_check\.py\s+--workflow\s+"
                     r"\.github/workflows/build\.yml(?![\w./-])")),
@@ -211,8 +220,9 @@ REQUIRED_STEPS = {
                     r"\$(?:BUILD_DIR|\{BUILD_DIR\})/kyty_emulator)\s+--doc\s+docs/running\.md"
                     r"(?![\w./-])")),
     ],
-    "fedora": CORE_DUMP_PRINTS,
-    "coverage": CORE_DUMP_PRINTS,
+    "fedora": CORE_DUMP_PRINTS + ENVIRONMENT,
+    "coverage": CORE_DUMP_PRINTS + ENVIRONMENT,
+    "flatpak": ENVIRONMENT,
 }
 
 INSTALL_COMMAND = re.compile(content_checks.QT_PACKAGE_MANAGER.pattern

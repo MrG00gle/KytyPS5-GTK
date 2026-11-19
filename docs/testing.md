@@ -196,6 +196,12 @@ The Ubuntu, Fedora, and Coverage jobs keep their compiler cache (ccache) between
 Coverage job shows its cache hits and misses as a notice. Each job has a time limit of at most 120
 minutes and each package install one of 20 minutes, and apt and dnf retry failed downloads.
 
+Each test job and the Flatpak job also record their environment: the OS, the kernel, the core dump
+settings, the Clang version, and the versions of Mesa, GTK, libadwaita, weston, and Xvfb (the
+Flatpak job: its tools and the GNOME runtime and SDK). They appear in the job summary as a table
+and as one notice on the run page, so a change of the runner image or of a package shows without
+the job logs. Fedora has a second notice for the packages that only stage B installs.
+
 The Ubuntu job also checks the documentation. `tools/docs/check_links.py --repo .` fails on a
 relative link or image in `README.md`, `CONTRIBUTING.md`, or `docs/` whose file does not exist or
 whose `#fragment` names no place in it: no heading anchor of a Markdown file, and no line of
