@@ -1220,12 +1220,13 @@ class Pins(Workflow):
 
 
 class Actionlint(Workflow):
-    """The ubuntu job runs a pinned actionlint release on the workflow after checking its
+    """The ubuntu job runs a pinned actionlint release on every workflow file after checking its
     SHA-256, in a step that no if can skip."""
 
     STEP = "Lint the workflow"
     CHECK = 'echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -\n'
-    RUN = '"$RUNNER_TEMP/actionlint" -color .github/workflows/build.yml\n'
+    # No file argument: actionlint lints every workflow file in .github/workflows/.
+    RUN = '"$RUNNER_TEMP/actionlint" -color\n'
     MISSING = 'job ubuntu: has no step that runs the workflow lint ("$RUNNER_TEMP/actionlint") '
 
     def test_the_committed_step(self):
@@ -1295,8 +1296,30 @@ class Actionlint(Workflow):
                           'the workflow lint ("$RUNNER_TEMP/actionlint"); such a step may have '
                           "no if")
 
+    def test_a_run_on_named_files(self):
+        cases = {"one file": ("-color .github/workflows/build.yml",
+                              ".github/workflows/build.yml"),
+                 "a glob": ("-color .github/workflows/*.yml", ".github/workflows/*.yml"),
+                 "standard input": ("-color - < .github/workflows/build.yml",
+                                    "- < .github/workflows/build.yml"),
+                 "after --": ("-color -- build.yml", "build.yml"),
+                 "after an option's value": ("-ignore SC2086 -format '{{json .}}' build.yml",
+                                             "build.yml"),
+                 "before an option": ("build.yml -color", "build.yml -color")}
+        for name, (arguments, shown) in cases.items():
+            with self.subTest(name):
+                def change(data, arguments=arguments):
+                    replace_in_run(data, "ubuntu", self.STEP, self.RUN,
+                                   f'"$RUNNER_TEMP/actionlint" {arguments}\n')
+                self.assert_fails(change, f'job ubuntu, step "{self.STEP}": runs actionlint on '
+                                  f"{shown} only; with options only, it lints every workflow "
+                                  "file in .github/workflows/")
+
     def test_other_forms_pass(self):
-        cases = ((self.RUN, '"${RUNNER_TEMP}/actionlint" .github/workflows/build.yml\n'),
+        cases = ((self.RUN, '"${RUNNER_TEMP}/actionlint"\n'),
+                 (self.RUN, '"$RUNNER_TEMP/actionlint" -color -oneline -ignore SC2086 '
+                  "-format '{{json .}}' -config-file=.github/actionlint.yaml\n"),
+                 (self.RUN, '"$RUNNER_TEMP/actionlint" -color --\n'),
                  (" -c -", " --check -"),
                  (" -c -", " --strict -c -"),
                  ('echo "$ACTIONLINT_SHA256 ', 'echo "${ACTIONLINT_SHA256} '))

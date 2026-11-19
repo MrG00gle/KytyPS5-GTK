@@ -279,8 +279,9 @@ jobs:
         run: python3 -B tools/checks/workflow_check.py --workflow .github/workflows/build.yml
 
       - name: Lint the workflow
-        # actionlint at a pinned release, checked against its SHA-256 before it runs. Needs no
-        # build output, so it also runs when a test failed.
+        # actionlint at a pinned release, checked against its SHA-256 before it runs. With no file
+        # argument it lints every workflow file in .github/workflows/. Needs no build output, so it
+        # also runs when a test failed.
         if: ${{ !cancelled() }}
         timeout-minutes: 5
         env:
@@ -292,7 +293,7 @@ jobs:
             "https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/$archive"
           echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" -color .github/workflows/build.yml
+          "$RUNNER_TEMP/actionlint" -color
 
       - name: Check the documentation links
         # Every relative link, image, and #fragment in README.md, CONTRIBUTING.md, and docs/.

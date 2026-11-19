@@ -107,12 +107,14 @@ both are accepted) and checks:
              --notes-file, which creates the release with that text.
              Every step that runs one of them follows the if rule of the results paragraph, and a
              step whose if could skip it does not count: the check names the step and its if.
-  lint       the ubuntu job lints the workflow with a pinned actionlint release: a step runs
+  lint       the ubuntu job lints the workflows with a pinned actionlint release: a step runs
              "$RUNNER_TEMP/actionlint" (also ${RUNNER_TEMP}) as a command, after a line that
              checks the download with sha256sum -c (or --check) and names $ACTIONLINT_SHA256;
              the step sees ACTIONLINT_VERSION set to a release version (1.7.12) and
              ACTIONLINT_SHA256 to 64 lowercase hex digits, and follows the if rule of the
-             results paragraph.
+             results paragraph. Each actionlint command has options only (read as Go's flag
+             package reads them, ACTIONLINT_VALUE_FLAGS), so that it lints every workflow file in
+             .github/workflows/: a file, a glob, or - (standard input) lints only those.
   flatpak    the flatpak job builds the bundle with the flatpak-builder action
              (flatpak/flatpak-github-actions/flatpak-builder, any version). Before the action, a
              step of the job copies /var/lib/flatpak to $RUNNER_TEMP/flatpak-system and then
@@ -217,6 +219,11 @@ CHECK_OPTION = re.compile(r"--check|-[A-Za-z]*c[A-Za-z]*")
 RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 ACTIONLINT = 'the workflow lint ("$RUNNER_TEMP/actionlint")'
+# actionlint's options that take a value (actionlint 1.7.12 -h); as with Go's flag package, the
+# value is the next word unless the option has =<value>, and the first word that is not an option
+# ends the options. With options only, actionlint lints every workflow file in .github/workflows/.
+ACTIONLINT_VALUE_FLAGS = {"config-file", "format", "ignore", "pyflakes", "shellcheck",
+                          "stdin-filename"}
 # Time limits (GitHub's default is 360 minutes for a job) and package download retries.
 MAX_JOB_MINUTES = 120
 MAX_INSTALL_MINUTES = 60
@@ -653,6 +660,22 @@ def verifies_actionlint(line):
                  and any(CHECK_OPTION.fullmatch(argument) for argument in arguments)
                  for word, arguments in commands(line))
     return checks and any(ACTIONLINT_HASH.search(word) for word in words(line))
+
+
+def actionlint_operands(arguments):
+    """The arguments of an actionlint command after its options (ACTIONLINT_VALUE_FLAGS): the
+    files that it lints instead of every workflow file in .github/workflows/, or - for its
+    standard input."""
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            return arguments[index + 1:]
+        if not word.startswith("-") or word == "-":
+            break
+        name = word.lstrip("-")
+        index += 2 if "=" not in name and name in ACTIONLINT_VALUE_FLAGS else 1
+    return arguments[index:]
 
 
 def is_result_check(step):
@@ -1104,6 +1127,13 @@ class Checker:
             if not checks or checks[0] > runs[0]:
                 self.report(where, "runs actionlint without checking the download first; a "
                             "line before the run needs sha256sum -c with $ACTIONLINT_SHA256")
+            for index in runs:
+                for word, arguments in commands(lines[index]):
+                    operands = actionlint_operands(arguments)
+                    if ACTIONLINT_COMMAND.fullmatch(word) and operands:
+                        self.report(where, f"runs actionlint on {' '.join(operands)} only; with "
+                                    "options only, it lints every workflow file in "
+                                    ".github/workflows/")
             env = self.environment(ACTIONLINT_JOB, step)
             version = env.get("ACTIONLINT_VERSION")
             if not RELEASE_VERSION.fullmatch(str(version)):

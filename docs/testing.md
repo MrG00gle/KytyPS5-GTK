@@ -218,8 +218,9 @@ another file (`#L10` or `#L10-L20`). It prints the file, line, and target of eac
 `tools/docs/check_help_options.py` runs the job's `kyty_emulator --help` and fails when it exits
 with an error, prints no option, or prints an option that the
 [running guide](running.md#emulator-options) does not name, and prints each missing option. The
-CTests `docs_links` and `docs_help_options` run the same checks locally. The job also lints the
-workflow with actionlint, from a pinned release that it checks against its SHA-256 before it runs.
+CTests `docs_links` and `docs_help_options` run the same checks locally. The job also lints every
+workflow file in `.github/workflows/` with actionlint, from a pinned release that it checks
+against its SHA-256 before it runs.
 
 The repository owner approved these exceptions, each for the listed tests only:
 
