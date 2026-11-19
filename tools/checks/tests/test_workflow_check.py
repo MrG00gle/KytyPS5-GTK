@@ -9,6 +9,8 @@ import contextlib
 import copy
 import io
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,10 +32,13 @@ try:
 except ImportError:
     raise ImportError(workflow_check.YAML_MISSING) from None
 
+# A commit SHA for the actions that tests add: every action must be pinned to one (class Pins).
+FAKE_SHA = "0123456789abcdef0123456789abcdef01234567"
+DEPENDABOT = ".github/dependabot.yml"
 # Built from pieces, so that this file names no Qt package or action.
 QT_UBUNTU = "q" "t6-base-dev"
 QT_FEDORA = "q" "t6-qtbase-devel"
-QT_ACTION = "jurplel/install-q" "t-action@v4"
+QT_ACTION = "jurplel/install-q" f"t-action@{FAKE_SHA}"
 QT_INSTALLER = "aqt" "install"
 RELEASE_IF = ("github.event_name == 'push' && github.ref == 'refs/heads/main' && "
               "github.repository == 'MrG00gle/KytyPS5-GTK'")
@@ -66,6 +71,11 @@ def move_step(data, job, key, before=None, after=None):
     steps.insert(target, step)
 
 
+# A uses: line with a value and, optionally, its comment.
+USES_LINE = re.compile(r"^(\s*(?:-\s+)?uses:\s+)(\S+)(\s+#.*)?$")
+PINNED = re.compile(r"\S+@[0-9a-f]{40}")
+
+
 class Workflow(unittest.TestCase):
     """The committed workflow, a temporary directory for mutated copies, and a runner."""
 
@@ -73,6 +83,12 @@ class Workflow(unittest.TestCase):
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text(encoding="utf-8")
         cls.data = yaml.safe_load(cls.text)
+        # uses: value -> its version comment in the committed workflow, which dump() puts back.
+        cls.comments = {}
+        for line in cls.text.splitlines():
+            match = USES_LINE.match(line)
+            if match and match.group(3):
+                cls.comments[match.group(2)] = match.group(3)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -88,9 +104,18 @@ class Workflow(unittest.TestCase):
             status = workflow_check.main(["--workflow", str(self.path)])
         return status, stdout.getvalue().splitlines(), stderr.getvalue()
 
-    @staticmethod
-    def dump(data):
-        return yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1 << 20)
+    @classmethod
+    def dump(cls, data):
+        """The data as YAML. yaml.safe_dump drops comments, so each action pinned to a SHA gets
+        its committed version comment back (# v1 for an action that a test added)."""
+        text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1 << 20)
+        lines = []
+        for line in text.splitlines():
+            match = USES_LINE.match(line)
+            if match and not match.group(3) and PINNED.fullmatch(match.group(2)):
+                line += cls.comments.get(match.group(2), " # v1")
+            lines.append(line)
+        return "\n".join(lines) + "\n"
 
     def mutated(self, change):
         data = copy.deepcopy(self.data)
@@ -292,19 +317,19 @@ class QtPackages(Workflow):
         return change
 
     def test_qt_package_in_an_action_input(self):
-        change = self.add_action("ubuntu", "some/apt-action@v1",
+        change = self.add_action("ubuntu", f"some/apt-action@{FAKE_SHA}",
                                  {"packages": f"cmake {QT_UBUNTU} ninja-build"})
         self.assert_fails(change, 'job ubuntu, step "Install the build tools"',
                           f"passes {QT_UBUNTU} in with:, a Qt package (Requirement 16.3)")
 
     def test_qt_package_in_a_multi_line_action_input(self):
-        change = self.add_action("fedora", "some/dnf-action@v1",
+        change = self.add_action("fedora", f"some/dnf-action@{FAKE_SHA}",
                                  {"packages": f"cmake\nninja-build\n{QT_FEDORA}\n"})
         self.assert_fails(change, 'job fedora, step "Install the build tools"',
                           f"passes {QT_FEDORA} in with:, a Qt package (Requirement 16.3)")
 
     def test_qt_installer_in_an_action_input(self):
-        change = self.add_action("coverage", "some/pip-action@v1",
+        change = self.add_action("coverage", f"some/pip-action@{FAKE_SHA}",
                                  {"packages": f"{QT_INSTALLER}==3.1.21"})
         self.assert_fails(change, 'job coverage, step "Install the build tools"',
                           f"passes a Qt build or installation word in with: {QT_INSTALLER}==3.1.21")
@@ -802,7 +827,7 @@ class Ccache(Workflow):
     def test_a_restore_only_action(self):
         # actions/cache/restore never saves, so the next run would start cold again.
         def change(data):
-            find_step(data, "coverage", self.CACHE)["uses"] = "actions/cache/restore@v6"
+            find_step(data, "coverage", self.CACHE)["uses"] = f"actions/cache/restore@{FAKE_SHA}"
         self.assert_fails(change, "job coverage: has no step that restores and saves the "
                           "compiler cache")
 
@@ -975,6 +1000,182 @@ class Limits(Workflow):
         self.assert_passes(self.mutated(change))
 
 
+class Pins(Workflow):
+    """Every action is pinned to a full commit SHA with its version as a comment, no checkout
+    keeps the token, and Dependabot updates the actions with pull requests to dev."""
+
+    CHECKOUTS = ("metadata", "ubuntu", "fedora", "coverage", "flatpak", "release")
+    DEPENDABOT_TEXT = (REPO / DEPENDABOT).read_text(encoding="utf-8")
+
+    def committed_line(self, action):
+        """The first uses: line of the committed workflow for the action, and its value."""
+        for line in self.text.splitlines():
+            match = USES_LINE.match(line)
+            if match and match.group(2).split("@", 1)[0] == action:
+                return line, match
+        raise AssertionError(f"no uses: line for {action}")
+
+    def test_the_committed_actions_are_pinned_with_versions(self):
+        uses = [step["uses"] for job in self.data["jobs"].values() for step in job["steps"]
+                if "uses" in step]
+        self.assertTrue(uses)
+        for value in uses:
+            with self.subTest(uses=value):
+                self.assertRegex(value, r"^[^@\s]+@[0-9a-f]{40}$")
+                self.assertRegex(self.comments.get(value, ""), r"^ # v[0-9]+(\.[0-9]+)*$")
+
+    def test_the_committed_checkouts_keep_no_token(self):
+        for job in self.CHECKOUTS:
+            with self.subTest(job=job):
+                step = find_step(self.data, job, "Check out")
+                self.assertTrue(step["uses"].startswith("actions/checkout@"), step)
+                self.assertIs(step["with"]["persist-credentials"], False)
+
+    def test_a_tag_branch_or_short_sha(self):
+        for job, key, value in (("metadata", "Check out", "actions/checkout@v7"),
+                                ("ubuntu", "Restore and save ccache", "actions/cache@main"),
+                                ("fedora", "Upload the test results",
+                                 "actions/upload-artifact@cf430e0"),
+                                ("release", "Download the bundle",
+                                 "actions/download-artifact@" + FAKE_SHA.upper()),
+                                ("flatpak", "build", "flatpak/flatpak-github-actions/"
+                                 "flatpak-builder@" + FAKE_SHA + "0"),
+                                ("ubuntu", "Check out", "actions/checkout"),
+                                ("coverage", "Check out", "docker://alpine:3.20")):
+            with self.subTest(uses=value):
+                def change(data, job=job, key=key, value=value):
+                    find_step(data, job, key)["uses"] = value
+                self.assert_fails(change, f'job {job}, step "', f"uses {value}, which is pinned "
+                                  "by tag or branch, not by a full commit SHA")
+
+    def test_a_pin_without_its_version_comment(self):
+        line, match = self.committed_line("actions/checkout")
+        for comment in ("", " # latest", " # 7.0.1", " # v7.0.1 and more", " # tag=v7.0.1"):
+            with self.subTest(comment=comment):
+                text = self.text.replace(line, match.group(1) + match.group(2) + comment, 1)
+                status, lines, stderr = self.run_check(text)
+                self.assertEqual(status, 1, (lines, stderr))
+                self.assertEqual(lines, ['job metadata, step "Check out": uses '
+                                         f"{match.group(2)}, which has no version comment "
+                                         "(# v<version> after the SHA on the uses: line)",
+                                         "FAILED: workflow_structure: 1 problem(s)"])
+
+    def test_a_comment_on_another_line_does_not_count(self):
+        line, match = self.committed_line("actions/cache")
+        indent = match.group(1)[:len(match.group(1)) - len(match.group(1).lstrip())]
+        text = self.text.replace(line, f"{indent}{match.group(3).strip()}\n"
+                                 f"{match.group(1)}{match.group(2)}", 1)
+        status, lines, _ = self.run_check(text)
+        self.assertEqual(status, 1, lines)
+        self.assertIn('job ubuntu, step "Restore and save ccache": uses '
+                      f"{match.group(2)}, which has no version comment", lines[0])
+
+    def test_other_comment_and_quoting_forms_pass(self):
+        line, match = self.committed_line("actions/upload-artifact")
+        version = match.group(3).split("#", 1)[1].strip()
+        for new in (f'{match.group(1)}"{match.group(2)}" # {version}',
+                    f"{match.group(1)}'{match.group(2)}'  #{version}",
+                    f"{match.group(1)}{match.group(2)} # v7"):
+            with self.subTest(new=new):
+                self.assert_passes(self.text.replace(line, new, 1))
+
+    def test_a_local_action_needs_no_pin(self):
+        def change(data):
+            data["jobs"]["metadata"]["steps"].append({"name": "Local action",
+                                                      "uses": "./.github/actions/local"})
+        self.assert_passes(self.mutated(change))
+
+    def test_a_checkout_that_keeps_the_token(self):
+        for job in self.CHECKOUTS:
+            for value in (None, True, "true"):
+                with self.subTest(job=job, value=value):
+                    def change(data, job=job, value=value):
+                        options = find_step(data, job, "Check out")["with"]
+                        if value is None:
+                            options.pop("persist-credentials")
+                        else:
+                            options["persist-credentials"] = value
+                    self.assert_fails(change, f'job {job}, step "Check out": checks out with '
+                                      f"persist-credentials: {value!r}, not false; the token "
+                                      "would stay in .git/config")
+
+    def test_persist_credentials_as_a_string_passes(self):
+        def change(data):
+            find_step(data, "flatpak", "Check out")["with"]["persist-credentials"] = "false"
+        self.assert_passes(self.mutated(change))
+
+    def run_with_dependabot(self, text):
+        """The committed workflow checked against a --repo checkout with the committed Ubuntu
+        list and text as its .github/dependabot.yml (none when text is None)."""
+        repo = Path(tempfile.mkdtemp(dir=self.temp.name))
+        (repo / "tools" / "checks").mkdir(parents=True)
+        (repo / ".github").mkdir()
+        shutil.copyfile(REPO / UBUNTU_LIST, repo / UBUNTU_LIST)
+        if text is not None:
+            (repo / DEPENDABOT).write_text(text, encoding="utf-8")
+        self.path.write_text(self.text, encoding="utf-8")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = workflow_check.main(["--workflow", str(self.path), "--repo", str(repo)])
+        return status, stdout.getvalue().splitlines()
+
+    def test_the_committed_dependabot_configuration(self):
+        config = yaml.safe_load(self.DEPENDABOT_TEXT)
+        self.assertEqual(config["version"], 2)
+        self.assertEqual(config["updates"], [{
+            "package-ecosystem": "github-actions", "directory": "/", "target-branch": "dev",
+            "schedule": {"interval": "weekly"}, "groups": {"github-actions": {"patterns": ["*"]}},
+            "commit-message": {"prefix": "ci"}}])
+        status, lines = self.run_with_dependabot(self.DEPENDABOT_TEXT)
+        self.assertEqual(status, 0, lines)
+
+    def assert_dependabot_fails(self, text, *fragments):
+        status, lines = self.run_with_dependabot(text)
+        self.assertEqual(status, 1, lines)
+        self.assertEqual(lines[-1], "FAILED: workflow_structure: 1 problem(s)", lines)
+        self.assertTrue(lines[0].startswith("dependabot: "), lines)
+        for fragment in fragments:
+            self.assertIn(fragment, lines[0])
+
+    def test_a_missing_or_broken_dependabot_file(self):
+        for text, fragment in ((None, "cannot read .github/dependabot.yml"),
+                               ("updates: [unclosed\n", "cannot read .github/dependabot.yml"),
+                               ("- version: 2\n", "has version: None, not 2"),
+                               (self.DEPENDABOT_TEXT.replace("version: 2", "version: 1"),
+                                "has version: 1, not 2")):
+            with self.subTest(text=text):
+                self.assert_dependabot_fails(text, fragment)
+
+    def test_no_github_actions_update(self):
+        text = self.DEPENDABOT_TEXT.replace("package-ecosystem: github-actions",
+                                            "package-ecosystem: pip")
+        self.assert_dependabot_fails(text, "has no update with package-ecosystem: "
+                                     "github-actions")
+
+    def test_a_github_actions_update_for_another_branch_or_without_one(self):
+        cases = {"main": ("target-branch: dev", "target-branch: main",
+                          "target-branch: 'main', not dev (without it, the pull requests go to "
+                          "the default branch, main)"),
+                 "none": ("    target-branch: dev\n", "", "target-branch: None, not dev"),
+                 "directory": ("directory: /\n", "directory: /.github\n",
+                               "directory: '/.github', not /"),
+                 "schedule": ("      interval: weekly\n", "      day: monday\n",
+                              "schedule.interval: None")}
+        for name, (old, new, fragment) in cases.items():
+            with self.subTest(name):
+                self.assertIn(old, self.DEPENDABOT_TEXT)
+                self.assert_dependabot_fails(self.DEPENDABOT_TEXT.replace(old, new, 1),
+                                             "the github-actions update has ", fragment)
+
+    def test_one_valid_github_actions_update_is_enough(self):
+        text = self.DEPENDABOT_TEXT + ("  - package-ecosystem: github-actions\n"
+                                       "    directory: /\n"
+                                       "    schedule:\n"
+                                       "      interval: monthly\n")
+        status, lines = self.run_with_dependabot(text)
+        self.assertEqual(status, 0, lines)
+
+
 class Release(Workflow):
     def test_release_if_without_the_repository_condition(self):
         def change(data):
@@ -1031,6 +1232,9 @@ class UbuntuList(Workflow):
     def run_with_list(self, text):
         repo = Path(self.temp.name) / "repo"
         (repo / "tools" / "checks").mkdir(parents=True, exist_ok=True)
+        # The --repo checkout also holds the committed Dependabot configuration (class Pins).
+        (repo / ".github").mkdir(exist_ok=True)
+        shutil.copyfile(REPO / DEPENDABOT, repo / DEPENDABOT)
         if text is not None:
             (repo / UBUNTU_LIST).write_text(text, encoding="utf-8")
         self.path.write_text(self.text, encoding="utf-8")
@@ -1225,13 +1429,13 @@ class FlatpakInstallation(Workflow):
     def test_the_action_at_another_path(self):
         def change(data):
             find_step(data, "flatpak", "build")["uses"] = (
-                "someone/flatpak-github-actions/flatpak-builder@v6")
+                f"someone/flatpak-github-actions/flatpak-builder@{FAKE_SHA}")
         self.assert_fails(change, self.NO_ACTION)
 
     def test_another_version_of_the_action_passes(self):
         def change(data):
             find_step(data, "flatpak", "build")["uses"] = (
-                "flatpak/flatpak-github-actions/flatpak-builder@v7")
+                f"flatpak/flatpak-github-actions/flatpak-builder@{FAKE_SHA}")
         self.assert_passes(self.mutated(change))
 
 

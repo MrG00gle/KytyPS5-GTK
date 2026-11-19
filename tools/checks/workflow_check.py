@@ -75,6 +75,16 @@ both are accepted) and checks:
              jobs sets CMAKE_C_COMPILER_LAUNCHER or CMAKE_CXX_COMPILER_LAUNCHER to an empty value
              (-DNAME=, -DNAME="", -DNAME:TYPE=, or -D NAME=), which turns ccache off in the
              top-level CMakeLists.txt.
+  actions    every action that a step uses, other than a local ./ path, is pinned to a full commit
+             SHA (<action>@<40 lowercase hex>; a tag, a branch, a short SHA, or a docker://
+             image does not count), and its uses: line ends with the version as a comment
+             (# v7.0.1), which Dependabot keeps up to date; the comment is read from the
+             workflow's text, because yaml.safe_load drops comments. Every actions/checkout step
+             has with: persist-credentials: false, so the token does not stay in .git/config,
+             which the Flatpak manifest's dir source copies. The checkout's
+             .github/dependabot.yml (--repo) has version: 2 and an update with
+             package-ecosystem: github-actions, directory: /, target-branch: dev (otherwise its
+             pull requests go to the default branch, main), and a schedule.interval.
   uploads    every actions/upload-artifact step has if: always() and if-no-files-found: error (so
              that a path that matches nothing fails the step), and the flatpak-builder action
              does not upload on its own (upload-artifact: false).
@@ -108,7 +118,8 @@ both are accepted) and checks:
 Usage:
     workflow_check.py --workflow FILE [--repo DIR]
 
---repo is the checkout whose list files are read (default: the one that holds this script).
+--repo is the checkout whose list files and .github/dependabot.yml are read (default: the one
+that holds this script).
 
 It prints one line per problem, naming the job and the step, then "FAILED: workflow_structure:
 <n> problem(s)", or one "PASS: workflow_structure: ..." line.
@@ -177,6 +188,13 @@ RELEASE_JOB = "release"
 RELEASE_CONDITIONS = {"github.event_name == 'push'", "github.ref == 'refs/heads/main'",
                       "github.repository == 'MrG00gle/KytyPS5-GTK'"}
 TIMING_RERUN = "timing-rerun"
+# Actions are pinned to a full commit SHA, with the version as a comment that Dependabot updates
+# (.github/dependabot.yml, which sends its pull requests to dev); checkouts keep no token.
+PINNED_ACTION = re.compile(r"[^@\s]+@[0-9a-f]{40}")
+VERSION_COMMENT = re.compile(r"\s+#\s*v[0-9]+(?:\.[0-9]+)*\s*")
+CHECKOUT_ACTION = "actions/checkout"
+DEPENDABOT = ".github/dependabot.yml"
+DEPENDABOT_BRANCH = "dev"
 # Time limits (GitHub's default is 360 minutes for a job) and package download retries.
 MAX_JOB_MINUTES = 120
 MAX_INSTALL_MINUTES = 30
@@ -291,6 +309,7 @@ class InputError(Exception):
 
 
 def load_workflow(path):
+    """The workflow as yaml.safe_load reads it, and its text (for the comments it drops)."""
     try:
         import yaml
     except ImportError:
@@ -315,7 +334,40 @@ def load_workflow(path):
         steps = job.get("steps", [])
         if not isinstance(steps, list) or not all(isinstance(step, dict) for step in steps):
             raise InputError(f"{path}: the steps of job {job_id} are not a list of mappings")
-    return workflow
+    return workflow, text
+
+
+def node_value(node, key):
+    """The value node of key in a YAML mapping node (the last one, as yaml.safe_load keeps), or
+    None."""
+    import yaml
+    if not isinstance(node, yaml.MappingNode):
+        return None
+    values = [value for name, value in node.value
+              if isinstance(name, yaml.ScalarNode) and name.value == key]
+    return values[-1] if values else None
+
+
+def uses_comments(text):
+    """(job id, step number from 1) -> what follows the value of the step's uses: on its line,
+    where the version comment of a pinned action is. yaml.safe_load drops comments, so this reads
+    the line of each uses: value from the composed node tree of the workflow's text."""
+    import yaml
+    try:
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        return {}
+    lines = text.splitlines()
+    found = {}
+    jobs = node_value(root, "jobs")
+    for name, job in jobs.value if isinstance(jobs, yaml.MappingNode) else []:
+        steps = node_value(job, "steps")
+        for number, step in enumerate(steps.value if isinstance(steps, yaml.SequenceNode)
+                                      else [], 1):
+            uses = node_value(step, "uses")
+            if isinstance(uses, yaml.ScalarNode) and uses.end_mark.line < len(lines):
+                found[(name.value, number)] = lines[uses.end_mark.line][uses.end_mark.column:]
+    return found
 
 
 def expression(value):
@@ -577,9 +629,11 @@ def names_retry_candidates(step):
 
 
 class Checker:
-    def __init__(self, workflow, repo=DEFAULT_REPO):
+    def __init__(self, workflow, repo=DEFAULT_REPO, text=""):
         self.workflow = workflow
         self.repo = repo
+        # (job id, step number) -> the rest of the line of the step's uses: (uses_comments).
+        self.comments = uses_comments(text)
         self.jobs = workflow["jobs"]
         self.problems = []
         self.ctest_runs = 0
@@ -653,6 +707,7 @@ class Checker:
         if FLATPAK_JOB in self.jobs:
             self.check_flatpak_installation()
         self.check_ubuntu_list()
+        self.check_dependabot()
         return self.problems
 
     # ---- triggers
@@ -760,6 +815,7 @@ class Checker:
             uses = step.get("uses")
             if isinstance(uses, str):
                 self.check_action(where, step, uses)
+                self.check_pin(job_id, number, where, step, uses)
             script = step.get("run")
             if isinstance(script, str):
                 self.check_qt(where, script, self.environment(job_id, step))
@@ -790,6 +846,23 @@ class Checker:
             if str(with_.get("upload-artifact")).lower() != "false":
                 self.report(where, "lets the flatpak-builder action upload the bundle; set "
                             "upload-artifact: false and upload it with if: always()")
+
+    def check_pin(self, job_id, number, where, step, uses):
+        """A full commit SHA with its version as a comment, and no token kept by a checkout."""
+        if not uses.startswith("./"):
+            if not PINNED_ACTION.fullmatch(uses):
+                self.report(where, f"uses {uses}, which is pinned by tag or branch, not by a full "
+                            "commit SHA (<action>@<40 lowercase hex> # v<version>)")
+            elif not VERSION_COMMENT.fullmatch(self.comments.get((job_id, number), "")):
+                self.report(where, f"uses {uses}, which has no version comment (# v<version> "
+                            "after the SHA on the uses: line)")
+        if uses.split("@", 1)[0] == CHECKOUT_ACTION:
+            with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
+            value = with_.get("persist-credentials")
+            if value is not False and value != "false":
+                self.report(where, f"checks out with persist-credentials: {value!r}, not false; "
+                            "the token would stay in .git/config, which the Flatpak manifest's "
+                            "dir source copies into the build")
 
     def check_qt(self, where, script, env):
         for line in logical_lines(script):
@@ -1010,6 +1083,45 @@ class Checker:
             self.report("lists", f"{UBUNTU_LIST} lists {listed}, not exactly the approved entry "
                         "for kernel_file_system with its text")
 
+    # ---- Dependabot's configuration for the pinned actions
+    def check_dependabot(self):
+        import yaml
+        path = os.path.join(self.repo, DEPENDABOT)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                config = yaml.safe_load(handle)
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+            self.report("dependabot", f"cannot read {DEPENDABOT}: {error}")
+            return
+        if not isinstance(config, dict) or config.get("version") != 2:
+            version = config.get("version") if isinstance(config, dict) else None
+            self.report("dependabot", f"{DEPENDABOT} has version: {version!r}, not 2")
+            return
+        updates = config.get("updates") if isinstance(config.get("updates"), list) else []
+        actions = [update for update in updates if isinstance(update, dict)
+                   and update.get("package-ecosystem") == "github-actions"]
+        if not actions:
+            self.report("dependabot", f"{DEPENDABOT} has no update with package-ecosystem: "
+                        "github-actions, so nothing updates the pinned actions")
+        problems = []
+        for update in actions:
+            schedule = update.get("schedule")
+            interval = schedule.get("interval") if isinstance(schedule, dict) else None
+            wrong = []
+            if update.get("directory") != "/":
+                wrong.append(f"directory: {update.get('directory')!r}, not /")
+            if update.get("target-branch") != DEPENDABOT_BRANCH:
+                wrong.append(f"target-branch: {update.get('target-branch')!r}, not "
+                             f"{DEPENDABOT_BRANCH} (without it, the pull requests go to the "
+                             "default branch, main)")
+            if not isinstance(interval, str) or not interval.strip():
+                wrong.append(f"schedule.interval: {interval!r}")
+            if not wrong:
+                return
+            problems.append(f"{DEPENDABOT}: the github-actions update has {'; '.join(wrong)}")
+        for problem in problems:
+            self.report("dependabot", problem)
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
@@ -1017,17 +1129,18 @@ def main(argv=None):
         "there is one.")
     parser.add_argument("--workflow", required=True, help="the workflow file (build.yml)")
     parser.add_argument("--repo", default=DEFAULT_REPO,
-                        help="the checkout whose list files are read (default: %(default)s)")
+                        help="the checkout whose list files and .github/dependabot.yml are read "
+                        "(default: %(default)s)")
     args = parser.parse_args(argv)
     try:
-        workflow = load_workflow(args.workflow)
+        workflow, text = load_workflow(args.workflow)
     except MissingYaml:
         print(YAML_MISSING, file=sys.stderr)
         return 1
     except InputError as error:
         print(f"error: {NAME}: {error}", file=sys.stderr)
         return 2
-    checker = Checker(workflow, args.repo)
+    checker = Checker(workflow, args.repo, text)
     problems = checker.run()
     for problem in problems:
         print(problem)

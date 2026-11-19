@@ -1,0 +1,15 @@
+# Weekly updates of the actions in .github/workflows, pinned there by commit SHA with the version
+# as a comment. One grouped pull request goes to dev, never to main, which only moves by a
+# fast-forward to a tested dev commit. tools/checks/workflow_check.py checks this file.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci

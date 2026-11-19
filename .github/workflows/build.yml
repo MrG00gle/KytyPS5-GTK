@@ -11,6 +11,9 @@
 # tools/checks/junit_check.py enforces both; every other test must pass in the full run.
 # The Flatpak bundle of a non-official run lists its own tag as a development release, and only
 # runs on main lint with packaging/flatpak/lint-exceptions.json unchanged (docs/packaging.md).
+# Every action is pinned to a full commit SHA with its version as a comment; Dependabot
+# (.github/dependabot.yml) proposes updates. No checkout keeps the token in .git/config
+# (persist-credentials: false): no step needs it, and the Flatpak manifest copies the checkout.
 name: Build and release
 
 on:
@@ -66,7 +69,9 @@ jobs:
       releases: ${{ steps.releases.outputs.json }}
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Compute the tag
         id: tag
@@ -114,11 +119,12 @@ jobs:
       ARCHIVE: _Build/${{ needs.metadata.outputs.tag }}-Linux-x86_64.tar.gz
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # preservation_copyright follows renames since the Main_Branch commit.
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
 
       - name: Install packages
         timeout-minutes: 20
@@ -169,7 +175,7 @@ jobs:
         run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
 
       - name: Restore and save ccache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _Build/ccache
           key: ccache-ubuntu-${{ github.sha }}
@@ -299,7 +305,7 @@ jobs:
 
       - name: Upload the release archive
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-archive
           path: ${{ env.ARCHIVE }}
@@ -307,7 +313,7 @@ jobs:
 
       - name: Upload the test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ubuntu-ctest
           path: |
@@ -351,10 +357,11 @@ jobs:
         run: dnf -y install --setopt=install_weak_deps=False --setopt=retries=10 git-core python3
 
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
 
       - name: Check that the image is a GA Fedora release
         run: |
@@ -418,7 +425,7 @@ jobs:
         run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
 
       - name: Restore and save ccache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _Build/ccache
           key: ccache-fedora-${{ github.sha }}
@@ -550,7 +557,7 @@ jobs:
 
       - name: Upload the test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fedora-ctest
           path: |
@@ -573,11 +580,12 @@ jobs:
       BUILD_DIR: _Build/coverage
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # check.py diffs a pull request against its base branch.
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
 
       - name: Install packages
         timeout-minutes: 20
@@ -625,7 +633,7 @@ jobs:
         run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
 
       - name: Restore and save ccache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _Build/ccache
           key: ccache-coverage-${{ github.sha }}
@@ -673,7 +681,7 @@ jobs:
 
       - name: Upload the coverage report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-report
           path: |
@@ -751,9 +759,10 @@ jobs:
       LINT_EXCEPTIONS: ${{ github.ref == 'refs/heads/main' && 'packaging/flatpak/lint-exceptions.json' || '/var/tmp/kyty-lint-exceptions.json' }}
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Add the pre-merge lint exception
         id: lint-exceptions-not-main
@@ -839,7 +848,7 @@ jobs:
 
       - name: Build the bundle
         id: build
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
         with:
           manifest-path: ${{ env.MANIFEST }}
           bundle: ${{ env.BUNDLE }}
@@ -850,7 +859,7 @@ jobs:
 
       - name: Upload the bundle
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: flatpak-bundle
           path: ${{ env.BUNDLE }}
@@ -903,16 +912,18 @@ jobs:
       TAG: ${{ needs.metadata.outputs.tag }}
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Download the release archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-archive
           path: dist
 
       - name: Download the bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: flatpak-bundle
           path: dist

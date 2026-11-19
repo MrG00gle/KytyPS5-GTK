@@ -196,6 +196,13 @@ The Ubuntu, Fedora, and Coverage jobs keep their compiler cache (ccache) between
 Coverage job shows its cache hits and misses as a notice. Each job has a time limit of at most 120
 minutes and each package install one of 20 minutes, and apt and dnf retry failed downloads.
 
+Every action in the workflow is pinned to a full commit SHA, with its version as a comment
+(`actions/checkout@<sha> # v7.0.1`). Dependabot (`.github/dependabot.yml`) checks for newer
+versions weekly and proposes them as one pull request to `dev`. It reads that file from the default
+branch, so it starts once the file is on `main`. Every checkout sets `persist-credentials: false`,
+so the job's token does not stay in `.git/config`, which the Flatpak manifest's `dir` source copies
+into the build.
+
 Each test job and the Flatpak job also record their environment: the OS, the kernel, the core dump
 settings, the Clang version, and the versions of Mesa, GTK, libadwaita, weston, and Xvfb (the
 Flatpak job: its tools and the GNOME runtime and SDK). They appear in the job summary as a table
