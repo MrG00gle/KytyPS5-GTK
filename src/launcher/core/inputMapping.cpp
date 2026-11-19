@@ -4,11 +4,11 @@
 #include "launcher/core/text.h"
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <locale.h>
 #include <optional>
-#include <system_error>
+#include <stdlib.h>
 #include <utility>
 
 namespace kyty::core {
@@ -23,8 +23,8 @@ constexpr std::string_view kTouchParticleSkin = "TouchParticleSkin=";
 constexpr std::string_view kTouchCursorImage  = "TouchCursorImage=";
 constexpr std::string_view kTouchCursorOff    = "TouchCursorImage=Off";
 
-constexpr double kMinMouseSensitivity = 0.1;
-constexpr double kMaxMouseSensitivity = 5.0;
+constexpr float kMinMouseSensitivity = 0.1f;
+constexpr float kMaxMouseSensitivity = 5.0f;
 
 using S = InputSection;
 
@@ -121,10 +121,20 @@ bool IsPadSource(std::string_view id) {
 	                   [id](const auto& source) { return source.id == id; });
 }
 
-// Qt's AssignBinding: control gets value, and no other control keeps the same value.
-void Bind(Bindings& bindings, std::string_view control, std::string_view value) {
+// The Emulator's Conflicts for keyboard bindings (hostInput.cpp): the same mouse button name
+// (exact, as its MouseButtonFromName), or two names of one key after its NormalizeKey. Names of
+// no key never conflict.
+bool SameKeyboardInput(std::string_view a, std::string_view b) {
+	return IsMouseButtonName(a) || IsMouseButtonName(b) ? a == b : IsSameEmulatorKey(a, b);
+}
+
+// Qt's AssignBinding: control gets value, and no other control keeps a value for which same()
+// is true: SameKeyboardInput on the keyboard; EqualsIgnoreCase on the gamepad, where every value
+// is an exact pad source id already.
+void Bind(Bindings& bindings, std::string_view control, std::string_view value,
+          bool (*same)(std::string_view, std::string_view)) {
 	for (auto it = bindings.begin(); it != bindings.end();) {
-		if (it->first != control && EqualsIgnoreCase(it->second, value)) {
+		if (it->first != control && same(it->second, value)) {
 			it = bindings.erase(it);
 		} else {
 			++it;
@@ -153,30 +163,26 @@ Bindings PadDefaults() {
 	return bindings;
 }
 
-// The Emulator's std::strtof(...) of a decimal number (leading whitespace and a sign allowed, the
-// longest number prefix used, none giving 0), then clamp(isfinite ? value : 1.0, 0.1, 5.0); in
-// tenths, rounded.
+// The C locale, created once; null when newlocale fails (it can only run out of memory).
+locale_t CLocale() {
+	static const locale_t locale = newlocale(LC_ALL_MASK, "C", locale_t {});
+	return locale;
+}
+
+// What the Emulator reads (hostInput.cpp): std::strtof of the text, so decimal or hexadecimal,
+// in the C locale, because the Emulator never calls setlocale while the launcher does; then
+// clamp(isfinite ? value : 1.0, 0.1, 5.0) in float. In tenths, rounded. 1.0 without a C locale.
 int ParseMouseSensitivity(std::string_view text) {
-	while (!text.empty() &&
-	       (text.front() == ' ' || (text.front() >= '\t' && text.front() <= '\r'))) {
-		text.remove_prefix(1);
+	const locale_t locale = CLocale();
+	if (locale == locale_t {}) {
+		return kDefaultMouseSensitivityTenths;
 	}
-	if (!text.empty() && text.front() == '+') {
-		text.remove_prefix(1);
-	}
-	double     value  = 0.0;
-	const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-	if (parsed.ec == std::errc::result_out_of_range) {
-		value = 1.0; // the strtof result is infinite (or a denormal, rare enough to ignore)
-	} else if (parsed.ec != std::errc()) {
-		value = 0.0;
-	}
-	if (!std::isfinite(value)) {
-		value = 1.0;
-	}
-	value = std::clamp(value, kMinMouseSensitivity, kMaxMouseSensitivity);
-	return std::clamp(static_cast<int>(std::lround(value * 10.0)), kMinMouseSensitivityTenths,
-	                  kMaxMouseSensitivityTenths);
+	const std::string value_text(text);
+	const float       parsed = strtof_l(value_text.c_str(), nullptr, locale);
+	const float value = std::clamp(std::isfinite(parsed) ? parsed : 1.0f, kMinMouseSensitivity,
+	                               kMaxMouseSensitivity);
+	return std::clamp(static_cast<int>(std::lround(static_cast<double>(value) * 10.0)),
+	                  kMinMouseSensitivityTenths, kMaxMouseSensitivityTenths);
 }
 
 std::optional<TouchParticleSkin> FindSkin(std::string_view key) {
@@ -268,7 +274,7 @@ InputMappingModel ParseMapping(std::span<const std::string> entries) {
 			                            : nullptr;
 			if (control != nullptr && control->pad_mappable &&
 			    IsPadSource(body.substr(separator + 1))) {
-				Bind(model.pad, control->id, body.substr(separator + 1));
+				Bind(model.pad, control->id, body.substr(separator + 1), EqualsIgnoreCase);
 				model.pad_custom = true;
 			} else {
 				model.unknown.push_back(text);
@@ -279,7 +285,7 @@ InputMappingModel ParseMapping(std::span<const std::string> entries) {
 			                            ? FindInputControl(entry.substr(0, separator))
 			                            : nullptr;
 			if (control != nullptr && separator + 1 < entry.size()) {
-				Bind(model.keyboard, control->id, entry.substr(separator + 1));
+				Bind(model.keyboard, control->id, entry.substr(separator + 1), SameKeyboardInput);
 				model.keyboard_custom = true;
 			} else {
 				model.unknown.push_back(text);
@@ -347,7 +353,7 @@ bool Assign(InputMappingModel& model, InputDevice device, std::string_view contr
 		if (!found->pad_mappable || !IsPadSource(input)) {
 			return false;
 		}
-		Bind(model.pad, found->id, input);
+		Bind(model.pad, found->id, input, EqualsIgnoreCase);
 		model.pad_custom = true;
 		return true;
 	}
@@ -355,7 +361,7 @@ bool Assign(InputMappingModel& model, InputDevice device, std::string_view contr
 	    !IsValidMappingEntry(std::string(found->id) + "=" + std::string(input))) {
 		return false;
 	}
-	Bind(model.keyboard, found->id, input);
+	Bind(model.keyboard, found->id, input, SameKeyboardInput);
 	model.keyboard_custom = true;
 	return true;
 }

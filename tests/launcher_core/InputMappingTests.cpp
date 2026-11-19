@@ -13,12 +13,15 @@
 #include "support/noDisplay.h"
 #include "support/tempDir.h"
 
+#include <clocale>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -32,7 +35,8 @@ using kyty::core::MappingTarget;
 using kyty::core::ParseMapping;
 using kyty::core::SerializeMapping;
 using kyty::core::TouchParticleSkin;
-using Entries = std::vector<std::string>;
+using Entries  = std::vector<std::string>;
+using Bindings = std::map<std::string, std::string>;
 
 void Check(bool value, const std::string& message) {
 	if (!value) {
@@ -165,7 +169,7 @@ void TestParse() {
 	auto model = ParseMapping(Entries {"Cross=K", "Circle=k", "R2=Mouse:Right", "L2=Mouse:Right"});
 	Check(model.keyboard_custom && model.keyboard.size() == 2 &&
 	          model.keyboard.at("Circle") == "k" && model.keyboard.at("L2") == "Mouse:Right",
-	      "a later binding to the same input wins, ignoring letter case");
+	      "a later binding to the same key or mouse button wins (K and k name one key)");
 	Check(SerializeMapping(model) == Entries {"Circle=k", "L2=Mouse:Right"},
 	      "written in control order: " + Join(SerializeMapping(model)));
 	Check(model.pad.size() == 17 && !model.pad_custom, "the gamepad keeps its defaults");
@@ -173,13 +177,44 @@ void TestParse() {
 	model = ParseMapping(Entries {"Cross=J", "Cross=L"});
 	Check(model.keyboard.size() == 1 && model.keyboard.at("Cross") == "L", "the last binding wins");
 
-	// SDL_strcasecmp stops at a NUL byte: a value with one must match byte for byte.
+	// A value with a NUL byte names no key, so it does not take another control's key.
 	const std::string with_nul("Cross=a\0b", 9);
 	model = ParseMapping(Entries {"Circle=A", with_nul});
 	Check(model.keyboard.size() == 2 && model.keyboard.at("Circle") == "A" &&
 	          model.keyboard.at("Cross") == std::string("a\0b", 3),
 	      "a value with a NUL byte does not take another control's key");
 	CheckRoundTrip(model, "a value with a NUL byte");
+
+	// The Emulator's NormalizeKey (hostInput.cpp) reads the right-hand Shift, Ctrl, Alt, and GUI
+	// keys as the left-hand ones, so a right-hand and a left-hand name are one key: the later
+	// entry wins.
+	for (const auto& [right, left]:
+	     std::vector<std::pair<std::string, std::string>> {{"Right Shift", "Left Shift"},
+	                                                       {"Right Ctrl", "Left Ctrl"},
+	                                                       {"Right Alt", "Left Alt"},
+	                                                       {"Right GUI", "Left GUI"}}) {
+		model = ParseMapping(Entries {"Cross=" + right, "Circle=" + left});
+		Check(model.keyboard == Bindings {{"Circle", left}},
+		      "Circle=" + left + " takes Cross's " + right + ": " + Join(SerializeMapping(model)));
+		CheckRoundTrip(model, "Cross=" + right + ", Circle=" + left);
+		model = ParseMapping(Entries {"Circle=" + left, "Cross=" + right});
+		Check(model.keyboard == Bindings {{"Cross", right}},
+		      "Cross=" + right + " takes Circle's " + left + ": " + Join(SerializeMapping(model)));
+		CheckRoundTrip(model, "Circle=" + left + ", Cross=" + right);
+	}
+	// Names of different keys, and names of no key (the Emulator refuses those), never conflict.
+	for (const auto& [first, second]:
+	     std::vector<std::pair<std::string, std::string>> {{"Right Shift", "Right Ctrl"},
+	                                                       {"Keypad 1", "1"},
+	                                                       {"Keypad Enter", "Return"},
+	                                                       {"NotAKey", "NotAKey"},
+	                                                       {"NotAKey", "notakey"}}) {
+		model = ParseMapping(Entries {"Cross=" + first, "Circle=" + second});
+		Check(model.keyboard == Bindings {{"Cross", first}, {"Circle", second}},
+		      "Cross=" + first + " and Circle=" + second +
+		          " both stay: " + Join(SerializeMapping(model)));
+		CheckRoundTrip(model, "Cross=" + first + ", Circle=" + second);
+	}
 
 	model = ParseMapping(Entries {"Keyboard=Disabled"});
 	Check(model.keyboard_custom && model.keyboard.empty(), "Keyboard=Disabled");
@@ -236,7 +271,20 @@ void TestParse() {
 	                                                           {"5", 50},
 	                                                           {"1.04", 10},
 	                                                           {"\t4.96", 50},
-	                                                           {"2.25", 23}}) {
+	                                                           {"2.25", 23},
+	                                                           // std::strtof reads hexadecimal
+	                                                           // numbers and the float range.
+	                                                           {"0x2", 20},
+	                                                           {"0X1.8p1", 30},
+	                                                           {" +0x2.8", 25},
+	                                                           {"0x2,5", 20},
+	                                                           {"0x", 1},
+	                                                           {"-0x1", 1},
+	                                                           {"0x1p-200", 1},
+	                                                           {"1e39", 10},
+	                                                           {"1e-50", 1},
+	                                                           {"infinity", 10},
+	                                                           {"NAN(1)", 10}}) {
 		model = ParseMapping(Entries {"MouseSensitivity=" + text});
 		Check(model.mouse_sensitivity_tenths == tenths,
 		      "MouseSensitivity=" + text + " is " + std::to_string(model.mouse_sensitivity_tenths));
@@ -280,6 +328,34 @@ void TestParse() {
 	      "the sensitivity is clamped when written");
 }
 
+// The Emulator never calls setlocale, so it reads the sensitivity in the C locale, while the
+// launcher calls setlocale(LC_ALL, ""): with a decimal comma in LC_NUMERIC the editor must still
+// read "2.5" as 2.5 and "2,5" as 2.
+void TestSensitivityLocale() {
+	const char* locale = nullptr;
+	for (const char* name: {"de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "ru_RU.UTF-8"}) {
+		if (std::setlocale(LC_NUMERIC, name) != nullptr &&
+		    std::string_view(std::localeconv()->decimal_point) == ",") {
+			locale = name;
+			break;
+		}
+	}
+	if (locale == nullptr) {
+		std::setlocale(LC_NUMERIC, "C");
+		std::printf("InputMappingTests: no locale with a decimal comma; the locale check did not "
+		            "run\n");
+		return;
+	}
+	for (const auto& [text, tenths]:
+	     std::vector<std::pair<std::string, int>> {{"2.5", 25}, {"2,5", 20}, {"0x2.8", 25}}) {
+		const auto model = ParseMapping(Entries {"MouseSensitivity=" + text});
+		Check(model.mouse_sensitivity_tenths == tenths,
+		      std::string("in ") + locale + ", MouseSensitivity=" + text + " is " +
+		          std::to_string(model.mouse_sensitivity_tenths));
+	}
+	std::setlocale(LC_NUMERIC, "C");
+}
+
 void TestEdits() {
 	auto model = ParseMapping({});
 	Check(kyty::core::Assign(model, InputDevice::KeyboardMouse, "Circle", "j"), "assign j");
@@ -300,6 +376,20 @@ void TestEdits() {
 	      "a key name with a comma");
 	CheckRoundTrip(model, "keyboard edits");
 
+	// A left-hand modifier takes the right-hand one's binding and the other way round, as the
+	// Emulator reads both as one key.
+	auto modifiers = ParseMapping(Entries {"Cross=Right Shift"});
+	Check(kyty::core::Assign(modifiers, InputDevice::KeyboardMouse, "Circle", "Left Shift") &&
+	          modifiers.keyboard == Bindings {{"Circle", "Left Shift"}},
+	      "Left Shift takes Cross's Right Shift: " + Join(SerializeMapping(modifiers)));
+	CheckRoundTrip(modifiers, "Left Shift assigned");
+	modifiers = ParseMapping({});
+	Check(kyty::core::Assign(modifiers, InputDevice::KeyboardMouse, "Cross", "Right Ctrl") &&
+	          modifiers.keyboard.size() == 28 && modifiers.keyboard.at("Cross") == "Right Ctrl" &&
+	          !modifiers.keyboard.contains("R3"),
+	      "Right Ctrl takes R3's Left Ctrl: " + Join(SerializeMapping(modifiers)));
+	CheckRoundTrip(modifiers, "Right Ctrl assigned");
+
 	Check(kyty::core::Assign(model, InputDevice::Pad, "Cross", "East") && model.pad_custom &&
 	          model.pad.at("Cross") == "East" && !model.pad.contains("Circle"),
 	      "a pad source moves");
@@ -310,6 +400,13 @@ void TestEdits() {
 	Check(!kyty::core::Assign(model, InputDevice::Pad, "Cross", "Nothing"), "an unknown source");
 	Check(!kyty::core::Assign(model, InputDevice::Pad, "Cross", "south"), "sources are exact");
 	CheckRoundTrip(model, "pad edits");
+	// Only a model built by hand holds a pad value that is not a source id. SDL_strcasecmp stops
+	// at a NUL byte, so a value with one is compared byte for byte: "South" does not take it.
+	auto by_hand = ParseMapping({});
+	by_hand.pad  = {{"Circle", std::string("South\0x", 7)}};
+	Check(kyty::core::Assign(by_hand, InputDevice::Pad, "Cross", "South") &&
+	          by_hand.pad.size() == 2 && by_hand.pad.at("Circle") == std::string("South\0x", 7),
+	      "a pad value with a NUL byte is not the source it starts with");
 
 	Check(kyty::core::Unmap(model, InputDevice::KeyboardMouse, "Circle") &&
 	          !model.keyboard.contains("Circle"),
@@ -501,6 +598,7 @@ int main() {
 	TestTables();
 	TestDefaults();
 	TestParse();
+	TestSensitivityLocale();
 	TestEdits();
 	TestTargets();
 	TestStoreUntouchedUntilSave();

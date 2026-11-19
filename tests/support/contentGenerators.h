@@ -541,37 +541,27 @@ inline FakeResponse ResponseOf(std::string body, std::vector<std::size_t> chunk_
 
 // ---- Input mapping
 
-// Key names the Emulator accepts, of every kind the editor produces, plus mouse buttons.
+// Key names the Emulator accepts, of every kind the editor produces, plus mouse buttons, the
+// right-hand modifiers, and a lower-case letter, which the Emulator reads as keys of other names
+// ("Right Shift" as "Left Shift", "j" as "J").
 inline const std::vector<std::string>& KeyNamePool() {
-	static const std::vector<std::string> names = {"J",
-	                                               "K",
-	                                               "L",
-	                                               "A",
-	                                               "1",
-	                                               "0",
-	                                               "F6",
-	                                               "F12",
-	                                               "Space",
-	                                               "Return",
-	                                               "Backspace",
-	                                               "Tab",
-	                                               "Left Shift",
-	                                               "Left Ctrl",
-	                                               "Left Alt",
-	                                               "Left GUI",
-	                                               "Up",
-	                                               "PageDown",
-	                                               "Keypad 5",
-	                                               "Keypad ,",
-	                                               "Keypad Enter",
-	                                               ",",
-	                                               "=",
-	                                               "\"",
-	                                               "\xC3\x89",
-	                                               "Mouse:Left",
-	                                               "Mouse:Right",
-	                                               "Mouse:X1",
-	                                               "Mouse:Middle",
+	static const std::vector<std::string> names = {"J",          "j",
+	                                               "K",          "L",
+	                                               "A",          "1",
+	                                               "0",          "F6",
+	                                               "F12",        "Space",
+	                                               "Return",     "Backspace",
+	                                               "Tab",        "Left Shift",
+	                                               "Left Ctrl",  "Left Alt",
+	                                               "Left GUI",   "Right Shift",
+	                                               "Right Ctrl", "Right Alt",
+	                                               "Right GUI",  "Up",
+	                                               "PageDown",   "Keypad 5",
+	                                               "Keypad ,",   "Keypad Enter",
+	                                               ",",          "=",
+	                                               "\"",         "\xC3\x89",
+	                                               "Mouse:Left", "Mouse:Right",
+	                                               "Mouse:X1",   "Mouse:Middle",
 	                                               "Mouse:X2"};
 	return names;
 }
@@ -586,6 +576,7 @@ inline const std::vector<std::string>& MappingEntryPool() {
 	    "Cross=K",
 	    "R2=Mouse:Right",
 	    "L3=Left Shift",
+	    "L1=Right Shift",
 	    "TouchPadMode=F6",
 	    "LeftStickUp=W",
 	    "SpeakerVolume=1",

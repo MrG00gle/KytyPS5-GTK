@@ -36,4 +36,9 @@ bool IsEmulatorKeyName(std::string_view name);
 // mapping that binds one, and the capture dialog says "That key is reserved by the emulator.".
 bool IsReservedKeyName(std::string_view name);
 
+// True when the Emulator reads a and b as one key: both resolve (as IsEmulatorKeyName) to the
+// same key once the right-hand Shift, Ctrl, Alt, and GUI keys count as the left-hand ones ("J"
+// and "j", "Right Shift" and "Left Shift"). False when either names no key.
+bool IsSameEmulatorKey(std::string_view a, std::string_view b);
+
 } // namespace kyty::core

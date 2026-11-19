@@ -18,6 +18,7 @@
 
 #include "launcher/core/atomicFile.h"
 #include "launcher/core/inputMapping.h"
+#include "launcher/core/keyNames.h"
 #include "launcher/core/settingsStore.h"
 #include "launcher/core/text.h"
 #include "support/contentGenerators.h"
@@ -140,9 +141,20 @@ void CheckEdit(const ContentGen::MappingEdit& edit, bool applied, const InputMap
 			if (found != bindings.end()) {
 				RC_ASSERT(found->second == edit.input);
 			}
+			// No other control keeps the same input: on the keyboard by the Emulator's rule (the
+			// same mouse button name, or names of one key after its NormalizeKey), on the gamepad
+			// the same source.
 			for (const auto& [control, input]: bindings) {
-				if (control != edit.control) {
+				if (control == edit.control) {
+					continue;
+				}
+				if (edit.device == InputDevice::Pad) {
 					RC_ASSERT(kyty::core::CompareCaseInsensitive(input, edit.input) != 0);
+				} else if (kyty::core::IsMouseButtonName(input) ||
+				           kyty::core::IsMouseButtonName(edit.input)) {
+					RC_ASSERT(input != edit.input);
+				} else {
+					RC_ASSERT(!kyty::core::IsSameEmulatorKey(input, edit.input));
 				}
 			}
 			const bool custom =

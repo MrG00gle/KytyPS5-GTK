@@ -95,6 +95,18 @@ std::optional<SDL_Keycode> KeyFromName(std::string_view name) {
 	return key != SDLK_UNKNOWN ? std::optional(key) : std::nullopt;
 }
 
+// The Emulator's NormalizeKey (src/graphics/presentation/window/hostInput.cpp): it reads the
+// right-hand modifiers as the left-hand ones.
+SDL_Keycode NormalizeLikeEmulator(SDL_Keycode key) {
+	switch (key) {
+		case SDLK_RSHIFT: return SDLK_LSHIFT;
+		case SDLK_RCTRL: return SDLK_LCTRL;
+		case SDLK_RALT: return SDLK_LALT;
+		case SDLK_RGUI: return SDLK_LGUI;
+		default: return key;
+	}
+}
+
 } // namespace
 
 std::string KeyNameFromKeysym(uint32_t keysym) {
@@ -133,6 +145,12 @@ bool IsReservedKeyName(std::string_view name) {
 		case SDLK_F11: return true;
 		default: return false;
 	}
+}
+
+bool IsSameEmulatorKey(std::string_view a, std::string_view b) {
+	const auto first  = KeyFromName(a);
+	const auto second = KeyFromName(b);
+	return first && second && NormalizeLikeEmulator(*first) == NormalizeLikeEmulator(*second);
 }
 
 } // namespace kyty::core

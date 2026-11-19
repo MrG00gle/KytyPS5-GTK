@@ -110,10 +110,14 @@ struct InputMappingModel {
 // - "<control>=<value>" with a known control and a non-empty value binds the control and makes
 //   the keyboard custom; "Pad:<control>=<source>" with a pad-mappable control and a known source
 //   binds it and makes the gamepad custom. A binding replaces the control's earlier one and
-//   removes every other control's binding to the same value (ignoring letter case), so the last
-//   entry wins, as in the Emulator and the Qt editor;
-// - the last "MouseSensitivity=" entry gives the sensitivity: its leading decimal number (no
-//   number counts as 0, a non-finite one as 1.0) clamped to 0.1-5.0 and rounded to a tenth;
+//   removes every other control's binding to the same input, so the last entry wins, as in the
+//   Emulator: on the keyboard the same mouse button name, or a name of the same key
+//   (IsSameEmulatorKey: "J" and "j", "Right Shift" and "Left Shift"; names of no key never
+//   conflict); on the gamepad the same source;
+// - the last "MouseSensitivity=" entry gives the sensitivity, read as the Emulator reads it:
+//   std::strtof in the C locale, so a decimal or hexadecimal number ("2.5", "0x2") after any
+//   leading whitespace, with an optional sign (no number counts as 0; a number too large for a
+//   float, an infinity, or a NaN as 1.0), clamped to 0.1-5.0 and rounded to a tenth;
 // - the first "TouchParticleSkin=" entry naming a known skin gives the skin (Classic otherwise);
 //   the touch cursor is hidden when an entry is exactly "TouchCursorImage=Off". Other entries with
 //   these two prefixes are dropped, as the Emulator ignores them;
@@ -138,7 +142,8 @@ bool IsMouseButtonName(std::string_view name);
 // model unchanged) for an unknown control; on the keyboard for an input that is not a mouse button
 // name or an IsEmulatorKeyName name, or a reserved key (IsReservedKeyName); on the gamepad for a
 // control that is not pad_mappable or a source that is not in PadSources(). Every other control's
-// binding to the same input (ignoring letter case) is removed.
+// binding to the same input is removed, by ParseMapping's rule (on the keyboard the same mouse
+// button or the same key as the Emulator reads it, so "Left Shift" takes "Right Shift").
 bool Assign(InputMappingModel& model, InputDevice device, std::string_view control,
             std::string_view input);
 

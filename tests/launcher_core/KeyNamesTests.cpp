@@ -2,7 +2,7 @@
 // Requirement 11.14): every name KeyNameFromKeysym gives (all keysyms up to 0xFFFF and a sample of
 // Unicode keysyms) is a name the Emulator resolves with SDL_GetKeyFromName; letters, digits,
 // Latin-1 and other characters, function keys, modifiers, the keypad, and keys without a name; the
-// Emulator's reserved keys.
+// Emulator's reserved keys; names the Emulator reads as one key.
 
 #include "launcher/core/keyNames.h"
 #include "support/noDisplay.h"
@@ -19,6 +19,7 @@ namespace {
 
 using kyty::core::IsEmulatorKeyName;
 using kyty::core::IsReservedKeyName;
+using kyty::core::IsSameEmulatorKey;
 using kyty::core::KeyNameFromKeysym;
 
 void Check(bool value, const std::string& message) {
@@ -153,6 +154,38 @@ void TestEmulatorNames() {
 	Check(IsReservedKeyName(KeyNameFromKeysym(0xFFBE)), "the F1 keysym names a reserved key");
 }
 
+// The Emulator's NormalizeKey (hostInput.cpp) reads the right-hand Shift, Ctrl, Alt, and GUI keys
+// as the left-hand ones; names that resolve to no key are never the same key.
+void TestSameKey() {
+	using Pair = std::pair<std::string_view, std::string_view>;
+	for (const auto& [a, b]: std::vector<Pair> {{"Right Shift", "Left Shift"},
+	                                            {"Right Ctrl", "Left Ctrl"},
+	                                            {"Right Alt", "Left Alt"},
+	                                            {"Right GUI", "Left GUI"},
+	                                            {"Right Shift", "Right Shift"},
+	                                            {"right ctrl", "Left Ctrl"},
+	                                            {"J", "j"},
+	                                            {"left shift", "Left Shift"},
+	                                            {"Return", "Return"}}) {
+		Check(IsSameEmulatorKey(a, b) && IsSameEmulatorKey(b, a),
+		      "'" + std::string(a) + "' and '" + std::string(b) + "' are one key");
+	}
+	for (const auto& [a, b]: std::vector<Pair> {{"Left Shift", "Left Ctrl"},
+	                                            {"Right Shift", "Right Ctrl"},
+	                                            {"Right Alt", "Left GUI"},
+	                                            {"Keypad 1", "1"},
+	                                            {"Keypad Enter", "Return"},
+	                                            {"J", "K"},
+	                                            {"NotAKey", "NotAKey"},
+	                                            {"NotAKey", "J"},
+	                                            {"", ""},
+	                                            {std::string_view("A\0", 2), "A"},
+	                                            {"Mouse:Left", "Mouse:Left"}}) {
+		Check(!IsSameEmulatorKey(a, b) && !IsSameEmulatorKey(b, a),
+		      "'" + std::string(a) + "' and '" + std::string(b) + "' are not one key");
+	}
+}
+
 } // namespace
 
 int main() {
@@ -162,6 +195,7 @@ int main() {
 	TestNamedKeys();
 	TestUnnamedKeys();
 	TestEmulatorNames();
+	TestSameKey();
 	std::printf("KeyNamesTests: all tests passed\n");
 	return 0;
 }
