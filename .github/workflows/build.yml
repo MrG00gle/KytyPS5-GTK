@@ -136,6 +136,15 @@ jobs:
           { sudo apt-get -o Acquire::Retries=5 update &&
             sudo apt-get -o Acquire::Retries=5 install --no-install-recommends --yes $UBUNTU_PACKAGES; } \
             2>&1 | tee _Build/install-packages.log || status=$?
+          # apt's download totals and speed, its mirrors, and its failed or skipped fetches, so a
+          # slow install shows its cause without the job log.
+          log=_Build/install-packages.log
+          fetched=$(grep -E '^Fetched ' "$log" | paste -sd ';' - || true)
+          mirrors=$(grep -oE '^(Get|Hit|Ign|Err):[0-9]+ https?://[^/ ]+' "$log" | cut -d' ' -f2 |
+            sort -u | paste -sd ' ' - || true)
+          failed=$(grep -cE '^(Err|Ign):' "$log" || true)
+          echo "::notice title=Ubuntu packages::${fetched:-no download total}; mirrors ${mirrors:-none};" \
+            "Err or Ign lines $failed"
           if [[ $status != 0 ]]; then
             python3 -B tools/ci/annotate.py log _Build/install-packages.log --title "Ubuntu packages"
             exit "$status"
@@ -613,6 +622,15 @@ jobs:
           { sudo apt-get -o Acquire::Retries=5 update &&
             sudo apt-get -o Acquire::Retries=5 install --no-install-recommends --yes $UBUNTU_PACKAGES; } \
             2>&1 | tee _Build/install-packages.log || status=$?
+          # apt's download totals and speed, its mirrors, and its failed or skipped fetches, so a
+          # slow install shows its cause without the job log.
+          log=_Build/install-packages.log
+          fetched=$(grep -E '^Fetched ' "$log" | paste -sd ';' - || true)
+          mirrors=$(grep -oE '^(Get|Hit|Ign|Err):[0-9]+ https?://[^/ ]+' "$log" | cut -d' ' -f2 |
+            sort -u | paste -sd ' ' - || true)
+          failed=$(grep -cE '^(Err|Ign):' "$log" || true)
+          echo "::notice title=Coverage packages::${fetched:-no download total}; mirrors ${mirrors:-none};" \
+            "Err or Ign lines $failed"
           if [[ $status != 0 ]]; then
             python3 -B tools/ci/annotate.py log _Build/install-packages.log --title "Coverage packages"
             exit "$status"
