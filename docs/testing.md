@@ -195,7 +195,7 @@ as a failure. `tools/checks/check_regression.py` checks that every test in
 Failed checks, timing reruns, and the measured coverage also show as annotations on the run page.
 The Ubuntu, Fedora, and Coverage jobs keep their compiler cache (ccache) between runs, and the
 Coverage job shows its cache hits and misses as a notice. Each job has a time limit of at most 120
-minutes and each package install one of 20 minutes, and apt and dnf retry failed downloads.
+minutes and each package install one of 45 minutes, and apt and dnf retry failed downloads.
 
 Every action in the workflow is pinned to a full commit SHA, with its version as a comment
 (`actions/checkout@<sha> # v7.0.1`). Dependabot (`.github/dependabot.yml`) checks for newer

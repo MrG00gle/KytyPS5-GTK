@@ -57,8 +57,9 @@ env:
 
 jobs:
   # Each job's timeout-minutes is well above its longest run so far, so a hung step ends the job
-  # instead of running for GitHub's default of 360 minutes. Each package install has 20 minutes
-  # (it normally takes about one), and apt and dnf retry failed downloads.
+  # instead of running for GitHub's default of 360 minutes. Each package install has 45 minutes
+  # (it normally takes about one, but Ubuntu installs have taken up to 26), and apt and dnf retry
+  # failed downloads.
   metadata:
     name: Release tag and official flag
     runs-on: ubuntu-24.04
@@ -127,7 +128,7 @@ jobs:
           persist-credentials: false
 
       - name: Install packages
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: |
           mkdir -p _Build
           status=0
@@ -369,7 +370,7 @@ jobs:
     steps:
       - name: Install git and Python
         # Before the checkout, so that it is a git clone.
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: dnf -y install --setopt=install_weak_deps=False --setopt=retries=10 git-core python3
 
       - name: Check out
@@ -386,7 +387,7 @@ jobs:
           python3 -B tools/ci/check_fedora_release.py /etc/os-release
 
       - name: Install the stage A packages (no GTK)
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: |
           mkdir -p _Build
           status=0
@@ -488,7 +489,7 @@ jobs:
           python3 -B tools/checks/check_regression.py "$BUILD_DIR/ctest-stage-a.xml"
 
       - name: Install the stage B packages
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: |
           status=0
           # shellcheck disable=SC2086 # the package list is split on purpose
@@ -604,7 +605,7 @@ jobs:
           persist-credentials: false
 
       - name: Install packages
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: |
           mkdir -p _Build
           status=0
@@ -947,7 +948,7 @@ jobs:
           path: dist
 
       - name: Check the bundle's metainfo release entry
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: |
           sudo apt-get -o Acquire::Retries=5 update
           sudo apt-get -o Acquire::Retries=5 install --no-install-recommends --yes flatpak ostree

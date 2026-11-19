@@ -898,7 +898,7 @@ class Limits(Workflow):
                 self.assertEqual(self.data["jobs"][job]["timeout-minutes"], minutes)
         for job, key, _ in self.INSTALLS:
             with self.subTest(job=job, key=key):
-                self.assertEqual(find_step(self.data, job, key)["timeout-minutes"], 20)
+                self.assertEqual(find_step(self.data, job, key)["timeout-minutes"], 45)
 
     def test_a_job_without_timeout_minutes(self):
         for job in self.JOB_MINUTES:
@@ -923,15 +923,15 @@ class Limits(Workflow):
                     find_step(data, job, key).pop("timeout-minutes")
                 self.assert_fails(change, f'job {job}, step "{key}": downloads packages '
                                   f"({command}) with no timeout-minutes; such a step needs one "
-                                  "from 1 to 30")
+                                  "from 1 to 60")
 
     def test_an_install_timeout_out_of_range(self):
-        for value in (31, 120, 0, "20"):
+        for value in (61, 120, 0, "45"):
             with self.subTest(value=value):
                 def change(data, value=value):
                     find_step(data, "fedora", self.STAGE_B)["timeout-minutes"] = value
                 self.assert_fails(change, f'job fedora, step "{self.STAGE_B}": timeout-minutes is '
-                                  f"{value!r}, not a whole number from 1 to 30; the step "
+                                  f"{value!r}, not a whole number from 1 to 60; the step "
                                   "downloads packages (dnf install)")
 
     def test_apt_without_retries(self):

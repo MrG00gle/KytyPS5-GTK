@@ -25,7 +25,7 @@ both are accepted) and checks:
              pattern.
              A step whose run has an apt, apt-get, or dnf command (found as ctest calls are, so
              also behind sudo) that downloads packages (PACKAGE_DOWNLOADS: update, install,
-             upgrade, and the like) has timeout-minutes, a whole number from 1 to 30
+             upgrade, and the like) has timeout-minutes, a whole number from 1 to 60
              (MAX_INSTALL_MINUTES); each such apt or apt-get command has -o
              Acquire::Retries=<n> (also -oAcquire::..., --option, or --option=), and each such
              dnf command --setopt=retries=<n> (also --setopt retries=<n>), with n at least 1
@@ -217,7 +217,7 @@ SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 ACTIONLINT = 'the workflow lint ("$RUNNER_TEMP/actionlint")'
 # Time limits (GitHub's default is 360 minutes for a job) and package download retries.
 MAX_JOB_MINUTES = 120
-MAX_INSTALL_MINUTES = 30
+MAX_INSTALL_MINUTES = 60
 PACKAGE_MANAGERS = {"apt", "apt-get", "dnf"}
 PACKAGE_DOWNLOADS = {"update", "install", "reinstall", "upgrade", "dist-upgrade", "full-upgrade",
                      "distro-sync", "makecache"}
