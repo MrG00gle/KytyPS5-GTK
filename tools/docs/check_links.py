@@ -17,7 +17,10 @@ and any ?query dropped, is resolved against the linking file's directory (a lead
 repository root) and must name a listed file, or a directory that holds one. The #fragment of a
 link to a Markdown file (a bare #fragment names the linking file) must match an anchor of that
 file: a heading anchor as GitHub generates it, or the id or name attribute of an HTML tag. The
-fragments of links to other files (#L10 in a source file) are not checked.
+fragment of a link to another file must be a line anchor, #L<n> or #L<n>-L<m> (a capital L, no
+leading zero), with 1 <= n <= m <= the file's line count: the number of newlines, plus one when
+the file is not empty and does not end with one. A binary file (a NUL byte in its first 8000
+bytes) takes no fragment. The fragment of a link to a directory is not checked.
 
 GitHub's heading anchors (its github-slugger): take the text the heading shows (inline code keeps
 its content, a link its text, an image and an HTML tag show nothing, emphasis markers go, and HTML
@@ -52,6 +55,9 @@ NAME = "docs_links"
 TOP_LEVEL_DOCUMENTS = ("README.md", "CONTRIBUTING.md")
 DOCS_DIRECTORY = "docs/"
 MARKDOWN_SUFFIXES = (".md", ".markdown")
+BINARY_PROBE_SIZE = 8000
+# GitHub's line anchor of a file view: #L10, or #L10-L20 for a range.
+LINE_ANCHOR = re.compile(r"L(0|[1-9][0-9]*)(?:-L(0|[1-9][0-9]*))?")
 
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 # An inline code span: a run of backticks, its content (not across a blank line), and the same run.
@@ -228,19 +234,47 @@ def documentation_set(files):
                   or (path.startswith(DOCS_DIRECTORY) and path.endswith(".md")))
 
 
-def read_lines(repo, path):
-    """The lines of a regular text file, or None for anything else."""
+def read_data(repo, path):
+    """The bytes of a regular file, or None for anything else."""
     full = os.path.join(repo, path)
     try:
         if not stat.S_ISREG(os.lstat(full).st_mode):
             return None
         with open(full, "rb") as handle:
-            data = handle.read()
+            return handle.read()
     except FileNotFoundError:
         return None
     except OSError as error:
         raise RepoError(f"cannot read {path}: {error}") from error
-    return data.decode("utf-8", "replace").split("\n")
+
+
+def read_lines(repo, path):
+    """The lines of a regular text file, or None for anything else."""
+    data = read_data(repo, path)
+    return None if data is None else data.decode("utf-8", "replace").split("\n")
+
+
+def line_count(data):
+    """The number of lines of a text file's data, as GitHub numbers them."""
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+
+
+def line_anchor_problem(path, fragment, data):
+    """Why #fragment names no place in path, a file that is not Markdown with the given data, or
+    None when it names lines of the file."""
+    if b"\0" in data[:BINARY_PROBE_SIZE]:
+        return f"{path} is a binary file; a link fragment cannot name a place in it"
+    match = LINE_ANCHOR.fullmatch(fragment)
+    if not match:
+        return (f"{path} is not a Markdown file; only a line anchor #L<n> or #L<n>-L<m> can name a "
+                "place in it")
+    first = int(match.group(1))
+    last = int(match.group(2)) if match.group(2) is not None else first
+    count = line_count(data)
+    if not 1 <= first <= last <= count:
+        lines = "line" if count == 1 else "lines"
+        return f"{path} has {count} {lines}, so #{fragment} names no line"
+    return None
 
 
 def resolve(source, target):
@@ -270,12 +304,19 @@ def check(repo, files):
             directory = posixpath.dirname(directory)
             directories.add(directory)
     cache = {}
+    data_cache = {}
 
     def file_anchors(path):
         if path not in cache:
             lines = read_lines(repo, path)
             cache[path] = anchors(lines) if lines is not None else set()
         return cache[path]
+
+    def file_data(path):
+        """The bytes of a listed file; a file that is missing or not a regular file has none."""
+        if path not in data_cache:
+            data_cache[path] = read_data(repo, path) or b""
+        return data_cache[path]
 
     problems = []
     documents = documentation_set(files)
@@ -300,9 +341,15 @@ def check(repo, files):
             if path not in listed and path not in directories:
                 problems.append(f"{where}: no file or directory {path} in the repository")
                 continue
-            if (fragment and path in listed and path.endswith(MARKDOWN_SUFFIXES)
-                    and fragment not in file_anchors(path)):
-                problems.append(f"{where}: {path} has no heading or HTML anchor #{fragment}")
+            if not fragment or path not in listed:
+                continue
+            if path.endswith(MARKDOWN_SUFFIXES):
+                if fragment not in file_anchors(path):
+                    problems.append(f"{where}: {path} has no heading or HTML anchor #{fragment}")
+                continue
+            problem = line_anchor_problem(path, fragment, file_data(path))
+            if problem:
+                problems.append(f"{where}: {problem}")
     return problems, len(documents), relative
 
 

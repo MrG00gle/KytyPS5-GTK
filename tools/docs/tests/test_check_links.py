@@ -1,5 +1,6 @@
-"""Unit tests for tools/docs/check_links.py (task 29.7): GitHub's heading anchors, and the link
-and image checks of the Documentation_Set on scratch trees."""
+"""Unit tests for tools/docs/check_links.py (task 29.7): GitHub's heading anchors, the link and
+image checks of the Documentation_Set on scratch trees, and the line anchors of links to files
+that are not Markdown."""
 
 import contextlib
 import io
@@ -117,7 +118,7 @@ class Links(ScratchTree):
             """)
         self.write("docs/screenshots/main.png")
         self.write("LICENSE")
-        self.write("src/main.cpp")
+        self.write("src/main.cpp", "int main() {}\n")
 
     def test_good_links_pass(self):
         self.write("README.md", """\
@@ -218,6 +219,62 @@ class Links(ScratchTree):
         self.write("CONTRIBUTING.md", "[broken](missing.md)\n")
         self.assertEqual([problem.split(": ")[0] for problem in self.problems()],
                          ["CONTRIBUTING.md:1", "docs/nested/deep.md:1"])
+
+
+class LineAnchors(ScratchTree):
+    """The fragment of a link to a file that is not Markdown must be a line anchor within it."""
+
+    def setUp(self):
+        super().setUp()
+        self.write("docs/guide.md", "# Guide\n")
+        self.write("src/a.cpp", "x\ny\nz\n")
+        self.write("src/b.txt", "x\ny")
+        self.write("src/one.txt", "x")
+        self.write("src/empty.h")
+        with open(os.path.join(self.root, "docs/shot.png"), "wb") as handle:
+            handle.write(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\n")
+        self.paths.append("docs/shot.png")
+
+    def link_problems(self, *targets):
+        """The problems of a README.md that links to each target on a line of its own."""
+        self.write("README.md", "".join(f"[link]({target})\n" for target in targets))
+        return self.problems()
+
+    def test_line_anchors_within_the_file_pass(self):
+        self.assertEqual(self.link_problems("src/a.cpp#L2", "src/a.cpp#L1-L3", "src/a.cpp#L3",
+                                            "src/a.cpp#L2-L2", "src/b.txt#L2", "src/one.txt#L1",
+                                            "src/a.cpp", "docs/shot.png"), [])
+
+    def test_lines_outside_the_file_fail(self):
+        self.assertEqual(self.link_problems("src/a.cpp#L4", "src/a.cpp#L2-L4", "src/a.cpp#L3-L2",
+                                            "src/a.cpp#L0", "src/b.txt#L3", "src/one.txt#L2",
+                                            "src/empty.h#L1"), [
+            "README.md:1: src/a.cpp#L4: src/a.cpp has 3 lines, so #L4 names no line",
+            "README.md:2: src/a.cpp#L2-L4: src/a.cpp has 3 lines, so #L2-L4 names no line",
+            "README.md:3: src/a.cpp#L3-L2: src/a.cpp has 3 lines, so #L3-L2 names no line",
+            "README.md:4: src/a.cpp#L0: src/a.cpp has 3 lines, so #L0 names no line",
+            "README.md:5: src/b.txt#L3: src/b.txt has 2 lines, so #L3 names no line",
+            "README.md:6: src/one.txt#L2: src/one.txt has 1 line, so #L2 names no line",
+            "README.md:7: src/empty.h#L1: src/empty.h has 0 lines, so #L1 names no line"])
+
+    def test_other_fragments_fail(self):
+        targets = ("src/a.cpp#L02", "src/a.cpp#l2", "src/a.cpp#L2C1", "src/a.cpp#foo",
+                   "src/a.cpp#L1-2", "src/a.cpp#L1-L2-L3")
+        problems = self.link_problems(*targets)
+        self.assertEqual(problems, [
+            f"README.md:{number}: {target}: src/a.cpp is not a Markdown file; only a line anchor "
+            "#L<n> or #L<n>-L<m> can name a place in it"
+            for number, target in enumerate(targets, 1)])
+
+    def test_a_binary_file_takes_no_fragment(self):
+        self.assertEqual(self.link_problems("docs/shot.png#L1"), [
+            "README.md:1: docs/shot.png#L1: docs/shot.png is a binary file; a link fragment "
+            "cannot name a place in it"])
+
+    def test_markdown_and_directory_fragments_are_unchanged(self):
+        self.assertEqual(self.link_problems("docs/guide.md#guide", "docs/guide.md#L1", "src/#L1",
+                                            "src#anything", "/#L9"), [
+            "README.md:2: docs/guide.md#L1: docs/guide.md has no heading or HTML anchor #L1"])
 
 
 class CommandLine(ScratchTree):

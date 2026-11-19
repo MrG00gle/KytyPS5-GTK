@@ -194,7 +194,8 @@ Failed checks, timing reruns, and the measured coverage also show as annotations
 
 The Ubuntu job also checks the documentation. `tools/docs/check_links.py --repo .` fails on a
 relative link or image in `README.md`, `CONTRIBUTING.md`, or `docs/` whose file does not exist or
-whose `#fragment` matches no heading anchor, and prints the file, line, and target of each.
+whose `#fragment` names no place in it: no heading anchor of a Markdown file, and no line of
+another file (`#L10` or `#L10-L20`). It prints the file, line, and target of each.
 `tools/docs/check_help_options.py` runs the job's `kyty_emulator --help` and fails when it exits
 with an error, prints no option, or prints an option that the
 [running guide](running.md#emulator-options) does not name, and prints each missing option. The
