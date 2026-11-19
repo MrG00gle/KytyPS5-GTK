@@ -58,8 +58,9 @@ On Ubuntu 24.04 and Arch Linux the file is `/usr/share/vulkan/icd.d/lvp_icd.json
 `VK_DRIVER_FILES` the tests use the machine's own GPU. lavapipe lacks fragment shader barycentrics
 and 64-bit LDS and image atomics, so the Vulkan harness modes of `shader_recompiler_compute_tests`
 fail on it with "no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image
-atomics". Run the `gpu` label on a real GPU to test them (see the
-[manual checklist](#manual-checklist)).
+atomics". A failing harness mode turns off its core dump before it aborts, so it ends right after
+that message; run it under gdb to inspect it. Run the `gpu` label on a real GPU to test them (see
+the [manual checklist](#manual-checklist)).
 
 ### UI tests and the headless display
 

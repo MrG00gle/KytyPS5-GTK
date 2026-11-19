@@ -100,6 +100,7 @@
 #include <vector>
 
 #include <cerrno>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -970,6 +971,9 @@ std::string Hex(u32 value) {
                        const std::string &message) {
   std::fprintf(stderr, "ShaderRecompilerComputeTests: %s failed at %s: %s\n",
                shader_name, stage, message.c_str());
+  // No core dump: writing one of this process can take over a minute, and the
+  // line above says what failed.
+  prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
   std::abort();
 }
 
