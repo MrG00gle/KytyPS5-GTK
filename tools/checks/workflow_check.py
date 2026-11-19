@@ -54,6 +54,13 @@ both are accepted) and checks:
              conditions joined by && (success() may be added; no other status function and no ||);
              it needs every other job; it alone has write permission (contents: write), and the
              workflow's permissions are contents: read.
+  ccache     the ubuntu, fedora, and coverage jobs keep their compiler cache between runs
+             (CCACHE_JOBS): each has an actions/cache step (any version) with path: _Build/ccache
+             and a key that starts with ccache-<job>-, and a run line that writes
+             CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache to $GITHUB_ENV; and no run line of those
+             jobs sets CMAKE_C_COMPILER_LAUNCHER or CMAKE_CXX_COMPILER_LAUNCHER to an empty value
+             (-DNAME=, -DNAME="", -DNAME:TYPE=, or -D NAME=), which turns ccache off in the
+             top-level CMakeLists.txt.
   uploads    every actions/upload-artifact step has if: always() and if-no-files-found: error (so
              that a path that matches nothing fails the step), and the flatpak-builder action
              does not upload on its own (upload-artifact: false).
@@ -153,6 +160,13 @@ RELEASE_JOB = "release"
 RELEASE_CONDITIONS = {"github.event_name == 'push'", "github.ref == 'refs/heads/main'",
                       "github.repository == 'MrG00gle/KytyPS5-GTK'"}
 TIMING_RERUN = "timing-rerun"
+# The jobs that keep their compiler cache between runs: the cache step, the directory that ccache
+# uses, and the -D option that would turn ccache off (an empty launcher; CMakeLists.txt).
+CCACHE_JOBS = TEST_JOBS
+CCACHE_PATH = "_Build/ccache"
+CCACHE_DIR = re.compile(r'echo\s+"CCACHE_DIR=\$\{?GITHUB_WORKSPACE\}?/_Build/ccache"'
+                        r'\s*>>\s*"\$\{?GITHUB_ENV\}?"')
+EMPTY_LAUNCHER = re.compile(r"-DCMAKE_(?:C|CXX)_COMPILER_LAUNCHER(?::[A-Za-z]+)?=(?:\"\"|'')?")
 # The core dump settings that the test jobs print: a dump after a test aborts can take a minute,
 # and the log shows whether the runner writes one. Each regex needs the command itself on a line
 # that is not a comment: cat of the file, and ulimit -c alone or as a $(...) substitution, so a
@@ -450,6 +464,20 @@ def moves_flatpak_installation(step):
     return bool(copies) and any(index > copies[0] for index in exports)
 
 
+def empty_launchers(script):
+    """The -D options of a run that set CMAKE_C_COMPILER_LAUNCHER or CMAKE_CXX_COMPILER_LAUNCHER
+    to an empty value (EMPTY_LAUNCHER; -D NAME= as one option); comments do not count."""
+    found = []
+    for line in logical_lines(script):
+        tokens = words(line)
+        for index, word in enumerate(tokens):
+            if word == "-D" and index + 1 < len(tokens):
+                word = "-D" + tokens[index + 1]
+            if EMPTY_LAUNCHER.fullmatch(word):
+                found.append(word)
+    return found
+
+
 def is_result_check(step):
     """A step that runs junit_check.py on a full run's JUnit file, with --registered."""
     return any(has_option(line, "--registered") and not has_option(line, "--print-retry-candidates")
@@ -527,6 +555,9 @@ class Checker:
         for job_id in TEST_JOBS:
             if job_id in self.jobs:
                 self.check_test_job(job_id)
+        for job_id in CCACHE_JOBS:
+            if job_id in self.jobs:
+                self.check_ccache(job_id)
         if RELEASE_JOB in self.jobs:
             self.check_release()
         for job_id, required in REQUIRED_STEPS.items():
@@ -748,6 +779,33 @@ class Checker:
         script = step.get("run") or ""
         return (any(runs for _, _, runs in ctest_calls(script))
                 or any(COVERAGE_TARGET.search(line) for line in logical_lines(script)))
+
+    # ---- the compiler cache of the build jobs
+    def check_ccache(self, job_id):
+        where = self.job_label(job_id)
+        caches = directories = 0
+        for _, step, step_where in self.steps(job_id):
+            uses = step.get("uses")
+            with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
+            if (isinstance(uses, str) and uses.split("@", 1)[0] == "actions/cache"
+                    and str(with_.get("path", "")).strip() == CCACHE_PATH
+                    and str(with_.get("key", "")).startswith(f"ccache-{job_id}-")):
+                caches += 1
+            script = step.get("run") or ""
+            directories += any(CCACHE_DIR.fullmatch(line.strip())
+                               for line in logical_lines(script))
+            empty = empty_launchers(script)
+            if empty:
+                self.report(step_where, f"sets {' '.join(empty)}, an empty compiler launcher, "
+                            f"which turns ccache off; the {job_id} job builds with ccache")
+        if not caches:
+            self.report(where, f"has no step that restores and saves the compiler cache "
+                        f"(actions/cache with path: {CCACHE_PATH} and a key that starts with "
+                        f"ccache-{job_id}-)")
+        if not directories:
+            self.report(where, "has no step that writes CCACHE_DIR=$GITHUB_WORKSPACE/"
+                        f"{CCACHE_PATH} to $GITHUB_ENV, so ccache would not use the cached "
+                        "directory")
 
     # ---- the release job
     def check_release(self):

@@ -192,6 +192,8 @@ fails the job for every failed, skipped, or not-run test, so a GPU test or UI te
 as a failure. `tools/checks/check_regression.py` checks that every test in
 `tools/checks/main-passing-tests.txt`, the tests that passed on the original `main`, still passes.
 Failed checks, timing reruns, and the measured coverage also show as annotations on the run page.
+The Ubuntu, Fedora, and Coverage jobs keep their compiler cache (ccache) between runs, and the
+Coverage job shows its cache hits and misses as a notice.
 
 The Ubuntu job also checks the documentation. `tools/docs/check_links.py --repo .` fails on a
 relative link or image in `README.md`, `CONTRIBUTING.md`, or `docs/` whose file does not exist or

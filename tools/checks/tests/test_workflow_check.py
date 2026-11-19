@@ -714,6 +714,96 @@ class CoreDumpPrints(Workflow):
                           "step may have no if")
 
 
+class Ccache(Workflow):
+    """The ubuntu, fedora, and coverage jobs restore and save _Build/ccache under a key of their
+    own, point CCACHE_DIR at it, and never turn ccache off with an empty compiler launcher."""
+
+    JOBS = ("ubuntu", "fedora", "coverage")
+    CACHE = "Restore and save ccache"
+    DIRECTORY = "Set the ccache directory"
+    CONFIGURE = "Configure with coverage"
+    COVERAGE_ON = "-DKYTY_ENABLE_COVERAGE=ON"
+
+    def test_the_committed_jobs_cache(self):
+        for job in self.JOBS:
+            with self.subTest(job=job):
+                step = find_step(self.data, job, self.CACHE)
+                self.assertTrue(step["uses"].startswith("actions/cache@"), step)
+                self.assertEqual(step["with"]["path"], "_Build/ccache")
+                self.assertEqual(step["with"]["key"], f"ccache-{job}-${{{{ github.sha }}}}")
+                self.assertEqual(step["with"]["restore-keys"], f"ccache-{job}-")
+
+    def test_a_job_without_its_cache_step(self):
+        for job in self.JOBS:
+            with self.subTest(job=job):
+                def change(data, job=job):
+                    data["jobs"][job]["steps"].remove(find_step(data, job, self.CACHE))
+                self.assert_fails(change, f"job {job}: has no step that restores and saves the "
+                                  "compiler cache (actions/cache with path: _Build/ccache and a "
+                                  f"key that starts with ccache-{job}-)")
+
+    def test_another_jobs_key_or_another_path(self):
+        cases = {"the ubuntu key": ("key", "ccache-ubuntu-${{ github.sha }}"),
+                 "a shared key": ("key", "ccache-${{ github.sha }}"),
+                 "another path": ("path", "~/.cache/ccache")}
+        for name, (key, value) in cases.items():
+            with self.subTest(name):
+                def change(data, key=key, value=value):
+                    find_step(data, "coverage", self.CACHE)["with"][key] = value
+                self.assert_fails(change, "job coverage: has no step that restores and saves "
+                                  "the compiler cache")
+
+    def test_a_restore_only_action(self):
+        # actions/cache/restore never saves, so the next run would start cold again.
+        def change(data):
+            find_step(data, "coverage", self.CACHE)["uses"] = "actions/cache/restore@v6"
+        self.assert_fails(change, "job coverage: has no step that restores and saves the "
+                          "compiler cache")
+
+    def test_a_job_without_the_ccache_directory(self):
+        for job in self.JOBS:
+            with self.subTest(job=job):
+                def change(data, job=job):
+                    data["jobs"][job]["steps"].remove(find_step(data, job, self.DIRECTORY))
+                self.assert_fails(change, f"job {job}: has no step that writes "
+                                  "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache to $GITHUB_ENV")
+
+    def test_an_empty_launcher(self):
+        for option in ("-DCMAKE_C_COMPILER_LAUNCHER=", '-DCMAKE_CXX_COMPILER_LAUNCHER=""',
+                       "-DCMAKE_CXX_COMPILER_LAUNCHER=''", "-DCMAKE_C_COMPILER_LAUNCHER:STRING=",
+                       "-D CMAKE_CXX_COMPILER_LAUNCHER="):
+            with self.subTest(option=option):
+                def change(data, option=option):
+                    replace_in_run(data, "coverage", self.CONFIGURE, self.COVERAGE_ON,
+                                   f"{self.COVERAGE_ON} {option}")
+                lines = self.assert_fails(change, f'job coverage, step "{self.CONFIGURE}": sets ',
+                                          "an empty compiler launcher, which turns ccache off; "
+                                          "the coverage job builds with ccache")
+                self.assertIn("COMPILER_LAUNCHER", lines[0])
+
+    def test_both_empty_launchers_in_one_line(self):
+        def change(data):
+            replace_in_run(data, "coverage", self.CONFIGURE, self.COVERAGE_ON,
+                           f"{self.COVERAGE_ON} -DCMAKE_C_COMPILER_LAUNCHER= "
+                           "-DCMAKE_CXX_COMPILER_LAUNCHER=")
+        self.assert_fails(change, "sets -DCMAKE_C_COMPILER_LAUNCHER= "
+                          "-DCMAKE_CXX_COMPILER_LAUNCHER=, an empty compiler launcher")
+
+    def test_a_launcher_or_a_comment_passes(self):
+        for option in ("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache",
+                       "-DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache"):
+            with self.subTest(option=option):
+                def change(data, option=option):
+                    replace_in_run(data, "coverage", self.CONFIGURE, self.COVERAGE_ON,
+                                   f"{self.COVERAGE_ON} {option}")
+                self.assert_passes(self.mutated(change))
+
+        def comment(data):
+            step = find_step(data, "coverage", self.CONFIGURE)
+            step["run"] = "# -DCMAKE_C_COMPILER_LAUNCHER= would turn ccache off\n" + step["run"]
+        self.assert_passes(self.mutated(comment))
+
+
 class Release(Workflow):
     def test_release_if_without_the_repository_condition(self):
         def change(data):

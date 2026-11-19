@@ -552,25 +552,43 @@ jobs:
           echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
           echo "ulimit -c: $(ulimit -c)"
 
+      - name: Set the ccache directory
+        run: echo "CCACHE_DIR=$GITHUB_WORKSPACE/_Build/ccache" >> "$GITHUB_ENV"
+
+      - name: Restore and save ccache
+        uses: actions/cache@v6
+        with:
+          path: _Build/ccache
+          key: ccache-coverage-${{ github.sha }}
+          restore-keys: ccache-coverage-
+
       - name: Configure with coverage
         run: |
-          # llvm-profdata and llvm-cov of Clang's own LLVM version. No compiler launcher (ccache
-          # off), as in the coverage build the design describes.
+          # llvm-profdata and llvm-cov of Clang's own LLVM version.
           llvm_bin="/usr/lib/llvm-$(clang++ -dumpversion | cut -d. -f1)/bin"
           "$llvm_bin/llvm-cov" --version
           cmake -S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DKYTY_ENABLE_COVERAGE=ON \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= \
             -DKYTY_LLVM_PROFDATA="$llvm_bin/llvm-profdata" -DKYTY_LLVM_COV="$llvm_bin/llvm-cov"
 
       - name: Build
         id: build
         run: |
+          # The restored cache keeps the counters of earlier runs: count this build's only.
+          ccache --zero-stats
           status=0
           cmake --build "$BUILD_DIR" --target all kyty_tests 2>&1 | tee "$BUILD_DIR/build.log" || status=$?
           if [[ $status != 0 ]]; then
             python3 -B tools/ci/annotate.py log "$BUILD_DIR/build.log" --title "Coverage build"
           fi
+          # The hit counts, also as a notice: the job log is not readable without signing in.
+          ccache --show-stats
+          ccache --print-stats | awk -F'\t' '
+            $1 ~ /^(direct|preprocessed)_cache_hit$/ {hits += $2}
+            $1 == "cache_miss" {misses += $2}
+            $1 == "cache_size_kibibyte" {size += $2}
+            END {printf "::notice title=Coverage ccache::hits %d, misses %d, cache %d MiB\n",
+                 hits, misses, size / 1024}'
           exit "$status"
 
       - name: Build the coverage target
