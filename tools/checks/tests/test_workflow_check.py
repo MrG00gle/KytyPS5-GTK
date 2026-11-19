@@ -236,7 +236,8 @@ class Runners(Workflow):
 
     def test_extra_job(self):
         def change(data):
-            data["jobs"]["lint"] = {"runs-on": "ubuntu-24.04", "steps": [{"run": "true"}]}
+            data["jobs"]["lint"] = {"runs-on": "ubuntu-24.04", "timeout-minutes": 10,
+                                    "steps": [{"run": "true"}]}
         lines = self.assert_fails(change, "job lint: is not one of the design's jobs", count=2)
         self.assertIn("job release: needs lacks lint; the release job needs every other job "
                       "(Requirement 16.10)", lines)
@@ -802,6 +803,131 @@ class Ccache(Workflow):
             step = find_step(data, "coverage", self.CONFIGURE)
             step["run"] = "# -DCMAKE_C_COMPILER_LAUNCHER= would turn ccache off\n" + step["run"]
         self.assert_passes(self.mutated(comment))
+
+
+class Limits(Workflow):
+    """Every job has a time limit, and every step that downloads packages has its own and makes
+    apt or dnf retry failed downloads."""
+
+    JOB_MINUTES = {"metadata": 10, "ubuntu": 120, "fedora": 120, "coverage": 120, "flatpak": 60,
+                   "release": 30}
+    INSTALLS = (("ubuntu", "Install packages", "apt-get update"),
+                ("coverage", "Install packages", "apt-get update"),
+                ("fedora", "Install git and Python", "dnf install"),
+                ("fedora", "Install the stage A packages (no GTK)", "dnf install"),
+                ("fedora", "Install the stage B packages", "dnf install"),
+                ("release", "Check the bundle's metainfo release entry", "apt-get update"))
+    APT = "apt-get -o Acquire::Retries=5 "
+    DNF = "--setopt=retries=10 "
+    STAGE_B = "Install the stage B packages"
+    RELEASE = "Check the bundle's metainfo release entry"
+
+    def test_the_committed_limits(self):
+        for job, minutes in self.JOB_MINUTES.items():
+            with self.subTest(job=job):
+                self.assertEqual(self.data["jobs"][job]["timeout-minutes"], minutes)
+        for job, key, _ in self.INSTALLS:
+            with self.subTest(job=job, key=key):
+                self.assertEqual(find_step(self.data, job, key)["timeout-minutes"], 20)
+
+    def test_a_job_without_timeout_minutes(self):
+        for job in self.JOB_MINUTES:
+            with self.subTest(job=job):
+                self.assert_fails(lambda data, job=job: data["jobs"][job].pop("timeout-minutes"),
+                                  f"job {job}: has no timeout-minutes; each job needs one from 1 "
+                                  "to 120, so that a hung step cannot run for GitHub's default "
+                                  "of 360 minutes")
+
+    def test_a_job_timeout_out_of_range_or_not_a_number(self):
+        for value in (360, 121, 0, -5, "60", "${{ 60 }}", True, 60.5):
+            with self.subTest(value=value):
+                def change(data, value=value):
+                    data["jobs"]["ubuntu"]["timeout-minutes"] = value
+                self.assert_fails(change, f"job ubuntu: timeout-minutes is {value!r}, not a whole "
+                                  "number from 1 to 120")
+
+    def test_an_install_step_without_its_timeout(self):
+        for job, key, command in self.INSTALLS:
+            with self.subTest(job=job, key=key):
+                def change(data, job=job, key=key):
+                    find_step(data, job, key).pop("timeout-minutes")
+                self.assert_fails(change, f'job {job}, step "{key}": downloads packages '
+                                  f"({command}) with no timeout-minutes; such a step needs one "
+                                  "from 1 to 30")
+
+    def test_an_install_timeout_out_of_range(self):
+        for value in (31, 120, 0, "20"):
+            with self.subTest(value=value):
+                def change(data, value=value):
+                    find_step(data, "fedora", self.STAGE_B)["timeout-minutes"] = value
+                self.assert_fails(change, f'job fedora, step "{self.STAGE_B}": timeout-minutes is '
+                                  f"{value!r}, not a whole number from 1 to 30; the step "
+                                  "downloads packages (dnf install)")
+
+    def test_apt_without_retries(self):
+        for job, key, old, new, command in (
+                ("ubuntu", "Install packages", f"sudo {self.APT}update", "sudo apt-get update",
+                 "apt-get update"),
+                ("coverage", "Install packages", f"sudo {self.APT}install",
+                 "sudo apt-get install", "apt-get install"),
+                ("release", self.RELEASE, f"sudo {self.APT}install", "sudo apt install",
+                 "apt install")):
+            with self.subTest(job=job, command=command):
+                def change(data, job=job, key=key, old=old, new=new):
+                    replace_in_run(data, job, key, old, new)
+                self.assert_fails(change, f'job {job}, step "{key}": runs {command} without -o '
+                                  "Acquire::Retries=<n> (n at least 1)")
+
+    def test_dnf_without_retries(self):
+        for key in ("Install git and Python", "Install the stage A packages (no GTK)",
+                    self.STAGE_B):
+            with self.subTest(key=key):
+                def change(data, key=key):
+                    replace_in_run(data, "fedora", key, self.DNF, "")
+                self.assert_fails(change, f'job fedora, step "{key}": runs dnf install without '
+                                  "--setopt=retries=<n> (n at least 1)")
+
+    def test_zero_or_no_number_of_retries(self):
+        cases = (("release", self.RELEASE, "Acquire::Retries=5 update", "Acquire::Retries=0 update",
+                  "apt-get update"),
+                 ("release", self.RELEASE, "Acquire::Retries=5 update", "Acquire::Retries= update",
+                  "apt-get update"),
+                 ("fedora", self.STAGE_B, self.DNF, "--setopt=retries=0 ", "dnf install"),
+                 ("fedora", self.STAGE_B, self.DNF, "--setopt=timeout=60 ", "dnf install"))
+        for job, key, old, new, command in cases:
+            with self.subTest(new=new):
+                def change(data, job=job, key=key, old=old, new=new):
+                    replace_in_run(data, job, key, old, new)
+                self.assert_fails(change, f'job {job}, step "{key}": runs {command} without ')
+
+    def test_other_forms_of_the_retry_options_pass(self):
+        cases = (("release", self.RELEASE, self.APT, "apt-get -oAcquire::Retries=3 "),
+                 ("release", self.RELEASE, self.APT, "apt-get --option Acquire::Retries=3 "),
+                 ("release", self.RELEASE, self.APT, "apt-get --option=Acquire::Retries=3 "),
+                 ("release", self.RELEASE, self.APT, "apt-get -o acquire::retries=3 "),
+                 ("fedora", self.STAGE_B, self.DNF, "--setopt retries=3 "))
+        for job, key, old, new in cases:
+            with self.subTest(new=new):
+                self.assert_passes(self.mutated(
+                    lambda data, job=job, key=key, old=old, new=new: replace_in_run(
+                        data, job, key, old, new)))
+
+    def test_a_new_install_step_needs_both(self):
+        def change(data):
+            data["jobs"]["metadata"]["steps"].append(
+                {"name": "Install jq", "run": "sudo -E apt install --yes jq\n"})
+        lines = self.assert_fails(change, 'job metadata, step "Install jq": downloads packages '
+                                  "(apt install) with no timeout-minutes", count=2)
+        self.assertIn('job metadata, step "Install jq": runs apt install without -o '
+                      "Acquire::Retries=<n> (n at least 1)", lines)
+
+    def test_commands_that_download_nothing_pass(self):
+        def change(data):
+            data["jobs"]["metadata"]["steps"].append(
+                {"name": "Show the package tools",
+                 "run": "apt-get --version\ndnf --version\necho apt-get install x\n"
+                        "# dnf install y\napt-cache policy weston\n"})
+        self.assert_passes(self.mutated(change))
 
 
 class Release(Workflow):

@@ -193,7 +193,8 @@ as a failure. `tools/checks/check_regression.py` checks that every test in
 `tools/checks/main-passing-tests.txt`, the tests that passed on the original `main`, still passes.
 Failed checks, timing reruns, and the measured coverage also show as annotations on the run page.
 The Ubuntu, Fedora, and Coverage jobs keep their compiler cache (ccache) between runs, and the
-Coverage job shows its cache hits and misses as a notice.
+Coverage job shows its cache hits and misses as a notice. Each job has a time limit of at most 120
+minutes and each package install one of 20 minutes, and apt and dnf retry failed downloads.
 
 The Ubuntu job also checks the documentation. `tools/docs/check_links.py --repo .` fails on a
 relative link or image in `README.md`, `CONTRIBUTING.md`, or `docs/` whose file does not exist or

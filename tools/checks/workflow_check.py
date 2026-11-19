@@ -14,6 +14,8 @@ both are accepted) and checks:
              ghcr.io/flathub-infra/flatpak-github-actions:gnome-49 (RUNNERS); no other container;
              and no windows-* or macos-* runner label in runs-on or a matrix. Only the release job
              has a job-level if (release below): on any other job it could skip the whole job.
+             Every job has timeout-minutes, a whole number from 1 to 120 (MAX_JOB_MINUTES), so a
+             hung step cannot run for GitHub's default of 360 minutes.
   packages   no install command (apt-get, apt, dnf, yum, pacman, zypper, pip) names a Qt package:
              no word on that line, and none in an env variable that the line expands, matches
              content_checks.py's Qt package pattern or contains "qt" in any case. No run line and
@@ -21,6 +23,14 @@ both are accepted) and checks:
              string of an action's with: inputs (nested values too), no word matches the Qt
              package pattern, and the string does not match the Qt build and installation
              pattern.
+             A step whose run has an apt, apt-get, or dnf command (found as ctest calls are, so
+             also behind sudo) that downloads packages (PACKAGE_DOWNLOADS: update, install,
+             upgrade, and the like) has timeout-minutes, a whole number from 1 to 30
+             (MAX_INSTALL_MINUTES); each such apt or apt-get command has -o
+             Acquire::Retries=<n> (also -oAcquire::..., --option, or --option=), and each such
+             dnf command --setopt=retries=<n> (also --setopt retries=<n>), with n at least 1
+             (dnf retries forever with 0). A command in a variable or a script file is not
+             found.
   ctest      no ctest call has any of -R, -E, -L, -LE, -I, -U, -FA, -FS, -FC, --tests-regex,
              --exclude-regex, --label-regex, --label-exclude, --tests-information, --union,
              --fixture-exclude-any, --fixture-exclude-setup, --fixture-exclude-cleanup,
@@ -160,6 +170,14 @@ RELEASE_JOB = "release"
 RELEASE_CONDITIONS = {"github.event_name == 'push'", "github.ref == 'refs/heads/main'",
                       "github.repository == 'MrG00gle/KytyPS5-GTK'"}
 TIMING_RERUN = "timing-rerun"
+# Time limits (GitHub's default is 360 minutes for a job) and package download retries.
+MAX_JOB_MINUTES = 120
+MAX_INSTALL_MINUTES = 30
+PACKAGE_MANAGERS = {"apt", "apt-get", "dnf"}
+PACKAGE_DOWNLOADS = {"update", "install", "reinstall", "upgrade", "dist-upgrade", "full-upgrade",
+                     "distro-sync", "makecache"}
+APT_RETRIES = re.compile(r"(?i)Acquire::Retries=([0-9]+)")
+DNF_RETRIES = re.compile(r"retries=([0-9]+)")
 # The jobs that keep their compiler cache between runs: the cache step, the directory that ccache
 # uses, and the -D option that would turn ccache off (an empty launcher; CMakeLists.txt).
 CCACHE_JOBS = TEST_JOBS
@@ -464,6 +482,46 @@ def moves_flatpak_installation(step):
     return bool(copies) and any(index > copies[0] for index in exports)
 
 
+def whole_minutes(value, highest):
+    """Whether a timeout-minutes value is a whole number from 1 to highest (not an expression)."""
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= highest
+
+
+def sets_retries(name, arguments):
+    """Whether an apt or apt-get command has -o Acquire::Retries=<n>, or a dnf command
+    --setopt=retries=<n>, with n at least 1."""
+    values = []
+    for index, argument in enumerate(arguments):
+        following = arguments[index + 1] if index + 1 < len(arguments) else ""
+        if name == "dnf":
+            if argument == "--setopt":
+                values.append(following)
+            elif argument.startswith("--setopt="):
+                values.append(argument[len("--setopt="):])
+        elif argument in ("-o", "--option"):
+            values.append(following)
+        elif argument.startswith("--option="):
+            values.append(argument[len("--option="):])
+        elif argument.startswith("-o"):
+            values.append(argument[len("-o"):])
+    pattern = DNF_RETRIES if name == "dnf" else APT_RETRIES
+    matches = [pattern.fullmatch(value) for value in values]
+    return any(match and int(match.group(1)) >= 1 for match in matches)
+
+
+def package_downloads(script):
+    """(command, subcommand, whether it sets its retries) of each apt, apt-get, or dnf command of
+    a run that downloads packages (PACKAGE_DOWNLOADS)."""
+    found = []
+    for line in logical_lines(script):
+        for word, arguments in commands(line):
+            name = word.rsplit("/", 1)[-1]
+            downloads = [argument for argument in arguments if argument in PACKAGE_DOWNLOADS]
+            if name in PACKAGE_MANAGERS and downloads:
+                found.append((name, downloads[0], sets_retries(name, arguments)))
+    return found
+
+
 def empty_launchers(script):
     """The -D options of a run that set CMAKE_C_COMPILER_LAUNCHER or CMAKE_CXX_COMPILER_LAUNCHER
     to an empty value (EMPTY_LAUNCHER; -D NAME= as one option); comments do not count."""
@@ -658,6 +716,14 @@ class Checker:
         if job.get("continue-on-error"):
             self.report(self.job_label(job_id), "sets continue-on-error, so its failures would "
                         "not fail the run (Requirement 16.10)")
+        minutes = job.get("timeout-minutes")
+        if minutes is None:
+            self.report(self.job_label(job_id), f"has no timeout-minutes; each job needs one from "
+                        f"1 to {MAX_JOB_MINUTES}, so that a hung step cannot run for GitHub's "
+                        "default of 360 minutes")
+        elif not whole_minutes(minutes, MAX_JOB_MINUTES):
+            self.report(self.job_label(job_id), f"timeout-minutes is {minutes!r}, not a whole "
+                        f"number from 1 to {MAX_JOB_MINUTES}")
         for number, step, where in self.steps(job_id):
             if step.get("continue-on-error"):
                 self.report(where, "sets continue-on-error, so its failure would not fail the "
@@ -669,6 +735,7 @@ class Checker:
             if isinstance(script, str):
                 self.check_qt(where, script, self.environment(job_id, step))
                 self.check_ctest(where, step, script)
+                self.check_package_downloads(where, step, script)
 
     def check_action(self, where, step, uses):
         if content_checks.QT_BUILD_PATTERN.search(uses):
@@ -711,6 +778,23 @@ class Checker:
                     source = f" (from ${variable})" if variable else ""
                     self.report(where, f"installs {word}{source}, a Qt package "
                                 "(Requirement 16.3)")
+
+    def check_package_downloads(self, where, step, script):
+        downloads = package_downloads(script)
+        if not downloads:
+            return
+        first = f"{downloads[0][0]} {downloads[0][1]}"
+        minutes = step.get("timeout-minutes")
+        if minutes is None:
+            self.report(where, f"downloads packages ({first}) with no timeout-minutes; such a "
+                        f"step needs one from 1 to {MAX_INSTALL_MINUTES}")
+        elif not whole_minutes(minutes, MAX_INSTALL_MINUTES):
+            self.report(where, f"timeout-minutes is {minutes!r}, not a whole number from 1 to "
+                        f"{MAX_INSTALL_MINUTES}; the step downloads packages ({first})")
+        for name, subcommand, retries in downloads:
+            if not retries:
+                option = "--setopt=retries=<n>" if name == "dnf" else "-o Acquire::Retries=<n>"
+                self.report(where, f"runs {name} {subcommand} without {option} (n at least 1)")
 
     def check_ctest(self, where, step, script):
         rerun = step.get("id") == TIMING_RERUN
