@@ -13,8 +13,6 @@
 #       (tests/cmake/CoverageIgnoreRegexTest.cmake).
 include_guard(GLOBAL)
 
-set(KYTY_COVERAGE_IGNORE_PATTERN "(3rdparty|_deps|_kyty_patched|/tests/)")
-
 function(kyty_coverage_ignore_regex out build_dir source_dir)
 	foreach(kyty_dir IN ITEMS "${build_dir}" "${source_dir}")
 		if(NOT IS_ABSOLUTE "${kyty_dir}")
@@ -23,7 +21,7 @@ function(kyty_coverage_ignore_regex out build_dir source_dir)
 	endforeach()
 	string(REGEX REPLACE "/+$" "" kyty_build "${build_dir}")
 	string(REGEX REPLACE "/+$" "" kyty_source "${source_dir}")
-	set(kyty_regex "${KYTY_COVERAGE_IGNORE_PATTERN}")
+	set(kyty_regex "(3rdparty|_deps|_kyty_patched|/tests/)")
 	string(FIND "${kyty_source}/" "${kyty_build}/" kyty_position)
 	if(NOT kyty_position EQUAL 0)
 		# A backslash before each of \ ^ $ . [ ] | ( ) * + ? { } (in a CMake bracket expression a

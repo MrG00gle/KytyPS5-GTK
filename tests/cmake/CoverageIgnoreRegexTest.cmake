@@ -8,7 +8,8 @@
 #   and a path with each "." replaced do not;
 # - the value survives the argument list that cmake/KytyCoverageRun.cmake passes to llvm-cov;
 # - a trailing "/" changes nothing; an in-source build, and a source directory below the build
-#   directory, get no build directory part; a relative directory stops with an error.
+#   directory, get no build directory part; a relative directory stops with an error;
+# - the value does not depend on a KYTY_COVERAGE_IGNORE_PATTERN variable of the calling scope.
 #
 #   cmake -DFILTER_SCRIPT=<repository>/cmake/KytyCoverageFilter.cmake -P tests/cmake/CoverageIgnoreRegexTest.cmake
 cmake_minimum_required(VERSION 3.19)
@@ -160,6 +161,24 @@ if(kyty_result STREQUAL "0" OR NOT kyty_output MATCHES "'_Build/debug' is not an
 	kyty_ignore_regex_problem("relative build directory: exit '${kyty_result}', output: ${kyty_output}")
 endif()
 kyty_ignore_regex_count()
+
+# 6. The base pattern belongs to the function: a KYTY_COVERAGE_IGNORE_PATTERN variable of the
+#    calling scope, set in a calling function or unset at the top level, changes nothing.
+function(kyty_expect_own_pattern what)
+	kyty_coverage_ignore_regex(kyty_regex /b/build /s/repo)
+	if(NOT kyty_regex STREQUAL "${kyty_pattern}|^/b/build/")
+		kyty_ignore_regex_problem("${what}: '${kyty_regex}', expected '${kyty_pattern}|^/b/build/'")
+	endif()
+	kyty_ignore_regex_count()
+endfunction()
+function(kyty_call_with_pattern pattern)
+	set(KYTY_COVERAGE_IGNORE_PATTERN "${pattern}")
+	kyty_expect_own_pattern("a caller that sets KYTY_COVERAGE_IGNORE_PATTERN to '${pattern}'")
+endfunction()
+kyty_call_with_pattern("")
+kyty_call_with_pattern("x")
+unset(KYTY_COVERAGE_IGNORE_PATTERN)
+kyty_expect_own_pattern("KYTY_COVERAGE_IGNORE_PATTERN unset at the top level")
 
 get_property(kyty_cases GLOBAL PROPERTY KYTY_IGNORE_REGEX_CASES)
 get_property(kyty_failures GLOBAL PROPERTY KYTY_IGNORE_REGEX_FAILURES)
