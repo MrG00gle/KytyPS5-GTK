@@ -378,6 +378,24 @@ class Documentation(ScratchTree):
         return violations[0]
 
 
+class RelativeTarget(unittest.TestCase):
+    """relative_target resolves a link as docs_links (tools/docs/check_links.py) does."""
+
+    def test_relative_targets(self):
+        for source, target, expected in (("README.md", "/docs/running.md#x", "docs/running.md"),
+                                         ("docs/a.md", "../LICENSE?plain=1", "LICENSE"),
+                                         ("README.md", "my%20guide.md", "my guide.md"),
+                                         ("README.md", "docs/a\\_b.md", "docs/a_b.md")):
+            with self.subTest(target=target):
+                self.assertEqual(content_checks.relative_target(source, target), expected)
+
+    def test_empty_external_and_fragment_only_targets(self):
+        for target in ("#top", "\\#top", "?plain=1", "https://x", "//example.org/x", "mailto:a@b",
+                       "", "  "):
+            with self.subTest(target=target):
+                self.assertIsNone(content_checks.relative_target("README.md", target))
+
+
 class ReadmeStructure(Documentation):
     def test_the_fixture_passes(self):
         self.assert_passes("readme_structure")
@@ -530,6 +548,12 @@ class ReadmeStructure(Documentation):
         self.edit("README.md", "[building guide](docs/building.md)",
                   f"[building guide]({FORK}/blob/main/docs/building.md)")
         self.assert_fails("readme_structure", "no relative link to docs/building.md")
+
+    def test_root_relative_and_escaped_links_to_a_guide_count(self):
+        for target in ("/docs/building.md", "docs/building%2Emd"):
+            with self.subTest(target=target):
+                self.put("README.md", README.replace("](docs/building.md)", f"]({target})"))
+                self.assert_passes("readme_structure")
 
     def test_the_license_statements(self):
         self.edit("README.md", "`GPL-2.0-only`", "GPL 2")

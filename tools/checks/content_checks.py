@@ -161,12 +161,18 @@ import argparse
 import bisect
 import json
 import os
-import posixpath
 import re
 import stat
 import subprocess
 import sys
 import xml.parsers.expat
+
+# The link resolver of docs_links (tools/docs/check_links.py), which readme_structure shares.
+# Keep the local import below from writing __pycache__ into the checkout.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "docs"))
+import check_links  # noqa: E402
 
 BINARY_PROBE_SIZE = 8000
 WORD_CHARS = "A-Za-z0-9_"
@@ -1108,13 +1114,15 @@ def normalized(text):
 
 
 def relative_target(source, target):
-    """The repository path of a relative link target (fragment and query dropped), or None."""
-    target = target.strip()
-    if not target or re.match(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|#)", target):
+    """The repository path of a relative link target, resolved as docs_links resolves it
+    (check_links.resolve: backslash escapes and %-escapes decoded, query and fragment dropped, a
+    leading "/" from the repository root), or None for an empty or external target and for one
+    with nothing before its ? or #."""
+    unescaped = check_links.BACKSLASH_ESCAPE.sub(r"\1", target.strip())
+    if not re.split(r"[?#]", unescaped, maxsplit=1)[0]:
         return None
-    path = re.split(r"[?#]", target, maxsplit=1)[0]
-    joined = posixpath.normpath(posixpath.join(posixpath.dirname(source), path))
-    return "" if joined == "." else joined
+    resolved = check_links.resolve(source, target)
+    return None if resolved is None else resolved[0]
 
 
 def documentation_set(files):
