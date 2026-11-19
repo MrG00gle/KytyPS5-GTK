@@ -1313,6 +1313,70 @@ class Release(Workflow):
                           "workflow: permissions is 'write-all', not contents: read")
 
 
+class ReleaseNotes(Workflow):
+    """The release job writes the release's text with tools/ci/release_notes.py from the whole
+    history, and publishes the release with that text (docs/packaging.md, "Release notes")."""
+
+    NOTES = "Write the release notes"
+    NOTES_OPTION = "--notes-file _Build/release-notes.md "
+
+    def test_the_committed_release_job(self):
+        checkout = find_step(self.data, "release", "Check out")
+        self.assertEqual(checkout["with"]["fetch-depth"], 0)
+        self.assertIn("tools/ci/release_notes.py ", find_step(self.data, "release",
+                                                              self.NOTES)["run"])
+        self.assertIn(self.NOTES_OPTION, find_step(self.data, "release", "Publish")["run"])
+        self.assertLess(step_index(self.data, "release", self.NOTES),
+                        step_index(self.data, "release", "Publish"))
+
+    def test_no_release_notes_step(self):
+        def change(data):
+            data["jobs"]["release"]["steps"].remove(find_step(data, "release", self.NOTES))
+        self.assert_fails(change, "job release: has no step that runs the release notes")
+
+    def test_another_script_does_not_count(self):
+        def change(data):
+            replace_in_run(data, "release", self.NOTES, "tools/ci/release_notes.py ",
+                           "tools/ci/release_notes.py.bak ")
+        self.assert_fails(change, "job release: has no step that runs the release notes")
+
+    def test_publish_without_the_notes(self):
+        def change(data):
+            replace_in_run(data, "release", "Publish", self.NOTES_OPTION, "")
+        self.assert_fails(change, "job release: has no step that runs the publish with those "
+                          "notes")
+
+    def test_a_notes_step_that_can_be_skipped(self):
+        def change(data):
+            find_step(data, "release", self.NOTES)["if"] = "failure()"
+        self.assert_fails(change, f'job release, step "{self.NOTES}": if: \'failure()\' can skip '
+                          "the release notes; such a step may have no if")
+
+    def test_a_checkout_without_the_whole_history(self):
+        for depth in (None, 1, 2, "1", False):
+            with self.subTest(depth=depth):
+                def change(data, depth=depth):
+                    options = find_step(data, "release", "Check out")["with"]
+                    if depth is None:
+                        options.pop("fetch-depth")
+                    else:
+                        options["fetch-depth"] = depth
+                self.assert_fails(change, f'job release, step "Check out": checks out with '
+                                  f"fetch-depth: {depth!r}, not 0; the release notes need the "
+                                  "history and the tags since the previous release")
+
+    def test_no_checkout_in_the_release_job(self):
+        def change(data):
+            data["jobs"]["release"]["steps"].remove(find_step(data, "release", "Check out"))
+        self.assert_fails(change, "job release: has no actions/checkout step; the release notes "
+                          "need the history and the tags (fetch-depth: 0)")
+
+    def test_fetch_depth_as_a_string_passes(self):
+        def change(data):
+            find_step(data, "release", "Check out")["with"]["fetch-depth"] = "0"
+        self.assert_passes(self.mutated(change))
+
+
 UBUNTU_LIST = "tools/checks/ci-expected-failures-ubuntu.txt"
 UBUNTU_TEXT = ("llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; "
                "depthBounds is not supported")

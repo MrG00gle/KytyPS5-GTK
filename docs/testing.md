@@ -184,7 +184,8 @@ dispatch. Its jobs:
 - **Flatpak**: the bundle, `flatpak-builder-lint`, the desktop entry and metainfo validation, the
   license check, and a smoke test of the installed bundle;
 - **Publish the release**: only for pushes to `main` of `MrG00gle/KytyPS5-GTK`, and only when every
-  other job succeeded.
+  other job succeeded. The release's text is the notes written by hand for it, or else the commit
+  subjects since the previous release ([packaging guide](packaging.md#release-notes)).
 
 Every test job runs the whole suite with no name, label, or exclusion filter, on lavapipe for the
 GPU tests and with headless display servers for the UI tests. `tools/checks/junit_check.py` then

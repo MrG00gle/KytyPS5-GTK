@@ -14,6 +14,11 @@ then save the log from the launcher's log view with **Save log…**.
 - `dev` is merged into `main` only after explicit approval from the repository owner. Every push to
   `main` publishes a release. To re-run a run that has published its release, re-run only its
   `release` job, as the [packaging guide](docs/packaging.md#re-running-a-release) explains.
+- A release's text lists the commit subjects since the previous release, unless notes were written
+  by hand for it. To write them, replace any earlier notes below the comment in
+  [`packaging/release-notes.md`](packaging/release-notes.md) with the new ones (all text outside
+  the comment becomes the release's text) and commit the file to `dev` before the merge, as the
+  [packaging guide](docs/packaging.md#release-notes) describes.
 - Every CI check must pass before a pull request is merged: the builds on Ubuntu and Fedora, the full
   test suite in each of them, the coverage check, and the Flatpak build with its validations. The
   [testing guide](docs/testing.md#ci) describes the jobs.

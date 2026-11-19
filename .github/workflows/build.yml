@@ -930,6 +930,8 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The whole history and every tag: the release notes go back to the previous release.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Download the release archive
@@ -966,11 +968,25 @@ jobs:
             sha256sum -c "$asset.sha256"
           done
 
+      - name: Write the release notes
+        # The notes written by hand in packaging/release-notes.md when their text changed since
+        # the previous release, otherwise the commit subjects since then (docs/packaging.md).
+        env:
+          RELEASES: ${{ needs.metadata.outputs.releases }}
+        run: |
+          mkdir -p _Build
+          printf '%s\n' "$RELEASES" > _Build/releases.jsonl
+          python3 -B tools/ci/release_notes.py --repository "$GITHUB_REPOSITORY" --tag "$TAG" \
+            --sha "$GITHUB_SHA" --releases _Build/releases.jsonl \
+            --manual packaging/release-notes.md --output _Build/release-notes.md
+          { echo "### Release notes"; echo; cat _Build/release-notes.md; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish
+        # A release that is already published keeps its text (docs/packaging.md).
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -B tools/ci/publish_release.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" \
-            --target "$GITHUB_SHA" \
+            --target "$GITHUB_SHA" --notes-file _Build/release-notes.md \
             "dist/$TAG-Linux-x86_64.tar.gz" "dist/$TAG-x86_64.flatpak" \
             "dist/$TAG-Linux-x86_64.tar.gz.sha256" "dist/$TAG-x86_64.flatpak.sha256"

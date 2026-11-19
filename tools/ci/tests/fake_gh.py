@@ -8,21 +8,28 @@ makes:
 
     gh api --paginate repos/<repo>/releases?per_page=100
     gh api -X DELETE repos/<repo>/releases/<id>
-    gh release create <tag> --repo <repo> --draft --target <sha> --title <t> --generate-notes
+    gh release create <tag> --repo <repo> --draft --target <sha> --title <t> --notes-file <file>
     gh release upload <tag> <file>... --repo <repo>
     gh release edit <tag> --repo <repo> --draft=false --latest
 
-The list prints two releases per page, one JSON array after another, like
+The create call stores the notes file's text as the release's body. The list
+prints two releases per page, one JSON array after another, like
 `gh api --paginate`. FAKE_GH_FAIL names one step that fails with exit 1:
 list (every list call), create, upload (after the first file is attached),
 corrupt (every upload is attached with a wrong digest; the call succeeds),
-edit, or delete. Any other call exits 2.
+edit, or delete. Any other call exits 2, and so does a create without
+--notes-file or with another notes option, and an edit that would change a
+release's text (-n/--notes, -F/--notes-file, --generate-notes, or
+--notes-from-tag).
 """
 
 import hashlib
 import json
 import os
 import sys
+
+# The gh release options that set a release's text.
+NOTES_OPTIONS = {"--notes", "-n", "--notes-file", "-F", "--generate-notes", "--notes-from-tag"}
 
 
 def load():
@@ -88,13 +95,18 @@ def main(arguments):
         return 0
 
     if arguments[:2] == ["release", "create"]:
+        if "--notes-file" not in arguments or any(
+                argument in NOTES_OPTIONS - {"--notes-file"} for argument in arguments):
+            fail(f"fake gh: unexpected call {arguments}", 2)
         if failing == "create":
             fail("HTTP 422: Validation Failed")
+        with open(option(arguments, "--notes-file"), encoding="utf-8") as handle:
+            body = handle.read()
         release = {"id": state["next_id"], "tag_name": arguments[2],
                    "name": option(arguments, "--title"),
                    "target_commitish": option(arguments, "--target"),
                    "draft": "--draft" in arguments, "prerelease": False, "latest": False,
-                   "assets": []}
+                   "body": body, "assets": []}
         state["next_id"] += 1
         state["releases"].insert(0, release)
         save(state)
@@ -112,6 +124,8 @@ def main(arguments):
         return 0
 
     if arguments[:2] == ["release", "edit"]:
+        if any(argument.split("=", 1)[0] in NOTES_OPTIONS for argument in arguments):
+            fail(f"fake gh: unexpected call {arguments}", 2)
         if failing == "edit":
             fail("HTTP 500: Server Error")
         release = release_for(state, arguments[2])

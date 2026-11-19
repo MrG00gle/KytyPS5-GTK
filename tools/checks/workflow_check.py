@@ -67,7 +67,9 @@ both are accepted) and checks:
   release    the release job's if is exactly the push, refs/heads/main, and MrG00gle/KytyPS5-GTK
              conditions joined by && (success() may be added; no other status function and no ||);
              it needs every other job; it alone has write permission (contents: write), and the
-             workflow's permissions are contents: read.
+             workflow's permissions are contents: read. Its actions/checkout step has
+             fetch-depth: 0 (or "0"), because tools/ci/release_notes.py reads the history and the
+             tags back to the previous release.
   ccache     the ubuntu, fedora, and coverage jobs keep their compiler cache between runs
              (CCACHE_JOBS): each has an actions/cache step (any version) with path: _Build/ccache
              and a key that starts with ccache-<job>-, and a run line that writes
@@ -97,7 +99,10 @@ both are accepted) and checks:
              count (cat of the file, ulimit -c alone or in $(...)), not a comment or a label. The
              ubuntu, fedora, coverage, and flatpak jobs each run tools/ci/annotate.py environment
              (ENVIRONMENT), which puts the job's OS, kernel, and package versions in the job
-             summary and one notice, so image and package drift shows on the run page.
+             summary and one notice, so image and package drift shows on the run page. The
+             release job runs tools/ci/release_notes.py (the notes written by hand, or the commit
+             subjects since the previous release) and tools/ci/publish_release.py with
+             --notes-file, which creates the release with that text.
              Every step that runs one of them follows the if rule of the results paragraph, and a
              step whose if could skip it does not count: the check names the step and its if.
   lint       the ubuntu job lints the workflow with a pinned actionlint release: a step runs
@@ -260,6 +265,13 @@ REQUIRED_STEPS = {
     "fedora": CORE_DUMP_PRINTS + ENVIRONMENT,
     "coverage": CORE_DUMP_PRINTS + ENVIRONMENT,
     "flatpak": ENVIRONMENT,
+    # The release's text: the notes written by hand, or the commit subjects since the previous
+    # release (docs/packaging.md, "Release notes").
+    "release": [
+        ("the release notes", re.compile(r"(?<![\w./-])tools/ci/release_notes\.py\s")),
+        ("the publish with those notes",
+         re.compile(r"(?<![\w./-])tools/ci/publish_release\.py\s.*\s--notes-file\s")),
+    ],
 }
 
 INSTALL_COMMAND = re.compile(content_checks.QT_PACKAGE_MANAGER.pattern
@@ -1042,6 +1054,21 @@ class Checker:
         permissions = job.get("permissions")
         if not isinstance(permissions, dict) or permissions.get("contents") != "write":
             self.report(where, f"permissions is {permissions!r}, not contents: write")
+        # The release notes read the history and the tags back to the previous release.
+        checkouts = [(step, step_where) for _, step, step_where in self.steps(RELEASE_JOB)
+                     if isinstance(step.get("uses"), str)
+                     and step["uses"].split("@", 1)[0] == CHECKOUT_ACTION]
+        if not checkouts:
+            self.report(where, f"has no {CHECKOUT_ACTION} step; the release notes need the "
+                        "history and the tags (fetch-depth: 0)")
+        for step, step_where in checkouts:
+            with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
+            depth = with_.get("fetch-depth")
+            # yaml.safe_load reads false as a bool, and False == 0 in Python.
+            if isinstance(depth, bool) or (depth != 0 and depth != "0"):
+                self.report(step_where, f"checks out with fetch-depth: {depth!r}, not 0; the "
+                            "release notes need the history and the tags since the previous "
+                            "release")
 
     # ---- required steps
     def check_required_steps(self, job_id, required):

@@ -12,24 +12,30 @@ GitHub CLI (`gh`, authenticated through GH_TOKEN) on the repository given with
 2. A published (non-draft) release for the tag that is not a prerelease and
    holds exactly the given assets, each with the local file's size and, when
    GitHub reports one, its sha256 digest: nothing to do, exit 0. This makes a
-   rerun of a completed job succeed without changes.
+   rerun of a completed job succeed without changes; its text stays as it is.
 3. A published release for the tag that differs from that: exit 1 and change
    nothing (a published release is never deleted by this script).
 4. Delete every leftover draft for the tag (an earlier run that stopped).
-5. Create a draft (`gh release create <tag> --draft --target <sha>`), upload
-   every asset (`gh release upload`), list the releases again and check that
-   the draft holds exactly the assets with the right sizes and digests, then
-   publish it as the latest release (`gh release edit --draft=false --latest`).
+5. Create a draft with the notes file as its text (`gh release create <tag>
+   --draft --target <sha> --notes-file FILE`), upload every asset (`gh release
+   upload`), list the releases again and check that the draft holds exactly
+   the assets with the right sizes and digests, then publish it as the latest
+   release (`gh release edit --draft=false --latest`).
 6. When step 5 fails: delete every draft for the tag and exit 1, so no
    incomplete release is left behind. A draft is not visible as a published
    release, and GitHub creates the tag only when the release is published.
 
 Usage:
-    publish_release.py --repo OWNER/NAME --tag TAG --target SHA ASSET...
+    publish_release.py --repo OWNER/NAME --tag TAG --target SHA --notes-file FILE ASSET...
 
-The release title is the tag; its notes are GitHub's generated notes.
+The release title is the tag. Its text is the notes file, which
+release_notes.py writes: the notes written by hand for the release, or the
+commit subjects since the previous release. Only step 5 sets a release's text;
+no call changes the text of a published release, so an edit made on the
+release page is kept.
 Exit status: 0 when the release is published and complete, 1 on any failure,
-2 on a usage error (a missing or empty asset, two assets with one name).
+2 on a usage error (a missing or empty asset or notes file, two assets with
+one name).
 """
 
 import argparse
@@ -139,7 +145,7 @@ def delete_drafts(repo, tag):
     return len(drafts)
 
 
-def publish(repo, tag, target, paths, expected):
+def publish(repo, tag, target, paths, expected, notes_file):
     """Steps 1 to 6 of the module description. Return the exit status."""
     existing = releases_for_tag(repo, tag)
     published = [release for release in existing if not release.get("draft")]
@@ -164,7 +170,7 @@ def publish(repo, tag, target, paths, expected):
         print(f"Deleted {deleted} leftover draft release(s) for {tag}.")
     try:
         run_gh(["release", "create", tag, "--repo", repo, "--draft", "--target", target,
-                "--title", tag, "--generate-notes"])
+                "--title", tag, "--notes-file", notes_file])
         run_gh(["release", "upload", tag, *paths, "--repo", repo])
         drafts = [release for release in releases_for_tag(repo, tag) if release.get("draft")]
         if len(drafts) != 1:
@@ -194,8 +200,20 @@ def main(argv=None):
     parser.add_argument("--repo", required=True, help="OWNER/NAME of the repository")
     parser.add_argument("--tag", required=True, help="the release tag (also the title)")
     parser.add_argument("--target", required=True, help="the commit the tag will point at")
+    parser.add_argument("--notes-file", required=True,
+                        help="the release's text (Markdown), set only when the release is created")
     parser.add_argument("assets", nargs="+", help="the files to attach")
     args = parser.parse_args(argv)
+
+    try:
+        with open(args.notes_file, encoding="utf-8") as handle:
+            notes = handle.read()
+    except (OSError, UnicodeDecodeError) as error:
+        print(f"error: cannot read the notes file {args.notes_file}: {error}", file=sys.stderr)
+        return 2
+    if not notes.strip():
+        print(f"error: the notes file {args.notes_file} is empty", file=sys.stderr)
+        return 2
 
     expected = {}
     for path in args.assets:
@@ -213,7 +231,7 @@ def main(argv=None):
         expected[name] = (size, hexdigest)
 
     try:
-        return publish(args.repo, args.tag, args.target, args.assets, expected)
+        return publish(args.repo, args.tag, args.target, args.assets, expected, args.notes_file)
     except (GhError, json.JSONDecodeError) as error:
         print(f"error: {error}")
         print(f"FAILED: release {args.tag} was not published")

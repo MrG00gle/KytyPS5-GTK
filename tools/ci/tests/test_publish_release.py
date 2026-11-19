@@ -26,6 +26,8 @@ TAG = "KytyPS5-GTK-2026-11-12-abcdef0"
 SHA = "abcdef0123456789abcdef0123456789abcdef01"
 ASSET_NAMES = (f"{TAG}-Linux-x86_64.tar.gz", f"{TAG}-x86_64.flatpak",
                f"{TAG}-Linux-x86_64.tar.gz.sha256", f"{TAG}-x86_64.flatpak.sha256")
+NOTES = ("## Launcher\n\n- Read input mappings the way the emulator does\n\n"
+         f"**Full Changelog**: https://github.com/{REPO}/commits/{TAG}\n")
 
 
 class FakeGhRun(unittest.TestCase):
@@ -46,6 +48,9 @@ class FakeGhRun(unittest.TestCase):
         with open(wrapper, "w", encoding="utf-8") as handle:
             handle.write(f'#!/bin/sh\nexec "{sys.executable}" -B "{FAKE_GH}" "$@"\n')
         os.chmod(wrapper, 0o755)
+        self.notes = os.path.join(root, "release-notes.md")
+        with open(self.notes, "w", encoding="utf-8") as handle:
+            handle.write(NOTES)
         self.state_path = os.path.join(root, "state.json")
         self.log_path = os.path.join(root, "calls.log")
         self.environment = {"PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
@@ -93,18 +98,20 @@ class FakeGhRun(unittest.TestCase):
                             "digest": f"sha256:{digest}", "state": "uploaded"})
         return records
 
-    def release(self, release_id, tag=TAG, draft=False, prerelease=False, assets=None):
+    def release(self, release_id, tag=TAG, draft=False, prerelease=False, assets=None,
+                body="Notes"):
         return {"id": release_id, "tag_name": tag, "name": tag, "draft": draft,
-                "prerelease": prerelease, "latest": False,
+                "prerelease": prerelease, "latest": False, "body": body,
                 "assets": self.asset_records() if assets is None else assets}
 
-    def publish(self, fail=None, assets=None):
+    def publish(self, fail=None, assets=None, notes=None):
         environment = dict(self.environment)
         if fail:
             environment["FAKE_GH_FAIL"] = fail
         stdout = io.StringIO()
         with mock.patch.dict(os.environ, environment), contextlib.redirect_stdout(stdout):
             status = publish_release.main(["--repo", REPO, "--tag", TAG, "--target", SHA,
+                                           "--notes-file", notes or self.notes,
                                            *(assets or self.assets)])
         return status, stdout.getvalue().splitlines()
 
@@ -116,13 +123,14 @@ class Publish(FakeGhRun):
         self.assertEqual(self.call_kinds(), ["list", "create", "upload", "list", "edit"])
         create, upload, edit = self.calls()[1], self.calls()[2], self.calls()[4]
         self.assertEqual(create, ["release", "create", TAG, "--repo", REPO, "--draft", "--target",
-                                  SHA, "--title", TAG, "--generate-notes"])
+                                  SHA, "--title", TAG, "--notes-file", self.notes])
         self.assertEqual(upload, ["release", "upload", TAG, *self.assets, "--repo", REPO])
         self.assertEqual(edit, ["release", "edit", TAG, "--repo", REPO, "--draft=false",
                                 "--latest"])
         [release] = self.releases()
         self.assertFalse(release["draft"])
         self.assertTrue(release["latest"])
+        self.assertEqual(release["body"], NOTES)
         self.assertEqual(sorted(asset["name"] for asset in release["assets"]), sorted(ASSET_NAMES))
         self.assertIn(f"Published release {TAG} as the latest release with 4 assets.", lines)
 
@@ -136,9 +144,21 @@ class Publish(FakeGhRun):
                       lines)
         self.assertEqual(len(self.releases()), 3)
 
+    def test_rerun_keeps_the_text_of_the_published_release(self):
+        # The owner edited the text on the release page; a rerun with other notes keeps it.
+        self.set_releases([self.release(7, body="Edited on the release page")])
+        other_notes = os.path.join(self.temp.name, "other-notes.md")
+        with open(other_notes, "w", encoding="utf-8") as handle:
+            handle.write("## Other changes\n\n- ci: something else\n")
+        status, lines = self.publish(notes=other_notes)
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.call_kinds(), ["list"])
+        [release] = self.releases()
+        self.assertEqual(release["body"], "Edited on the release page")
+
     def test_leftover_draft_is_deleted_first(self):
         other = self.release(5, tag="KytyPS5-GTK-2026-11-01-1111111")
-        draft = self.release(7, draft=True, assets=self.asset_records()[:1])
+        draft = self.release(7, draft=True, assets=self.asset_records()[:1], body="Old draft")
         self.set_releases([draft, other])
         status, lines = self.publish()
         self.assertEqual(status, 0, lines)
@@ -146,6 +166,8 @@ class Publish(FakeGhRun):
                          ["list", "list", "delete 7", "create", "upload", "list", "edit"])
         tags = sorted((release["tag_name"], release["draft"]) for release in self.releases())
         self.assertEqual(tags, [("KytyPS5-GTK-2026-11-01-1111111", False), (TAG, False)])
+        self.assertEqual([release["body"] for release in self.releases()
+                          if release["tag_name"] == TAG], [NOTES])
         self.assertIn(f"Deleted 1 leftover draft release(s) for {TAG}.", lines)
 
     def test_upload_failure_deletes_the_draft(self):
@@ -238,21 +260,46 @@ class Usage(FakeGhRun):
         status = self.publish(assets=[self.assets[0], other])[0]
         self.assertEqual(status, 2)
 
+    def test_missing_or_empty_notes_file_is_a_usage_error(self):
+        empty = os.path.join(self.temp.name, "empty.md")
+        with open(empty, "w", encoding="utf-8") as handle:
+            handle.write(" \n\n")
+        for path in (os.path.join(self.temp.name, "absent.md"), empty):
+            with self.subTest(path=path):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    status = self.publish(notes=path)[0]
+                self.assertEqual(status, 2)
+                self.assertIn("the notes file", stderr.getvalue())
+                self.assertEqual(self.calls(), [])
+
     def test_script_requires_the_tag(self):
         environment = dict(os.environ, **self.environment)
         result = subprocess.run([sys.executable, "-B", SCRIPT, "--repo", REPO, "--target", SHA,
-                                 self.assets[0]], capture_output=True, text=True, env=environment,
+                                 "--notes-file", self.notes, self.assets[0]],
+                                capture_output=True, text=True, env=environment,
                                 stdin=subprocess.DEVNULL, check=False)
         self.assertEqual(result.returncode, 2)
         self.assertIn("--tag", result.stderr)
 
-    def test_script_publishes_through_gh_on_path(self):
+    def test_script_requires_the_notes_file(self):
         environment = dict(os.environ, **self.environment)
         result = subprocess.run([sys.executable, "-B", SCRIPT, "--repo", REPO, "--tag", TAG,
                                  "--target", SHA, *self.assets], capture_output=True, text=True,
                                 env=environment, stdin=subprocess.DEVNULL, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--notes-file", result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_script_publishes_through_gh_on_path(self):
+        environment = dict(os.environ, **self.environment)
+        result = subprocess.run([sys.executable, "-B", SCRIPT, "--repo", REPO, "--tag", TAG,
+                                 "--target", SHA, "--notes-file", self.notes, *self.assets],
+                                capture_output=True, text=True, env=environment,
+                                stdin=subprocess.DEVNULL, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(f"+ gh release create {TAG}", result.stdout)
+        self.assertEqual(self.releases()[0]["body"], NOTES)
 
 
 if __name__ == "__main__":

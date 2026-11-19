@@ -203,6 +203,33 @@ Before the action runs, the job lists the image's tools and the version and comm
 preinstalled GNOME runtime and SDK in its job summary and in one notice on the run page. The
 digest of the image itself is in the log of the job's "Initialize containers" step.
 
+## Release notes
+
+Before it publishes a release, the `release` job writes the release's text with
+`tools/ci/release_notes.py`. The text comes from one of two places:
+
+- **Notes written by hand.** When the text of
+  [`packaging/release-notes.md`](../packaging/release-notes.md) outside its HTML comments changed
+  since the previous release (the newest published release before this commit), that text is the
+  release's text, as written.
+- **Otherwise, the commit subjects** since the previous release, at most the newest 100, grouped
+  by the area at the start of each subject: Launcher, Updater, Emulator (with the emulator's
+  subsystems, such as `shader`), and Packaging. Changes to the tests, the build, CI, and the
+  documentation, and subjects without an area, are folded under "Other changes". A link to the
+  full changelog ends the text.
+
+To write notes for the next release, replace everything below the comment in
+`packaging/release-notes.md` with the new notes in Markdown, and commit the file to `dev` before
+`dev` is merged into `main`. All text outside the comment becomes the release's text, so notes of
+an earlier release that stay next to the new ones are published again. The notes are used for that
+one release only. At the release after it, the file still has the same text, so that release lists
+the commit subjects again, and the file does not need to be cleared after a release. A change to
+the comment alone does not count as new notes.
+
+CI never changes the text of a release that is already published. A rerun of the `release` job
+leaves such a release as it is, so a text that you edit on its GitHub release page stays. The
+**Release notes** button of the launcher's update offer opens that page.
+
 ## Re-running a release
 
 To re-run a run that has published its release, re-run only its `release` job:
