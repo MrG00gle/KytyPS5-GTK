@@ -100,6 +100,12 @@ both are accepted) and checks:
              summary and one notice, so image and package drift shows on the run page.
              Every step that runs one of them follows the if rule of the results paragraph, and a
              step whose if could skip it does not count: the check names the step and its if.
+  lint       the ubuntu job lints the workflow with a pinned actionlint release: a step runs
+             "$RUNNER_TEMP/actionlint" (also ${RUNNER_TEMP}) as a command, after a line that
+             checks the download with sha256sum -c (or --check) and names $ACTIONLINT_SHA256;
+             the step sees ACTIONLINT_VERSION set to a release version (1.7.12) and
+             ACTIONLINT_SHA256 to 64 lowercase hex digits, and follows the if rule of the
+             results paragraph.
   flatpak    the flatpak job builds the bundle with the flatpak-builder action
              (flatpak/flatpak-github-actions/flatpak-builder, any version). Before the action, a
              step of the job copies /var/lib/flatpak to $RUNNER_TEMP/flatpak-system and then
@@ -195,6 +201,15 @@ VERSION_COMMENT = re.compile(r"\s+#\s*v[0-9]+(?:\.[0-9]+)*\s*")
 CHECKOUT_ACTION = "actions/checkout"
 DEPENDABOT = ".github/dependabot.yml"
 DEPENDABOT_BRANCH = "dev"
+# The ubuntu job lints the workflow with a pinned actionlint release, which it checks against
+# ACTIONLINT_SHA256 before it runs the binary from $RUNNER_TEMP.
+ACTIONLINT_JOB = "ubuntu"
+ACTIONLINT_COMMAND = re.compile(r"\$(?:RUNNER_TEMP|\{RUNNER_TEMP\})/actionlint")
+ACTIONLINT_HASH = re.compile(r"\$(?:ACTIONLINT_SHA256|\{ACTIONLINT_SHA256\})(?!\w)")
+CHECK_OPTION = re.compile(r"--check|-[A-Za-z]*c[A-Za-z]*")
+RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+ACTIONLINT = 'the workflow lint ("$RUNNER_TEMP/actionlint")'
 # Time limits (GitHub's default is 360 minutes for a job) and package download retries.
 MAX_JOB_MINUTES = 120
 MAX_INSTALL_MINUTES = 30
@@ -617,6 +632,15 @@ def empty_launchers(script):
     return found
 
 
+def verifies_actionlint(line):
+    """Whether a line runs sha256sum -c (or --check) and names $ACTIONLINT_SHA256 outside a
+    comment, as echo "$ACTIONLINT_SHA256  <archive>" | sha256sum -c - does."""
+    checks = any(word.rsplit("/", 1)[-1] == "sha256sum"
+                 and any(CHECK_OPTION.fullmatch(argument) for argument in arguments)
+                 for word, arguments in commands(line))
+    return checks and any(ACTIONLINT_HASH.search(word) for word in words(line))
+
+
 def is_result_check(step):
     """A step that runs junit_check.py on a full run's JUnit file, with --registered."""
     return any(has_option(line, "--registered") and not has_option(line, "--print-retry-candidates")
@@ -706,6 +730,8 @@ class Checker:
                 self.check_required_steps(job_id, required)
         if FLATPAK_JOB in self.jobs:
             self.check_flatpak_installation()
+        if ACTIONLINT_JOB in self.jobs:
+            self.check_actionlint()
         self.check_ubuntu_list()
         self.check_dependabot()
         return self.problems
@@ -1028,6 +1054,34 @@ class Checker:
             # A match counts only in a step whose if cannot skip it; any other is reported.
             for number, step, where in matches:
                 self.check_condition(job_id, number, step, where, description)
+
+    # ---- the ubuntu job: actionlint at a pinned, checked release
+    def check_actionlint(self):
+        found = False
+        for number, step, where in self.steps(ACTIONLINT_JOB):
+            lines = logical_lines(step.get("run") or "")
+            runs = [index for index, line in enumerate(lines)
+                    if any(ACTIONLINT_COMMAND.fullmatch(word) for word, _ in commands(line))]
+            if not runs:
+                continue
+            found = True
+            checks = [index for index, line in enumerate(lines) if verifies_actionlint(line)]
+            if not checks or checks[0] > runs[0]:
+                self.report(where, "runs actionlint without checking the download first; a "
+                            "line before the run needs sha256sum -c with $ACTIONLINT_SHA256")
+            env = self.environment(ACTIONLINT_JOB, step)
+            version = env.get("ACTIONLINT_VERSION")
+            if not RELEASE_VERSION.fullmatch(str(version)):
+                self.report(where, f"ACTIONLINT_VERSION is {version!r}, not a release version "
+                            "such as 1.7.12")
+            digest = env.get("ACTIONLINT_SHA256")
+            if not SHA256_HEX.fullmatch(str(digest)):
+                self.report(where, f"ACTIONLINT_SHA256 is {digest!r}, not 64 lowercase hex "
+                            "digits")
+            self.check_condition(ACTIONLINT_JOB, number, step, where, ACTIONLINT)
+        if not found:
+            self.report(self.job_label(ACTIONLINT_JOB), f"has no step that runs {ACTIONLINT} "
+                        "on the workflow")
 
     # ---- the flatpak job: the Flatpak installation off the image's overlay
     def check_flatpak_installation(self):

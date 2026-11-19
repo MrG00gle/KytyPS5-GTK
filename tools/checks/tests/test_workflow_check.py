@@ -1176,6 +1176,99 @@ class Pins(Workflow):
         self.assertEqual(status, 0, lines)
 
 
+class Actionlint(Workflow):
+    """The ubuntu job runs a pinned actionlint release on the workflow after checking its
+    SHA-256, in a step that no if can skip."""
+
+    STEP = "Lint the workflow"
+    CHECK = 'echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -\n'
+    RUN = '"$RUNNER_TEMP/actionlint" -color .github/workflows/build.yml\n'
+    MISSING = 'job ubuntu: has no step that runs the workflow lint ("$RUNNER_TEMP/actionlint") '
+
+    def test_the_committed_step(self):
+        step = find_step(self.data, "ubuntu", self.STEP)
+        self.assertRegex(step["env"]["ACTIONLINT_VERSION"], r"^[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertRegex(step["env"]["ACTIONLINT_SHA256"], r"^[0-9a-f]{64}$")
+        self.assertIn(self.CHECK, step["run"])
+        self.assertIn(self.RUN, step["run"])
+        self.assertLess(step["run"].index(self.CHECK), step["run"].index(self.RUN))
+
+    def test_no_such_step(self):
+        cases = {"removed": lambda data: data["jobs"]["ubuntu"]["steps"].remove(
+                     find_step(data, "ubuntu", self.STEP)),
+                 "not run": lambda data: replace_in_run(data, "ubuntu", self.STEP, self.RUN,
+                                                        "ls \"$RUNNER_TEMP\"\n"),
+                 "a comment": lambda data: replace_in_run(data, "ubuntu", self.STEP, self.RUN,
+                                                          f"# {self.RUN}"),
+                 "only in fedora": self.only_in_fedora}
+        for name, change in cases.items():
+            with self.subTest(name):
+                self.assert_fails(change, self.MISSING + "on the workflow")
+
+    def only_in_fedora(self, data):
+        step = find_step(data, "ubuntu", self.STEP)
+        data["jobs"]["ubuntu"]["steps"].remove(step)
+        data["jobs"]["fedora"]["steps"].append(step)
+
+    def test_no_check_before_the_run(self):
+        cases = {"none": (self.CHECK, ""),
+                 "after the run": (self.CHECK + "tar", "tar"),
+                 "another file": (self.CHECK, "sha256sum -c actionlint_checksums.txt\n"),
+                 "no check option": (self.CHECK, self.CHECK.replace(" -c -", " -")),
+                 "a comment": (self.CHECK, f"# {self.CHECK}")}
+        for name, (old, new) in cases.items():
+            with self.subTest(name):
+                def change(data, name=name, old=old, new=new):
+                    replace_in_run(data, "ubuntu", self.STEP, old, new)
+                    if name == "after the run":
+                        find_step(data, "ubuntu", self.STEP)["run"] += self.CHECK
+                self.assert_fails(change, f'job ubuntu, step "{self.STEP}": runs actionlint '
+                                  "without checking the download first; a line before the run "
+                                  "needs sha256sum -c with $ACTIONLINT_SHA256")
+
+    def test_a_version_or_hash_that_pins_nothing(self):
+        cases = (("ACTIONLINT_VERSION", "latest", "ACTIONLINT_VERSION is 'latest', not a release "
+                  "version such as 1.7.12"),
+                 ("ACTIONLINT_VERSION", 1.7, "ACTIONLINT_VERSION is 1.7, not a release version"),
+                 ("ACTIONLINT_VERSION", None, "ACTIONLINT_VERSION is None, not a release"),
+                 ("ACTIONLINT_SHA256", "8aca8db9", "ACTIONLINT_SHA256 is '8aca8db9', not 64 "
+                  "lowercase hex digits"),
+                 ("ACTIONLINT_SHA256", "A" * 64, "ACTIONLINT_SHA256 is 'AAAA"),
+                 ("ACTIONLINT_SHA256", None, "ACTIONLINT_SHA256 is None, not 64"))
+        for name, value, fragment in cases:
+            with self.subTest(name=name, value=value):
+                def change(data, name=name, value=value):
+                    env = find_step(data, "ubuntu", self.STEP)["env"]
+                    if value is None:
+                        env.pop(name)
+                    else:
+                        env[name] = value
+                self.assert_fails(change, f'job ubuntu, step "{self.STEP}": {fragment}')
+
+    def test_a_step_that_can_be_skipped(self):
+        def change(data):
+            find_step(data, "ubuntu", self.STEP)["if"] = "failure()"
+        self.assert_fails(change, f'job ubuntu, step "{self.STEP}": if: \'failure()\' can skip '
+                          'the workflow lint ("$RUNNER_TEMP/actionlint"); such a step may have '
+                          "no if")
+
+    def test_other_forms_pass(self):
+        cases = ((self.RUN, '"${RUNNER_TEMP}/actionlint" .github/workflows/build.yml\n'),
+                 (" -c -", " --check -"),
+                 (" -c -", " --strict -c -"),
+                 ('echo "$ACTIONLINT_SHA256 ', 'echo "${ACTIONLINT_SHA256} '))
+        for old, new in cases:
+            with self.subTest(new=new):
+                self.assert_passes(self.mutated(
+                    lambda data, old=old, new=new: replace_in_run(data, "ubuntu", self.STEP,
+                                                                  old, new)))
+
+        def from_the_job(data):
+            step = find_step(data, "ubuntu", self.STEP)
+            data["jobs"]["ubuntu"]["env"].update(step.pop("env"))
+        self.assert_passes(self.mutated(from_the_job))
+
+
 class Release(Workflow):
     def test_release_if_without_the_repository_condition(self):
         def change(data):
