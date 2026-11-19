@@ -46,8 +46,12 @@ both are accepted) and checks:
              command, with their options and operands: env, timeout, nice, nohup, stdbuf, sudo,
              xvfb-run, dbus-run-session, time, exec, command (not command -v or -V, which only
              look it up), and cmake -E env; and in the script of bash, sh, dash, zsh, or ksh -c
-             (also in a cluster such as -ec). Not followed: script files, shell functions, eval,
-             aliases, a command held in a variable, xargs, find -exec, and env -S.
+             (also in a cluster such as -ec). A wrapper's single-dash option cluster is read as
+             getopt reads it: its first letter that takes a value takes the next word when it
+             is the cluster's last letter (sudo -Eu runner, timeout -vk 5 2h, env -iu DISPLAY),
+             and the rest of the word otherwise (sudo -uroot, timeout -k5 2h). Not followed:
+             script files, shell functions, eval, aliases, a command held in a variable, xargs,
+             find -exec, and env -S.
   results    the ubuntu, fedora, and coverage jobs each run tests (an unfiltered ctest call, or
              the coverage target, which runs ctest itself) with VK_DRIVER_FILES set to the
              manifest of Mesa's software Vulkan driver on the job's distribution
@@ -375,9 +379,24 @@ def commands(line):
     return found
 
 
+def takes_next_word(word, value_options):
+    """Whether an option word takes the next word as its value: an option of value_options, or a
+    single-dash cluster such as -Eu or -vk read as getopt reads it, whose first letter that takes
+    a value (-<letter> in value_options) is its last letter. That letter takes the rest of the
+    word instead when it is not the last (-uroot, -k5)."""
+    if word in value_options:
+        return True
+    if len(word) <= 2 or word.startswith("--"):
+        return False
+    for position, letter in enumerate(word[1:], 1):
+        if f"-{letter}" in value_options:
+            return position == len(word) - 1
+    return False
+
+
 def after_options(arguments, value_options, assignments=False):
-    """The arguments after a command's options ("--" ends them, and an option of value_options
-    takes the next word) and, if assignments, its NAME=value words."""
+    """The arguments after a command's options ("--" ends them, and an option that takes a value,
+    takes_next_word, also skips the next word) and, if assignments, its NAME=value words."""
     index = 0
     options = True
     while index < len(arguments):
@@ -386,7 +405,7 @@ def after_options(arguments, value_options, assignments=False):
             options = False
             index += 1
         elif options and word.startswith("-"):
-            index += 2 if word in value_options else 1
+            index += 2 if takes_next_word(word, value_options) else 1
         elif assignments and ASSIGNMENT.match(word):
             index += 1
         else:

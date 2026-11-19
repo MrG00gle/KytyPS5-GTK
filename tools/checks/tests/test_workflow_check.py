@@ -384,11 +384,15 @@ class CtestFilters(Workflow):
     ONE_LINE_RUN = ('ctest --test-dir "$BUILD_DIR" --output-on-failure --test-output-size-passed '
                     '262144 --output-junit "$PWD/$BUILD_DIR/ctest.xml"')
     FILTERED_RUN = 'ctest --test-dir "$BUILD_DIR" -R x --output-on-failure'
-    # Commands that run the command after them, with their options, operands, and "--".
+    # Commands that run the command after them, with their options, operands, and "--". In an
+    # option cluster (-Eu, -vk), a last letter that takes a value takes the next word; one that
+    # is not last takes the rest of the word (-uroot, -k5).
     WRAPPERS = ("timeout --signal=KILL -k 10s 2h", "timeout -- 2h", "nice -n 10", "nice -5",
                 "nohup", "stdbuf -oL -e L", "sudo -E -u runner", "sudo VAR=1",
                 'xvfb-run -a -s "-screen 0 1x1x24"', "dbus-run-session --config-file=/x --",
-                "cmake -E env --unset=DISPLAY X=1 --", "env -C /tmp", "exec -a name", "time -p")
+                "cmake -E env --unset=DISPLAY X=1 --", "env -C /tmp", "exec -a name", "time -p",
+                "sudo -Eu runner", "timeout -vk 5 2h", "sudo -uroot", "timeout -k5 2h",
+                "env -iu DISPLAY")
 
     def assert_passes_with_runs(self, change, runs=5):
         status, lines, stderr = self.run_check(self.mutated(change))
@@ -429,9 +433,10 @@ class CtestFilters(Workflow):
 
     def test_wrapped_unfiltered_runs_pass(self):
         for name, new in (("timeout", f"timeout 6h {self.MAIN_RUN}"),
+                          ("timeout -vk", f"timeout -vk 5 6h {self.MAIN_RUN}"),
                           ("bash -c", f"bash -c '{self.ONE_LINE_RUN}'")):
             with self.subTest(name):
-                old = self.MAIN_RUN if name == "timeout" else self.FULL_RUN
+                old = self.FULL_RUN if name == "bash -c" else self.MAIN_RUN
 
                 def change(data, old=old, new=new):
                     replace_in_run(data, "ubuntu", "tests", old, new)
