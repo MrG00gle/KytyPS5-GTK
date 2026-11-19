@@ -940,7 +940,7 @@ jobs:
     # Only a push to main in this repository, and only when every job above succeeded.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'MrG00gle/KytyPS5-GTK'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: write
     env:

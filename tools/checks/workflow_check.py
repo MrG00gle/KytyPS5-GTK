@@ -15,7 +15,9 @@ both are accepted) and checks:
              and no windows-* or macos-* runner label in runs-on or a matrix. Only the release job
              has a job-level if (release below): on any other job it could skip the whole job.
              Every job has timeout-minutes, a whole number from 1 to 120 (MAX_JOB_MINUTES), so a
-             hung step cannot run for GitHub's default of 360 minutes.
+             hung step cannot run for GitHub's default of 360 minutes. No step has a whole-number
+             timeout-minutes above its job's: the job's limit would end the step first, so the
+             step's limit would have no effect.
   packages   no install command (apt-get, apt, dnf, yum, pacman, zypper, pip) names a Qt package:
              no word on that line, and none in an env variable that the line expands, matches
              content_checks.py's Qt package pattern or contains "qt" in any case. No run line and
@@ -847,6 +849,12 @@ class Checker:
             self.report(self.job_label(job_id), f"timeout-minutes is {minutes!r}, not a whole "
                         f"number from 1 to {MAX_JOB_MINUTES}")
         for number, step, where in self.steps(job_id):
+            step_minutes = step.get("timeout-minutes")
+            if (whole_minutes(minutes, MAX_JOB_MINUTES) and isinstance(step_minutes, int)
+                    and not isinstance(step_minutes, bool) and step_minutes > minutes):
+                self.report(where, f"timeout-minutes is {step_minutes}, above the job's "
+                            f"{minutes}; the job's limit ends the step first, so the step's limit "
+                            "has no effect")
             if step.get("continue-on-error"):
                 self.report(where, "sets continue-on-error, so its failure would not fail the "
                             "run (Requirement 16.10)")

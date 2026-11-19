@@ -876,11 +876,11 @@ class Ccache(Workflow):
 
 
 class Limits(Workflow):
-    """Every job has a time limit, and every step that downloads packages has its own and makes
-    apt or dnf retry failed downloads."""
+    """Every job has a time limit, no step's limit is above its job's, and every step that
+    downloads packages has its own and makes apt or dnf retry failed downloads."""
 
     JOB_MINUTES = {"metadata": 10, "ubuntu": 120, "fedora": 120, "coverage": 120, "flatpak": 60,
-                   "release": 30}
+                   "release": 60}
     INSTALLS = (("ubuntu", "Install packages", "apt-get update"),
                 ("coverage", "Install packages", "apt-get update"),
                 ("fedora", "Install git and Python", "dnf install"),
@@ -915,6 +915,49 @@ class Limits(Workflow):
                     data["jobs"]["ubuntu"]["timeout-minutes"] = value
                 self.assert_fails(change, f"job ubuntu: timeout-minutes is {value!r}, not a whole "
                                   "number from 1 to 120")
+
+    def test_no_committed_step_limit_is_above_its_job_limit(self):
+        for job_id, job in self.data["jobs"].items():
+            for step in job["steps"]:
+                if "timeout-minutes" in step:
+                    with self.subTest(job=job_id, step=step.get("name")):
+                        self.assertLessEqual(step["timeout-minutes"], job["timeout-minutes"])
+
+    def test_a_step_limit_above_its_job_limit(self):
+        cases = (("release", 30, self.RELEASE, None, 45),
+                 ("release", 44, self.RELEASE, None, 45),
+                 ("ubuntu", 120, "Lint the workflow", 121, 121),
+                 ("metadata", 10, "Compute the tag", 11, 11))
+        for job, job_minutes, key, step_minutes, shown in cases:
+            with self.subTest(job=job, job_minutes=job_minutes, step_minutes=step_minutes):
+                def change(data, job=job, job_minutes=job_minutes, key=key,
+                           step_minutes=step_minutes):
+                    data["jobs"][job]["timeout-minutes"] = job_minutes
+                    if step_minutes is not None:
+                        find_step(data, job, key)["timeout-minutes"] = step_minutes
+                self.assert_fails(change, f'job {job}, step "{key}": timeout-minutes is {shown}, '
+                                  f"above the job's {job_minutes}; the job's limit ends the step "
+                                  "first, so the step's limit has no effect")
+
+    def test_a_step_limit_equal_to_or_below_its_job_limit_passes(self):
+        for minutes in (45, 46, 120):
+            with self.subTest(minutes=minutes):
+                def change(data, minutes=minutes):
+                    data["jobs"]["release"]["timeout-minutes"] = minutes
+                self.assert_passes(self.mutated(change))
+
+        def an_expression(data):
+            # Only whole numbers are compared: GitHub reads an expression at run time.
+            find_step(data, "ubuntu", "Lint the workflow")["timeout-minutes"] = "${{ 500 }}"
+        self.assert_passes(self.mutated(an_expression))
+
+    def test_an_invalid_job_limit_is_reported_once(self):
+        for value in (0, 20.5, "30"):
+            with self.subTest(value=value):
+                def change(data, value=value):
+                    data["jobs"]["release"]["timeout-minutes"] = value
+                self.assert_fails(change, f"job release: timeout-minutes is {value!r}, not a "
+                                  "whole number from 1 to 120")
 
     def test_an_install_step_without_its_timeout(self):
         for job, key, command in self.INSTALLS:
