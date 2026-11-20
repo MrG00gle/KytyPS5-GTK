@@ -6,8 +6,8 @@
 //   text, has buttons with accessible names under GTK_A11Y=test (plan D9), and closes with its
 //   Cancel button; the toplevel count is back where it was.
 // - harness_loopback_http: requests through LoopbackHttpClient reach the in-process SoupServer
-//   and are recorded on both sides (plan D12); unscripted paths answer 404; chunked, delayed, and
-//   stalled responses behave as scripted.
+//   and are recorded on both sides (plan D12); unscripted paths answer 404; chunked, delayed,
+//   held, and stalled responses behave as scripted.
 // - harness_application_starts: the real KytyApplication with the test hooks (plan D13) maps its
 //   main window, scans the fixture games, downloads the compatibility database from the loopback
 //   server, and app.quit ends it with status 0.
@@ -62,8 +62,9 @@ struct Fetched {
 	int                    done   = 0;
 };
 
-Fetched Fetch(kyty::core::HttpClient& client, const kyty::core::HttpRequest& request) {
-	Fetched fetched;
+// Sends request without waiting; fetched collects the body and the result and must outlive it.
+void Send(kyty::core::HttpClient& client, const kyty::core::HttpRequest& request,
+          Fetched& fetched) {
 	client.Get(
 	    request,
 	    [&fetched](std::span<const std::byte> bytes) {
@@ -75,6 +76,11 @@ Fetched Fetch(kyty::core::HttpClient& client, const kyty::core::HttpRequest& req
 		    fetched.done++;
 		    fetched.result = result;
 	    });
+}
+
+Fetched Fetch(kyty::core::HttpClient& client, const kyty::core::HttpRequest& request) {
+	Fetched fetched;
+	Send(client, request, fetched);
 	KytyUi::WaitFor([&fetched]() { return fetched.done > 0; }, 10000,
 	                "the request to " + request.url);
 	KytyUi::Pump(30);
@@ -229,6 +235,37 @@ KYTY_UI_CASE(harness_loopback_http) {
 	Check(pieces.result.failure == kyty::core::HttpFailure::None && pieces.body == chunked.body &&
 	          pieces.chunks >= 2,
 	      "a delayed chunked body arrives complete in several chunks");
+
+	// A held response starts only at Release(), which also ends the hold for later requests.
+	const std::string           held_url = "https://example.invalid/held";
+	KytyTests::LoopbackResponse held;
+	held.body = "held";
+	held.held = true;
+	server.Script(held_url, held);
+	request.url = held_url;
+	Fetched waiting;
+	Send(client, request, waiting);
+	KytyUi::WaitFor([&]() { return server.Hits(held_url) == 1; }, 5000,
+	                "the held request to reach the server");
+	KytyUi::Pump(200);
+	Check(waiting.done == 0, "a held response does not start before Release");
+	Check(server.Release(held_url), "Release starts the held response");
+	KytyUi::WaitFor([&waiting]() { return waiting.done > 0; }, 5000, "the released response");
+	KytyUi::Pump(30);
+	Check(waiting.done == 1 && waiting.result.failure == kyty::core::HttpFailure::None &&
+	          waiting.result.status == 200 && waiting.body == "held",
+	      "the released response arrives whole");
+	const auto again = Fetch(client, request);
+	Check(again.result.failure == kyty::core::HttpFailure::None && again.body == "held",
+	      "a released URL is not held for later requests");
+	Check(!server.Release(held_url), "Release is false when no held request is waiting");
+	const std::string early_url = "https://example.invalid/held-early";
+	server.Script(early_url, held);
+	Check(!server.Release(early_url), "Release is false before the request arrived");
+	request.url      = early_url;
+	const auto early = Fetch(client, request);
+	Check(early.result.failure == kyty::core::HttpFailure::None && early.body == "held",
+	      "a hold released before the request does not hold it");
 
 	KytyTests::LoopbackResponse stalled = chunked;
 	stalled.stall_after_chunks          = 1;

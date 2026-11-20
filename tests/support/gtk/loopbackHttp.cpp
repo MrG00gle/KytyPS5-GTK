@@ -23,7 +23,9 @@ struct LoopbackServer::Pending {
 	LoopbackServer*               owner = nullptr;
 	GObjectPtr<SoupServerMessage> message;
 	LoopbackResponse              response;
+	std::string                   path; // the key of its script
 	bool                          paused = false;
+	bool                          held   = false; // waits for Release()
 	std::size_t                   offset = 0;
 	int                           chunks = 0;
 	bool                          ended  = false;
@@ -78,6 +80,25 @@ void LoopbackServer::Script(std::string_view url, LoopbackResponse response) {
 	m_scripts.insert_or_assign(PathOf(url), std::move(response));
 }
 
+bool LoopbackServer::Release(std::string_view url) {
+	const std::string path = PathOf(url);
+	if (auto script = m_scripts.find(path); script != m_scripts.end()) {
+		script->second.held = false;
+	}
+	// Collected first: Start() may lead to OnFinished.
+	std::vector<Pending*> held;
+	for (auto& pending: m_pending) {
+		if (pending->held && !pending->ended && pending->path == path) {
+			held.push_back(pending.get());
+		}
+	}
+	for (Pending* pending: held) {
+		pending->held = false;
+		Start(*pending);
+	}
+	return !held.empty();
+}
+
 int LoopbackServer::Hits(std::string_view url) const {
 	const std::string path = PathOf(url);
 	return static_cast<int>(
@@ -120,12 +141,19 @@ void LoopbackServer::OnRequest(SoupServer* /*server*/, SoupServerMessage* messag
 	pending->owner    = self;
 	pending->message  = GObjectPtr<SoupServerMessage>::Ref(message);
 	pending->response = found->second;
+	pending->path     = key;
 	pending->finished =
 	    SignalScope::Connect(message, "finished", G_CALLBACK(&OnFinished), pending.get());
 	pending->disconnected =
 	    SignalScope::Connect(message, "disconnected", G_CALLBACK(&OnFinished), pending.get());
 	Pending& raw = *pending;
 	self->m_pending.push_back(std::move(pending));
+	if (raw.response.held) {
+		soup_server_message_pause(message);
+		raw.paused = true;
+		raw.held   = true;
+		return;
+	}
 	if (raw.response.delay_ms > 0) {
 		soup_server_message_pause(message);
 		raw.paused = true;

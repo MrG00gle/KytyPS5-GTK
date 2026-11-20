@@ -115,19 +115,25 @@ KYTY_UI_CASE(compat_statuses_within_1s) {
 	if (games.empty()) {
 		return;
 	}
-	// The database arrives after the first scan was applied.
+	// The database is held until the first scan was applied.
 	KytyTests::LoopbackResponse response;
-	response.body     = kDatabase;
-	response.delay_ms = 1000;
+	response.body = kDatabase;
+	response.held = true;
 	ui.Server().Script(core::kCompatibilityUrl, std::move(response));
 	const int status = ui.RunApplication([&](KytyApplication* application, KytyMainWindow* window) {
-		auto& library    = KytyUi::ContextOf(application).library;
-		auto& controller = kyty::gtk::MainWindowLibrary(window);
-		if (!KytyUi::WaitFor([&]() { return controller.Stats().scans_applied >= 1; }, 5000,
-		                     "the first scan") ||
-		    !Check(!controller.Stats().compatibility_finished,
-		           "the games are listed before the database arrives") ||
-		    !WaitForCompatibility(window, 10000)) {
+		auto&      library    = KytyUi::ContextOf(application).library;
+		auto&      controller = kyty::gtk::MainWindowLibrary(window);
+		const bool listed = KytyUi::WaitFor([&]() { return controller.Stats().scans_applied >= 1; },
+		                                    5000, "the first scan") &&
+		                    Check(!controller.Stats().compatibility_finished,
+		                          "the games are listed before the database arrives");
+		// The request leaves when the launcher starts and can reach the server after the first
+		// scan was applied.
+		KytyUi::WaitFor([&]() { return ui.Server().Hits(core::kCompatibilityUrl) >= 1; }, 5000,
+		                "the database request");
+		const bool released =
+		    Check(ui.Server().Release(core::kCompatibilityUrl), "the database request arrived");
+		if (!listed || !released || !WaitForCompatibility(window, 10000)) {
 			KytyUi::QuitApplication(application);
 			return;
 		}

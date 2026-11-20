@@ -328,6 +328,14 @@ bool WaitForRemoteList(GtkWidget* root) {
 	    "the remote list to show Alpha Game's files");
 }
 
+// Starts the held JSON index once its request has reached the server: it leaves when the window
+// is created, and the server sees it a few main-loop iterations later.
+bool ReleaseJsonIndex(KytyUi::UiContext& ui) {
+	const std::string url = core::CheatIndexUrl("json");
+	KytyUi::WaitFor([&]() { return ui.Server().Hits(url) >= 1; }, 5000, "the JSON index request");
+	return Check(ui.Server().Release(url), "the JSON index request arrived");
+}
+
 // Serves Alpha Game's JSON file of version (01.000 or 01.020) with body.
 void ServeAlphaFile(KytyUi::UiContext& ui, std::string body, const char* version = "01.000") {
 	core::RemoteCheatFile file;
@@ -1564,12 +1572,13 @@ KYTY_UI_CASE(content_cheats_remote_list) {
 	if (games.empty()) {
 		return;
 	}
-	// The JSON index answers after 1.5 s, so the list is seen while it loads.
+	// The JSON index is held until the loading list was checked (Release below), so the list is
+	// seen while it loads however slow the compositor is.
 	for (auto [url, body]: KytyUi::CheatIndexes()) {
 		KytyTests::LoopbackResponse response;
 		response.body         = std::move(body);
 		response.content_type = "text/plain";
-		response.delay_ms     = url == core::CheatIndexUrl("json") ? 1500 : 0;
+		response.held         = url == core::CheatIndexUrl("json");
 		ui.Server().Script(url, std::move(response));
 	}
 	ServeAlphaFile(ui, gen::CheatDocumentText(gen::RemoteCheatSpec(
@@ -1591,6 +1600,7 @@ KYTY_UI_CASE(content_cheats_remote_list) {
 	const int loading_version = gtk_widget_get_width(version);
 	const int loading_format  = gtk_widget_get_width(format);
 	Check(KytyUi::Capture(cheats, "remote-loading"), "the loading list renders");
+	ReleaseJsonIndex(ui);
 	if (!WaitForRemoteList(root)) {
 		return;
 	}
@@ -2015,12 +2025,13 @@ KYTY_UI_CASE(cheats_split_position_states) {
 	if (games.empty()) {
 		return;
 	}
-	// The JSON index answers after 1.5 s, so the list is seen while it loads.
+	// The JSON index is held until the loading list was checked (Release below), so the list is
+	// seen while it loads however slow the compositor is.
 	for (auto [url, body]: KytyUi::CheatIndexes()) {
 		KytyTests::LoopbackResponse response;
 		response.body         = std::move(body);
 		response.content_type = "text/plain";
-		response.delay_ms     = url == core::CheatIndexUrl("json") ? 1500 : 0;
+		response.held         = url == core::CheatIndexUrl("json");
 		ui.Server().Script(url, std::move(response));
 	}
 	ServeAlphaFile(ui, gen::CheatDocumentText(gen::RemoteCheatSpec(
@@ -2051,6 +2062,9 @@ KYTY_UI_CASE(cheats_split_position_states) {
 	if (Check(HasText(root, "Loading remote cheats…"), "the list is loading")) {
 		sample(root, "loading");
 	}
+	// Released whatever the check gave; the later windows (the incomplete collection comes from
+	// the MC4 500) get the JSON index at once.
+	ReleaseJsonIndex(ui);
 	if (!WaitForRemoteList(root)) {
 		return;
 	}

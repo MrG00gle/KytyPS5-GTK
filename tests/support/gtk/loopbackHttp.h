@@ -32,6 +32,9 @@ struct LoopbackResponse {
 	std::vector<std::pair<std::string, std::string>> headers;
 	// The response starts this many milliseconds after the request arrived.
 	unsigned delay_ms = 0;
+	// The response waits until LoopbackServer::Release(url) and then starts at once (delay_ms is
+	// not used); for cases that must see a loading state.
+	bool held = false;
 	// 0: the body in one piece; else chunks of this many bytes, chunk_interval_ms apart (the first
 	// one with the headers). With stall_after_chunks > 0 the body stops after that many chunks and
 	// never completes.
@@ -65,6 +68,10 @@ public:
 	// Every later request of url (an https URL, compared with its query) gets response. A path
 	// without a script answers 404.
 	void Script(std::string_view url, LoopbackResponse response);
+
+	// Starts every held response of url (an https URL, compared with its query) that has arrived
+	// and not ended, and stops holding later requests of url; false when none had arrived.
+	[[nodiscard]] bool Release(std::string_view url);
 
 	// The requests that reached the server, in arrival order, and how many asked for url.
 	[[nodiscard]] const std::vector<RecordedRequest>& Requests() const { return m_requests; }
