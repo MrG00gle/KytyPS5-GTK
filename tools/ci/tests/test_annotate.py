@@ -96,6 +96,20 @@ class Junit(Run):
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].startswith("::notice "), lines)
 
+    def test_a_failure_reason_reaches_the_annotation(self):
+        # junit_check.py adds a failed UI test's first FAILED line, cut at 300 characters.
+        long_reason = "x: FAILED: " + "y" * 286 + "..."
+        lines = self.annotate("junit",
+                              "failed: launcher_ui_x_wayland (x: FAILED: 50% loaded, a: b)\n"
+                              f"failed: launcher_ui_y_x11 ({long_reason})\n"
+                              "junit-check: 2 tests, 0 passed, 2 problems\n")
+        title = "title=Fedora stage A%3A test results"
+        self.assertEqual(lines, [
+            f"::error {title}::failed: launcher_ui_x_wayland (x: FAILED: 50%25 loaded, a: b)",
+            f"::error {title}::failed: launcher_ui_y_x11 ({long_reason})",
+            f"::notice {title}::junit-check: 2 tests, 0 passed, 2 problems",
+        ])
+
     def test_no_tests(self):
         lines = self.annotate("junit", "no tests: ctest.xml has no testcase\n"
                               "junit-check: 0 tests, 0 passed, 1 problems\n")

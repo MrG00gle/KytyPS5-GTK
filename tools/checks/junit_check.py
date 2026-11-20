@@ -16,7 +16,7 @@ status="disabled" for a disabled test. This script names them the way CTest's
 own summary does. It prints one line per problem, grouped in this order and
 sorted by test name within each group:
 
-    failed: <name>
+    failed: <name> [(<reason>)]
     skipped: <name> (<message>)
     not run: <name> (<message, or the status attribute>)
     missing: <name>
@@ -28,6 +28,13 @@ every test that `ctest --show-only=json-v1` lists must appear in the JUnit
 file; a registered test without a testcase was not run ("missing"), for
 example because the run was filtered. The JUnit root may be <testsuite> (what
 CTest writes) or <testsuites>.
+
+The reason of a failed test outside the policies below is the first
+"<case>: FAILED: <what>" line of its output, the UI harness's format with a
+case name of letters, digits, and _ (tests/ui/support/uiHarness.cpp). Its
+whitespace is collapsed and it is cut to at most 300 characters, so that
+tools/ci/annotate.py shows it in the test's annotation. A failed test without
+such a line is listed as "failed: <name>".
 
 Two CI policies that the repository owner approved for named tests only
 (docs/testing.md); no other test is ever accepted by them:
@@ -82,6 +89,15 @@ KINDS = ("failed", "skipped", "not run", "missing", "unexpected pass", "bad reru
 LIST_NAME = re.compile(r"[A-Za-z0-9_]+")
 # "TIMING <case> <backend> <view> "<query>" shown=<n> min=<ms> median=<ms> ..." (tests/ui).
 TIMING_MEDIAN = re.compile(r"^TIMING .* median=([0-9]+(?:\.[0-9]+)?) ", re.M)
+# A failed check of a UI case, "<case>: FAILED: <what>" (tests/ui/support/uiHarness.cpp). A case
+# name is a C identifier, so this does not match the self-test kinds' "selftest-<kind>: FAILED:"
+# (printed by a passing ui_harness_selftest), CMake's indented "  UiHarnessSelfTest: FAILED:",
+# ninja's "FAILED: <file>", or the other tests' lowercase "<Suite>: failed:".
+FAILED_LINE = re.compile(r"^[A-Za-z0-9_]+: FAILED: \S.*$", re.M)
+# The longest reason kept whole, so that an annotation stays short: a longer one is cut to this
+# many characters, ending in "...". The longest reason seen so far fits: GTK 4.24.1's spinner
+# warning with its source location, about 280 characters.
+REASON_LIMIT = 300
 
 
 class InputError(Exception):
@@ -196,6 +212,16 @@ def output_of(case):
     return "\n".join(parts)
 
 
+def failure_reason(case):
+    """The first FAILED_LINE of a testcase's output on one line, cut to REASON_LIMIT characters,
+    or None without one."""
+    match = FAILED_LINE.search(output_of(case))
+    if match is None:
+        return None
+    reason = one_line(match.group(0))
+    return reason if len(reason) <= REASON_LIMIT else reason[:REASON_LIMIT - 3] + "..."
+
+
 def worst_median(case):
     """The largest TIMING median of a testcase's output, or None without TIMING lines."""
     medians = [float(value) for value in TIMING_MEDIAN.findall(output_of(case))]
@@ -274,6 +300,8 @@ def check(cases, registered=None, expected=None, retry=None, rerun=None):
                 second = run_text("failed in the rerun too", again)
                 problems["failed"].append((name, f"listed for a rerun; {first}; {second}"))
             continue
+        if kind == "failed":
+            detail = failure_reason(case)
         problems[kind].append((name, detail))
     present = {case.get("name") for case in cases}
     if registered is not None:
@@ -288,7 +316,8 @@ def check(cases, registered=None, expected=None, retry=None, rerun=None):
                                           "full run"))
     lines = []
     for kind in KINDS:
-        for name, detail in sorted(problems[kind]):
+        # A test name may appear twice (a <testsuites> root), with and without a detail.
+        for name, detail in sorted(problems[kind], key=lambda item: (item[0], item[1] or "")):
             lines.append(f"{kind}: {name}" + (f" ({detail})" if detail else ""))
     return sorted(accepted), lines, passed
 

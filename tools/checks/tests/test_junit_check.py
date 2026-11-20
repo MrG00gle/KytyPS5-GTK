@@ -68,14 +68,25 @@ SCRATCH_PROJECT = textwrap.dedent("""\
     set_tests_properties(needs_fixture PROPERTIES FIXTURES_REQUIRED scratch_fixture)
     add_test(NAME [=[a<b>&c]=] COMMAND "${py}" -c "raise SystemExit(1)")
     add_test(NAME [=[x&amp;y]=] COMMAND "${py}" -c "pass")
+    # A failed UI case: the harness prints its FAILED lines to stderr.
+    set(ui_fails [=[
+    import sys
+    print("ui_case: start", flush=True)
+    print("ui_case: FAILED: the list is loading", file=sys.stderr, flush=True)
+    print("ui_case: FAILED: every state was sampled", file=sys.stderr, flush=True)
+    sys.exit(1)
+    ]=])
+    add_test(NAME ui_fails COMMAND "${py}" -c "${ui_fails}")
     """)
-SCRATCH_TESTS = 12
+SCRATCH_TESTS = 13
 SCRATCH_PASSED = 3  # passes, will_fail, and x&amp;y
 SCRATCH_PROBLEMS = [
     "failed: a<b>&c",
     "failed: fails",
     "failed: setup_fails",
     "failed: times_out",
+    # This CTest records stderr in <system-out>, so the first FAILED line is the reason.
+    "failed: ui_fails (ui_case: FAILED: the list is loading)",
     "skipped: skips (SKIP_RETURN_CODE=77)",
     "skipped: skips_by_output (SKIP_REGULAR_EXPRESSION_MATCHED)",
     "not run: disabled (disabled)",
@@ -579,6 +590,106 @@ class Retries(PolicyFiles):
                 junit_check.main([str(path), "--retry-list", str(self.list), "--rerun", str(path),
                                   "--print-retry-candidates"])
         self.assertEqual(raised.exception.code, 2)
+
+
+# The FAILED line of a Fedora GTK 4.24.1 run of cheats_split_position_states, about 280 characters.
+GTK_SVG_LINE = ("cheats_split_position_states: FAILED: WARNING from Gtk: gtk_svg_advance: time went "
+                "backward: self->current_time=259338564467 current_time=259338564298 delta=169 "
+                "clock_frame_time=259338564298 (/builddir/build/BUILD/gtk4-4.24.1-build/"
+                "gtk-4.24.1/gtk/svg/gtksvg.c:2422 gtk_svg_advance)")
+
+
+class FailureReasons(PolicyFiles):
+    """A failed test outside the policies gets the first "<case>: FAILED: <what>" line."""
+
+    def reason_of(self, output):
+        """The problem line of a failed test "t" with that output (XML text)."""
+        status, lines, _ = run_main(self.junit(output_case("t", "fail", output,
+                                                           '<failure message="Failed"/>')))
+        self.assertEqual(status, 1)
+        self.assertEqual(lines[-1], "junit-check: 1 tests, 0 passed, 1 problems")
+        return lines[0]
+
+    def test_the_first_failed_line_is_the_reason(self):
+        output = ("content_cheats_remote_list: start (display kyty-ui-333, GDK_BACKEND wayland)\n"
+                  "(process:366): kyty-launcher-DEBUG: 09:44:52.247: cheats: 4 remote file(s)\n"
+                  "content_cheats_remote_list: FAILED: the list is loading\n"
+                  "content_cheats_remote_list: FAILED: every state was sampled\n"
+                  "content_cheats_remote_list: FAIL (2 failure(s))\n")
+        path = self.junit(output_case("launcher_ui_content_cheats_remote_list_wayland", "fail",
+                                      output, '<failure message="Failed"/>') + case("other"))
+        status, lines, _ = run_main(path)
+        self.assertEqual(status, 1)
+        self.assertEqual(lines, [
+            "failed: launcher_ui_content_cheats_remote_list_wayland (content_cheats_remote_list: "
+            "FAILED: the list is loading)",
+            "junit-check: 2 tests, 1 passed, 1 problems"])
+
+    def test_other_lines_give_no_reason(self):
+        for output in ("selftest-critical: FAILED: CRITICAL from Gtk: gtk_widget_set_visible\n",
+                       "CMake Error at UiHarnessSelfTest.cmake:150 (message):\n"
+                       "  UiHarnessSelfTest: FAILED: selftest-critical on wayland\n",
+                       "FAILED: src/a.o\n",
+                       "KernelFileSystemTests: failed: x\n",
+                       "case: FAILED: \n", "case: FAILED:\n", "case: FAILED:  two spaces\n",
+                       "a case: FAILED: x\n", "case: FAIL (1 failure(s))\n", ""):
+            with self.subTest(output=output):
+                self.assertEqual(self.reason_of(output), "failed: t")
+
+    def test_the_gtk_spinner_warning_stays_whole(self):
+        self.assertLess(len(GTK_SVG_LINE), junit_check.REASON_LIMIT)
+        # CTest writes ">" as "&gt;".
+        line = self.reason_of(GTK_SVG_LINE.replace(">", "&gt;") + "\n")
+        self.assertEqual(line, f"failed: t ({GTK_SVG_LINE})")
+
+    def test_a_long_reason_is_cut_to_300_characters(self):
+        start = "a: FAILED: "  # 11 characters
+        for output, reason in ((start + "y" * 289, start + "y" * 289),
+                               (start + "z" * 290, start + "z" * 286 + "..."),
+                               (start + "x" * 389, start + "x" * 286 + "...")):
+            with self.subTest(length=len(output)):
+                self.assertEqual(len(reason), 300)
+                self.assertEqual(self.reason_of(output + "\n"), f"failed: t ({reason})")
+
+    def test_entities_are_decoded_and_whitespace_is_collapsed(self):
+        self.assertEqual(self.reason_of("a: FAILED: x &lt; y\tz  &amp; w \r\n"),
+                         "failed: t (a: FAILED: x < y z & w)")
+
+    def test_policy_lines_keep_their_detail(self):
+        failures = self.expected_failures(f"gpu_a {FAILURE_TEXT}\n")
+        retries = self.retry_list("timing_wayland\n")
+        path = self.junit(output_case("gpu_a", "fail", "gpu: FAILED: another reason\n",
+                                      "<failure/>") +
+                          output_case("timing_wayland", "fail", "library_search_timing: FAILED: "
+                                      "the median is above 100 ms\n" + timing(103.4),
+                                      "<failure/>"))
+        status, lines, _ = run_main(path, "--expected-failures", failures, "--retry-list", retries)
+        self.assertEqual(status, 1)
+        self.assertEqual(lines, [
+            "failed: gpu_a (its output lacks the listed failure text)",
+            "failed: timing_wayland (listed for a rerun; failed in the full run, worst median "
+            "103.4 ms; no rerun results)",
+            "junit-check: 2 tests, 0 passed, 0 expected failures, 0 retried, 2 problems"])
+
+    def test_an_unlisted_failure_gets_its_reason_with_the_policies_too(self):
+        failures = self.expected_failures(f"gpu_a {FAILURE_TEXT}\n")
+        path = self.junit(output_case("gpu_a", "fail", FAILURE_TEXT, "<failure/>") +
+                          output_case("ui_x11", "fail", "ui: FAILED: the dialog is shown\n",
+                                      "<failure/>"))
+        status, lines, _ = run_main(path, "--expected-failures", failures)
+        self.assertEqual(status, 1)
+        self.assertEqual(lines, [
+            "expected failure: gpu_a",
+            "failed: ui_x11 (ui: FAILED: the dialog is shown)",
+            "junit-check: 2 tests, 0 passed, 1 expected failures, 0 retried, 1 problems"])
+
+    def test_a_name_that_failed_twice_is_listed_twice(self):
+        body = ("<testsuite>" + output_case("again", "fail", "again: FAILED: x\n", "<failure/>") +
+                "</testsuite>\n<testsuite>" + case("again", "fail", "<failure/>") + "</testsuite>")
+        status, lines, _ = run_main(self.junit(body, root="testsuites"))
+        self.assertEqual(status, 1)
+        self.assertEqual(lines, ["failed: again", "failed: again (again: FAILED: x)",
+                                 "junit-check: 2 tests, 0 passed, 2 problems"])
 
 
 # A test that fails on its first run and passes on the next one, and one that always fails: what
