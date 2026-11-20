@@ -241,6 +241,139 @@ class Development(Run):
         self.assertEqual(raised.exception.code, 2)
 
 
+NEW = "KytyPS5-GTK-2026-11-20-c84d970"
+SAME_DAY = "KytyPS5-GTK-2026-11-20-dc60c57"
+OLDER = "KytyPS5-GTK-2026-11-18-5bce1de"
+
+
+class SameTagDate(Run):
+    """One entry per tag date, the run's own tag or else the most recently published release:
+    AppStream compares the versions, and tags of one date compare by their sha7 (c84d970 <
+    dc60c57 failed releases-not-in-order)."""
+
+    def published(self, *extra):
+        self.pages([*extra, release(SAME_DAY, "2026-11-20T11:22:48Z"),
+                    release(OLDER, "2026-11-18T16:31:03Z")])
+
+    def reset(self):
+        shutil.copyfile(METAINFO, self.metainfo)
+
+    def left_out(self, lines):
+        return [line for line in lines if line.startswith("left out")]
+
+    def test_a_development_entry_replaces_an_earlier_release_of_its_date(self):
+        self.published()
+        status, lines, _ = self.write(tag=NEW, date="2026-11-20", development=True)
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.entries(), [(NEW, "2026-11-20"), (OLDER, "2026-11-18")])
+        self.assertEqual(self.types(), ["development", None])
+        self.assertEqual(self.left_out(lines), [
+            f"left out, another entry of its tag date is listed: {SAME_DAY} (2026-11-20)"])
+        root = ET.parse(self.metainfo).getroot()
+        self.assertEqual(flatpak_checks.releases_problems(root), (2, []))
+
+    def test_a_second_release_of_a_day_replaces_the_first_and_passes_the_check(self):
+        self.published()
+        status, lines, _ = self.write(tag=NEW, date="2026-11-20")
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.entries(), [(NEW, "2026-11-20"), (OLDER, "2026-11-18")])
+        self.assertEqual(self.types(), [None, None])
+        status, lines, _ = self.run_main("check", "--metainfo", self.metainfo, "--tag", NEW)
+        self.assertEqual(status, 0)
+        self.assertEqual(lines, [f"{self.metainfo}: the newest of 2 release entries is {NEW} "
+                                 "(2026-11-20)"])
+
+    def test_several_earlier_releases_of_the_date_are_left_out(self):
+        self.published(release("KytyPS5-GTK-2026-11-20-fffffff", "2026-11-20T15:00:00Z"),
+                       release("KytyPS5-GTK-2026-11-20-0000000", "2026-11-20T13:00:00Z"))
+        for development in (False, True):
+            with self.subTest(development=development):
+                self.reset()
+                status, lines, _ = self.write(tag=NEW, date="2026-11-20",
+                                              development=development)
+                self.assertEqual(status, 0, lines)
+                self.assertEqual(self.entries(), [(NEW, "2026-11-20"), (OLDER, "2026-11-18")])
+                self.assertEqual(self.left_out(lines), [
+                    "left out, another entry of its tag date is listed: "
+                    f"KytyPS5-GTK-2026-11-20-{sha} (2026-11-20)"
+                    for sha in ("fffffff", "0000000", "dc60c57")])
+
+    def test_releases_of_different_tag_dates_are_all_kept(self):
+        self.pages([release("KytyPS5-GTK-2026-11-19-fffffff", "2026-11-19T23:00:00Z"),
+                    release(OLDER, "2026-11-18T16:31:03Z")])
+        for development in (False, True):
+            with self.subTest(development=development):
+                self.reset()
+                status, lines, _ = self.write(tag=NEW, date="2026-11-20",
+                                              development=development)
+                self.assertEqual(status, 0, lines)
+                self.assertEqual(self.entries(), [(NEW, "2026-11-20"),
+                                                  ("KytyPS5-GTK-2026-11-19-fffffff", "2026-11-19"),
+                                                  (OLDER, "2026-11-18")])
+                self.assertEqual(self.left_out(lines), [])
+
+    def test_the_publication_date_does_not_merge_tags_of_different_dates(self):
+        # Committed on 2026-11-19 and published after midnight: its entry date is 2026-11-20.
+        self.pages([release("KytyPS5-GTK-2026-11-19-fffffff", "2026-11-20T00:30:00Z")])
+        status, lines, _ = self.write(tag=NEW, date="2026-11-20", development=True)
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.entries(), [(NEW, "2026-11-20"),
+                                          ("KytyPS5-GTK-2026-11-19-fffffff", "2026-11-20")])
+
+    def test_a_run_on_a_later_day_still_replaces_the_releases_of_its_tag_date(self):
+        # A rerun the next day: --date moves on, the tag keeps its commit date.
+        self.published()
+        status, lines, _ = self.write(tag=NEW, date="2026-11-21", development=True)
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.entries(), [(NEW, "2026-11-21"), (OLDER, "2026-11-18")])
+
+    def test_a_rerun_of_the_second_release_of_a_day_lists_it_alone(self):
+        self.published(release(NEW, "2026-11-20T14:50:00Z"))
+        status, lines, _ = self.write(tag=NEW, date="2026-11-20")
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.entries(), [(NEW, "2026-11-20"), (OLDER, "2026-11-18")])
+        status, _, _ = self.run_main("check", "--metainfo", self.metainfo, "--tag", NEW)
+        self.assertEqual(status, 0)
+
+    def test_a_development_run_of_the_second_release_of_a_day_lists_it_alone(self):
+        self.published(release(NEW, "2026-11-20T14:50:00Z"))
+        status, lines, _ = self.write(tag=NEW, date="2026-11-21", development=True)
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.entries(), [(NEW, "2026-11-20"), (OLDER, "2026-11-18")])
+        self.assertEqual(self.types(), [None, None])
+
+    def test_a_development_run_of_the_first_release_of_a_day_keeps_its_own_entry(self):
+        # Re-running all jobs of an old dev run of dc60c57 after c84d970 is released: the
+        # bundle still lists its own version, and the newer release of that date is left out.
+        self.published(release(NEW, "2026-11-20T14:50:00Z"))
+        status, lines, _ = self.write(tag=SAME_DAY, date="2026-11-21", development=True)
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.entries(), [(SAME_DAY, "2026-11-20"), (OLDER, "2026-11-18")])
+        self.assertEqual(self.types(), [None, None])
+        self.assertEqual(self.left_out(lines), [
+            f"left out, another entry of its tag date is listed: {NEW} (2026-11-20)"])
+        root = ET.parse(self.metainfo).getroot()
+        self.assertEqual(flatpak_checks.releases_problems(root), (2, []))
+
+    def test_an_official_rerun_of_the_first_release_of_a_day_keeps_its_own_entry(self):
+        # Re-running all jobs of the main run of dc60c57 on its day, after c84d970 is out: the
+        # flatpak job's check finds the run's own tag on top.
+        self.published(release(NEW, "2026-11-20T14:50:00Z"))
+        status, lines, _ = self.write(tag=SAME_DAY, date="2026-11-20")
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.entries(), [(SAME_DAY, "2026-11-20"), (OLDER, "2026-11-18")])
+        status, lines, _ = self.run_main("check", "--metainfo", self.metainfo, "--tag", SAME_DAY)
+        self.assertEqual(status, 0, lines)
+
+    def test_tags_of_another_form_are_all_kept(self):
+        self.pages([release("v1.1", "2026-11-20T12:00:00Z"),
+                    release("v1.0", "2026-11-20T10:00:00Z")])
+        status, lines, _ = self.write(tag=NEW, date="2026-11-20", development=True)
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(self.entries(), [(NEW, "2026-11-20"), ("v1.1", "2026-11-20"),
+                                          ("v1.0", "2026-11-20")])
+
+
 class Check(Run):
     def check(self, tag=TAG):
         return self.run_main("check", "--metainfo", self.metainfo, "--tag", tag)

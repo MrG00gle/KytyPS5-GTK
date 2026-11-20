@@ -182,6 +182,15 @@ into the build's copy of the metainfo, and the release job checks that the bundl
 its tag. Every other run writes the published releases plus its own tag as a `type="development"`
 entry, because the linter rejects an empty release list.
 
+Both lists keep one entry per tag date: the `<date>` in `KytyPS5-GTK-<date>-<commit>`, which is
+the UTC date of the commit, not the day the release is published. AppStream orders releases by
+version, and two tags of one date differ only in their commit hash, which does not sort by age, so
+a second entry would fail `appstreamcli validate` (`releases-not-in-order`). The run's own tag
+keeps its entry, so every bundle lists its own version. For every other tag date, the list keeps
+the most recently published release. A second release with the same tag date therefore replaces
+the first in the version history of later bundles, and the first stays on the releases page with
+its own bundle.
+
 ## The runtimes in CI
 
 The `flatpak` job runs in the `ghcr.io/flathub-infra/flatpak-github-actions:gnome-49` image, which

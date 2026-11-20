@@ -18,7 +18,14 @@ repository's GitHub releases as JSON: the REST objects of
 <releases/> element is replaced with one <release version="<tag>"
 date="<YYYY-MM-DD>"/> per published release (not a draft, not a prerelease;
 the date is the UTC date of published_at), newest first, plus TAG with --date
-at the top. The rest of the file is unchanged byte for byte.
+at the top. The list keeps one entry per tag date (the <date> in
+KytyPS5-GTK-<date>-<sha7>, the UTC commit date): AppStream orders <release>
+entries by version, and two tags of one date differ only in their sha7, which
+does not sort by age. TAG keeps its entry, so every bundle lists its own
+version; of every other tag date, the most recently published release is kept.
+The other releases of a date are left out of the list, and stay on GitHub.
+Tags of another form are all kept. The rest of the file is unchanged byte for
+byte.
 - Official (no --type): TAG's entry has no type (a stable release, published
   that day). When TAG is already published (a rerun), its entry is kept as
   GitHub has it, and a different --date is an error.
@@ -53,6 +60,7 @@ from xml.sax.saxutils import escape
 DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 PUBLISHED_AT = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2})T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z")
 EMPTY_RELEASES = re.compile(r"<releases\s*/>|<releases\s*>\s*</releases\s*>")
+TAG_DATE = re.compile(r"KytyPS5-GTK-([0-9]{4}-[0-9]{2}-[0-9]{2})-[0-9a-f]{7}")
 QUOTE = {'"': "&quot;"}
 
 
@@ -158,6 +166,27 @@ def entries_for(published, tag, date, kind=None):
     return [(tag, date, kind)] + entries
 
 
+def one_per_tag_date(entries, tag):
+    """Return (kept, left out) of entries listed newest first: one entry of each tag date,
+    the run's own tag for its date and the first entry for every other date. AppStream
+    compares the versions, and tags of one date compare by their sha7, so a second entry
+    of the same date could fail releases-not-in-order."""
+    own = TAG_DATE.fullmatch(tag)
+    dates = {own.group(1)} if own else set()
+    kept, left_out = [], []
+    for entry in entries:
+        match = TAG_DATE.fullmatch(entry[0])
+        if entry[0] == tag:
+            kept.append(entry)
+        elif match and match.group(1) in dates:
+            left_out.append(entry)
+        else:
+            if match:
+                dates.add(match.group(1))
+            kept.append(entry)
+    return kept, left_out
+
+
 def releases_text(text, match, entries):
     """The <releases> element for the entries, indented like the element it replaces."""
     line_start = text.rfind("\n", 0, match.start()) + 1
@@ -186,7 +215,8 @@ def write(args):
     if len(matches) != 1:
         raise ReleaseError(f"{args.metainfo}: expected one empty <releases/> element, found "
                            f"{len(matches)}")
-    entries = entries_for(read_published(args.releases), args.tag, date, args.type)
+    entries, left_out = one_per_tag_date(
+        entries_for(read_published(args.releases), args.tag, date, args.type), args.tag)
     match = matches[0]
     new_text = text[:match.start()] + releases_text(text, match, entries) + text[match.end():]
     ET.fromstring(new_text)  # still well-formed
@@ -198,6 +228,8 @@ def write(args):
     print(f"{args.metainfo}: {len(entries)} release entries, newest first:")
     for version, day, kind in entries:
         print(f"  {version} ({day}{', ' + kind if kind else ''})")
+    for version, day, _ in left_out:
+        print(f"left out, another entry of its tag date is listed: {version} ({day})")
     return 0
 
 
