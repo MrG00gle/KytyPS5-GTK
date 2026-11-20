@@ -1,9 +1,11 @@
 # ui_harness_selftest (task 22.6; Requirements 16.6, 17.11; phase 7 plan D38): the UI test harness
 # fails a case on a deliberate critical or warning and prints the message, passes a declared
 # expected warning, fails when a declared warning never arrives, passes a clean run, fails a case
-# that reads an accessible property of no supported type (phase 8 plan D17), and tolerates GTK
-# 4.24's frame-timings warning only as its exact text from Gdk at warning level on GTK 4.24 (the
-# frame-timings-* kinds inject the GTK version; docs/testing.md), on every
+# that reads an accessible property of no supported type (phase 8 plan D17), tolerates GTK 4.24's
+# frame-timings warning only as its exact text from Gdk at warning level on GTK 4.24 (the
+# frame-timings-* kinds inject the GTK version; docs/testing.md), and tolerates GTK 4.24's
+# spinner warning only as a Gtk message that starts with "gtk_svg_advance: time went backward: ",
+# at warning level, on GTK 4.24 (the svg-time-* kinds inject the GTK version too), on every
 # backend inside tests/ui/with-display.sh ("launcher_ui_tests --selftest <kind>"); the case
 # harness_locale passes with the caller's LC_MESSAGES, LC_NUMERIC, and LC_TIME set (p7-u2-1); and
 # the wrapper exits 77 when the display server executable it is told to use does not exist. Run as
@@ -106,9 +108,25 @@ set(kyty_exit_frame-timings-critical 1)
 set(kyty_text_frame-timings-critical "FAILED: CRITICAL from Gdk: ${kyty_frame}")
 set(kyty_exit_frame-timings-other-domain 1)
 set(kyty_text_frame-timings-other-domain "FAILED: WARNING from Gtk: ${kyty_frame}")
+# GTK 4.24's spinner warning (docs/testing.md): tolerated, with a note, only as a Gtk message that
+# starts with "gtk_svg_advance: time went backward: ", at warning level, while GTK 4.24.x runs.
+string(CONCAT kyty_svg "gtk_svg_advance: time went backward: self->current_time=259338564467 "
+	"current_time=259338564298 delta=169 clock_frame_time=259338564298")
+set(kyty_exit_svg-time-gtk-4-24 0)
+string(CONCAT kyty_text_svg-time-gtk-4-24 "NOTE: tolerated on GTK 4.24 (a GTK 4.24 bug; "
+	"docs/testing.md): WARNING from Gtk: ${kyty_svg}")
+set(kyty_exit_svg-time-gtk-4-22 1)
+set(kyty_text_svg-time-gtk-4-22 "FAILED: WARNING from Gtk: ${kyty_svg}")
+set(kyty_exit_svg-time-near-miss 1)
+set(kyty_text_svg-time-near-miss "FAILED: WARNING from Gtk: svg: ${kyty_svg}")
+set(kyty_exit_svg-time-critical 1)
+set(kyty_text_svg-time-critical "FAILED: CRITICAL from Gtk: ${kyty_svg}")
+set(kyty_exit_svg-time-other-domain 1)
+set(kyty_text_svg-time-other-domain "FAILED: WARNING from Gdk: ${kyty_svg}")
 set(kyty_kinds critical warning expected-warning missing-expected clean accessible-untyped
 	frame-timings-gtk-4-24 frame-timings-gtk-4-22 frame-timings-near-miss frame-timings-critical
-	frame-timings-other-domain)
+	frame-timings-other-domain svg-time-gtk-4-24 svg-time-gtk-4-22 svg-time-near-miss
+	svg-time-critical svg-time-other-domain)
 list(LENGTH kyty_kinds kyty_kind_count)
 
 foreach(kyty_backend IN ITEMS wayland x11)
@@ -133,7 +151,7 @@ foreach(kyty_backend IN ITEMS wayland x11)
 			kyty_expect_text("${kyty_what}" "${kyty_output}"
 				"selftest-${kyty_kind}: FAIL (1 failure(s))")
 		endif()
-		if(kyty_kind MATCHES "^frame-timings-" AND NOT kyty_kind STREQUAL "frame-timings-gtk-4-24")
+		if(kyty_kind MATCHES "^(frame-timings|svg-time)-" AND NOT kyty_kind MATCHES "-gtk-4-24$")
 			kyty_expect_no_text("${kyty_what}" "${kyty_output}" "NOTE: tolerated")
 		endif()
 	endforeach()

@@ -11,13 +11,15 @@
 //   launcher_ui_tests --selftest <kind>     runs one harness self-test the same way (task 22.6;
 //                                           tests/cmake/UiHarnessSelfTest.cmake): critical,
 //                                           warning, expected-warning, missing-expected, clean,
-//                                           accessible-untyped, and the frame-timings-* kinds
+//                                           accessible-untyped, the frame-timings-* kinds, and
+//                                           the svg-time-* kinds
 // A case runs on the main thread after gtk_init, adw_init, and the launcher's GResource bundle. A
 // GLib log writer, installed before anything else, prints every warning, critical, and error of
 // any domain to stderr at once and fails the case, unless the case declared it with ExpectLog(); a
-// declared message must then arrive exactly once. The one exception is GTK 4.24's Gdk warning
-// "gdk_frame_timings_submitted() called on submitted frame.", which is printed as a note while
-// GTK 4.24.x runs (uiHarness.cpp, docs/testing.md). Lower levels go to GLib's default writer. The
+// declared message must then arrive exactly once. The exceptions are two GTK 4.24 warnings, which
+// are printed as a note while GTK 4.24.x runs: Gdk's exact "gdk_frame_timings_submitted() called
+// on submitted frame." and Gtk messages that start with "gtk_svg_advance: time went backward: "
+// (uiHarness.cpp, docs/testing.md). Lower levels go to GLib's default writer. The
 // exit status is 0 when the case passed and 1 otherwise; the last line of the output says which.
 // --capture-dir (or KYTY_UI_CAPTURE_DIR) makes Capture() (uiDriver.h) write PNG files there.
 // --screenshot-out names the PNG file that a case which makes a screenshot writes (only

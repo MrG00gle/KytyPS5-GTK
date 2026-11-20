@@ -83,12 +83,19 @@ returns the command's exit status, and 77 only when `dbus-daemon`, weston, or Xv
 GTK, libadwaita, or launcher critical or warning message during a UI test fails it and prints the
 message; `ui_harness_selftest` checks that.
 
-On 2026-11-13 the repository owner approved one exception to that rule, a deviation from
+On 2026-11-13 the repository owner approved an exception to that rule, a deviation from
 Requirement 17.11: with GTK 4.24.x, the Gdk warning
 `gdk_frame_timings_submitted() called on submitted frame.`, which GTK 4.24's X11 backend prints
 in a session without a window manager, is printed as a note and does not fail the test. Only that
 exact text from the Gdk domain at warning level is accepted, and only while GTK 4.24 runs;
 `ui_harness_selftest` checks that too.
+
+On 2026-11-20 the repository owner approved a second exception, also a deviation from
+Requirement 17.11: with GTK 4.24.x, a Gtk warning that starts with
+`gtk_svg_advance: time went backward: `, which GTK 4.24's animated spinner can print while a
+window loads, is printed as a note and does not fail the test. The numbers in the message vary, so
+only its start is compared. It is accepted only from the Gtk domain at warning level, and only
+while GTK 4.24 runs; `ui_harness_selftest` checks that too.
 
 ### Reproducing a property test failure
 
