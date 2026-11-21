@@ -23,8 +23,10 @@ published_at, draft, and prerelease).
    written for an earlier release are never used again, and nobody has to clear the file after a
    release; editing only the comment does not count as new notes.
 3. Otherwise FILE lists the subjects of the commits after the previous release up to SHA (with no
-   previous release: up to SHA), without merge commits, at most the newest MAX_SUBJECTS of them,
-   oldest first. A subject "<area>: <summary>" (the commit message rules) goes into a group:
+   previous release: up to SHA) on the first-parent history of SHA, so that a merge is one commit
+   with its own subject and the commits it brings in are not listed, at most the newest
+   MAX_SUBJECTS of them, oldest first. A subject "<area>: <summary>" (the commit message rules)
+   goes into a group:
    "Launcher" (launcher), "Updater" (updater), "Emulator" (emulator, and every area that is not
    one of the others or a tooling area: the emulator's subsystems such as shader or kernel, whose
    area stays in front of the summary), and "Packaging" (packaging), in that order, each item with
@@ -148,10 +150,10 @@ def visible_text(directory, commit, path):
 
 
 def commit_subjects(directory, previous, sha):
-    """[(commit, subject)] after previous (None: from the start) up to sha, newest first, without
-    merge commits."""
+    """[(commit, subject)] after previous (None: from the start) up to sha on the first-parent
+    history of sha, newest first: a merge is one commit, without the commits it brings in."""
     revisions = [f"{previous}..{sha}"] if previous else [sha]
-    output = git(directory, "log", "--no-merges", "--format=%H%x00%s", *revisions, "--")
+    output = git(directory, "log", "--first-parent", "--format=%H%x00%s", *revisions, "--")
     found = []
     for line in output.decode("utf-8", "replace").splitlines():
         commit, _, subject = line.partition("\0")

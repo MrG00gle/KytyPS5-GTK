@@ -251,19 +251,24 @@ class GeneratedNotes(GitRepository):
         self.assertEqual(status, 0)
         self.assertIn(self.item("Keep &lt;releases/&gt; &amp; the rest", sha), text)
 
-    def test_merge_commits_are_left_out(self):
+    def test_a_merge_is_one_line_without_the_commits_it_brings_in(self):
         self.commit("launcher: first")
         self.release("v1", "2026-11-18T12:00:00Z")
-        self.git("checkout", "-q", "-b", "side")
-        side = self.commit("updater: on the side")
+        self.git("checkout", "-q", "-b", "upstream")
+        self.commit("shader: an upstream change")
+        self.commit("kernel: another upstream change")
         self.git("checkout", "-q", "main")
         main = self.commit("launcher: on main")
-        self.git("merge", "-q", "--no-ff", "-m", "Merge branch 'side'", "side")
-        status, text, _ = self.notes()
-        self.assertEqual(status, 0)
-        self.assertEqual(text, f"## Launcher\n\n{self.item('On main', main)}\n\n## Updater\n\n"
-                         f"{self.item('On the side', side)}\n\n"
+        self.git("merge", "-q", "--no-ff", "-m", "emulator: merge upstream kytyps5 up to 0685bffb",
+                 "upstream")
+        merge = self.git("rev-parse", "HEAD")
+        status, text, lines = self.notes()
+        self.assertEqual(status, 0, lines)
+        self.assertEqual(text, f"## Launcher\n\n{self.item('On main', main)}\n\n## Emulator\n\n"
+                         f"{self.item('Merge upstream kytyps5 up to 0685bffb', merge)}\n\n"
                          f"**Full Changelog**: {URL}/compare/v1...{TAG}\n")
+        self.assertIn(f"release_notes: the subjects of 2 of 2 commits since v1, because {MANUAL} "
+                      "has no text outside comments", lines)
 
     def test_at_most_the_newest_100_subjects(self):
         self.commit("launcher: first")
