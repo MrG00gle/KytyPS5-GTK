@@ -512,6 +512,13 @@ kyty_add_test(NAME junit_check_tool
 	TIMEOUT 120
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1 "KYTY_CMAKE=${CMAKE_COMMAND}" "KYTY_CTEST=${CMAKE_CTEST_COMMAND}"
 	            "KYTY_CMAKE_GENERATOR=${CMAKE_GENERATOR}" "KYTY_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}")
+# The upstream merge tools (tools/upstream/platform_merge.py and sync_status.py): their unit tests on
+# scratch git repositories. The cases that run the real unifdef are skipped when it is not
+# installed. They need no build output, so they are registered with KYTY_BUILD_LAUNCHER OFF too.
+kyty_add_test(NAME upstream_tools
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/upstream/tests" -v
+	TIMEOUT 300
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 # Flatpak packaging checks (task 26.6, tools/checks/flatpak_checks.py): the manifest's pins against
 # the registry entries active with BUILD_TESTING=OFF (read through
 # tools/checks/dependency_registry.cmake), the manifest's structure and permission set, and the
