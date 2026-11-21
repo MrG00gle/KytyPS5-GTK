@@ -42,7 +42,8 @@ FILES = (flatpak_checks.MANIFEST, flatpak_checks.METAINFO, flatpak_checks.DESKTO
          flatpak_checks.SCREENSHOT_FILE)
 # cmake/KytyDependencies.cmake's table without RapidCheck, which BUILD_TESTING=ON adds.
 TABLE_ORDER = ["opus", "openxr", "xbyak", "zydis", "zstd", "zarchive_source",
-               "ffmpeg_core_prebuilt"]
+               "ffmpeg_core_prebuilt", "noto_sans_license", "noto_sans_regular", "noto_sans_bold",
+               "noto_sans_italic", "noto_sans_bold_italic"]
 RAPIDCHECK = {"type": "git", "url": "https://github.com/emil-e/rapidcheck.git",
               "commit": "2c3c4365aca21ef4e612768fdc95b1ce8b39a651", "disable-submodules": True,
               "dest": "_prefetched/rapidcheck"}

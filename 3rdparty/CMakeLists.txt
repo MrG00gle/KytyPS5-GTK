@@ -27,6 +27,15 @@ set_property(DIRECTORY "${openxr_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
 target_compile_options(openxr_loader PRIVATE -fexceptions)
 install(FILES "${openxr_SOURCE_DIR}/LICENSE" DESTINATION "licenses/openxr")
 
+# Noto Sans v2.015 (SIL Open Font License 1.1) is libFont's fallback font. The registry pins its
+# license and its four TTF files; they are collected in KYTY_NOTO_SANS_DIR, which the top-level
+# CMakeLists.txt installs as assets and cmake/KytyLicenses.cmake registers as noto-sans.
+set(KYTY_NOTO_SANS_DIR "${FETCHCONTENT_BASE_DIR}/noto-sans")
+foreach(kyty_noto_sans_file IN ITEMS license regular bold italic bold_italic)
+	kyty_dependency_fetch_file(noto_sans_${kyty_noto_sans_file} "${KYTY_NOTO_SANS_DIR}")
+endforeach()
+set(KYTY_NOTO_SANS_DIR "${KYTY_NOTO_SANS_DIR}" PARENT_SCOPE)
+
 # The guest instruction patcher needs a decoder/encoder and a small
 # trampoline assembler. Pin the same revisions used by shadPS4's implementation.
 set(XBYAK_BUILD_TESTS OFF CACHE BOOL "" FORCE)

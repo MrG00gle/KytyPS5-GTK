@@ -57,6 +57,8 @@ set(KYTY_CPP_FLAGS "")
 
 SET(CMAKE_NINJA_FORCE_RESPONSE_FILE 1 CACHE INTERNAL "")
 
+# Guest code runs natively and needs x86-64-v3 (AVX2, BMI2, FMA), so every host has it.
+# No FMA contraction: a * b + c keeps both roundings.
 if(CLANG OR GCC)
 
 	if (CLANG)
@@ -64,6 +66,7 @@ if(CLANG OR GCC)
 	else()
 		set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} -fno-exceptions -fdiagnostics-color=always -finput-charset=UTF-8 -fexec-charset=UTF-8 -static-libgcc -static-libstdc++ -g -fno-strict-aliasing -fno-omit-frame-pointer -Wall -Wno-unused-value -fmessage-length=0")
 	endif()
+	set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} -march=x86-64-v3 -ffp-contract=off")
 	
     if(KYTY_WARNINGS_ARE_ERRORS)
         #set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} -Werror")

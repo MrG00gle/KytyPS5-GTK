@@ -36,6 +36,11 @@ endfunction()
 
 kyty_expect_gpu_skip("shader_recompiler_compute_tests --scheduler-only"
 	"${SHADER_RECOMPILER_COMPUTE_TESTS}" --scheduler-only)
+# These two modes create a window and a device without VulkanHarness, so they probe in main().
+kyty_expect_gpu_skip("shader_recompiler_compute_tests --wait-until-safe-for-rendering-only"
+	"${SHADER_RECOMPILER_COMPUTE_TESTS}" --wait-until-safe-for-rendering-only)
+kyty_expect_gpu_skip("shader_recompiler_compute_tests --flip-only"
+	"${SHADER_RECOMPILER_COMPUTE_TESTS}" --flip-only)
 kyty_expect_gpu_skip("kernel_file_system_tests" "${KERNEL_FILE_SYSTEM_TESTS}")
 
 get_property(kyty_failures GLOBAL PROPERTY KYTY_GPU_SKIP_FAILURES)

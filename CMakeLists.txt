@@ -260,6 +260,7 @@ set(gpu_tiler_shader_names
 	promote_d16
 	demote_d16
 	color_transform
+	color_clear
 )
 file(GLOB gpu_tiler_shader_includes CONFIGURE_DEPENDS "${gpu_tiler_shader_dir}/gpu_tiler_*.inc")
 foreach(shader_name IN LISTS gpu_tiler_shader_names)
@@ -334,7 +335,7 @@ list(REMOVE_DUPLICATES kyty_emulator_src)
 # Compiled once, in kyty_vulkan_device_selection.
 list(FILTER kyty_emulator_src EXCLUDE REGEX "/graphics/presentation/window/vulkanDeviceSelection\\.(cpp|h)$")
 
-set(kyty_emulator_link_libraries common Vulkan::Headers spirv-tools-opt spirv-tools SDL3::SDL3-static imgui xxhash FFmpeg::ffmpeg fmt::fmt nlohmann_json::nlohmann_json LibAtrac9 kyty_git_version Zydis::Zydis xbyak::xbyak opus OpenXR::openxr_loader)
+set(kyty_emulator_link_libraries common Vulkan::Headers spirv-tools-opt spirv-tools SDL3::SDL3-static imgui xxhash FFmpeg::ffmpeg fmt::fmt nlohmann_json::nlohmann_json LibAtrac9 kyty_git_version Zydis::Zydis xbyak::xbyak opus OpenXR::openxr_loader libzstd_static)
 # The system overlay finds its assets through Emulator::FindAssetFile, so the tests that build the
 # Emulator sources link the option library too.
 list(APPEND kyty_emulator_link_libraries kyty_emulator_options)
@@ -383,6 +384,21 @@ add_custom_target(kyty_touch_cursors
 add_dependencies(kyty_emulator kyty_touch_cursors)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/cursors"
 	DESTINATION "${KYTY_INSTALL_ASSETSDIR}")
+
+# libFont's fallback font; 3rdparty/CMakeLists.txt puts the registry's Noto Sans files in
+# KYTY_NOTO_SANS_DIR.
+set(KYTY_NOTO_SANS_FONTS
+	"${KYTY_NOTO_SANS_DIR}/NotoSans-Regular.ttf"
+	"${KYTY_NOTO_SANS_DIR}/NotoSans-Bold.ttf"
+	"${KYTY_NOTO_SANS_DIR}/NotoSans-Italic.ttf"
+	"${KYTY_NOTO_SANS_DIR}/NotoSans-BoldItalic.ttf")
+add_custom_target(kyty_noto_sans_fonts
+	COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:kyty_emulator>/assets/fonts"
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different ${KYTY_NOTO_SANS_FONTS}
+		"$<TARGET_FILE_DIR:kyty_emulator>/assets/fonts"
+	VERBATIM)
+add_dependencies(kyty_emulator kyty_noto_sans_fonts)
+install(FILES ${KYTY_NOTO_SANS_FONTS} DESTINATION "${KYTY_INSTALL_ASSETSDIR}/fonts")
 
 target_link_libraries(kyty_emulator kyty_emulator_options ${kyty_emulator_link_libraries})
 if (CLANG)

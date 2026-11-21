@@ -20,7 +20,7 @@ foreach(kyty_variable IN ITEMS BUILD_DIR SOURCE_DIR)
 endforeach()
 set(kyty_components SDL3 fmt magic_enum nlohmann_json spdlog tracy imgui LibAtrac9 stb renderdoc cpuinfo
 	clog xxHash Vulkan-Headers VulkanMemoryAllocator SPIRV-Tools SPIRV-Headers ffmpeg-core opus openxr jsoncpp
-	xbyak zydis zycore zstd ZArchive ffmpeg)
+	xbyak zydis zycore zstd ZArchive noto-sans ffmpeg)
 set(kyty_notice_components renderdoc xbyak)
 
 set(kyty_manifest_file "${BUILD_DIR}/licenses-manifest.txt")

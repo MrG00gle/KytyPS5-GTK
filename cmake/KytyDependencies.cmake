@@ -25,6 +25,11 @@
 #       <name>_POPULATED.
 #       URL entries: sets <name>_ARCHIVE (the prefetched archive; empty online, where the consumer
 #       downloads it) and <name>_SHA256.
+#   kyty_dependency_fetch_file(<name> <dir>)
+#       URL entries whose file is used as it is: kyty_make_dependency_available(<name>), then
+#       <dir>/<FILENAME> is a copy of the prefetched file, or online the file downloaded from the
+#       entry's URL (not again while its SHA-256 matches). Its SHA-256 is checked in both modes, and
+#       online it is recorded as the entry's source.
 #   kyty_patch_source_copy(<name> SOURCE_DIR <dir> REVISION <text> PATCHES <file>... OUTPUT_VARIABLE <var>)
 #       Copies <dir> to ${CMAKE_BINARY_DIR}/_kyty_patched/<name> and applies the patches there, with
 #       git apply when <dir>/.git is a directory and patch -p1 otherwise (the copy then has no .git).
@@ -443,6 +448,44 @@ function(kyty_make_dependency_available name)
 	set(${name}_POPULATED "${${name}_POPULATED}" PARENT_SCOPE)
 endfunction()
 
+function(kyty_dependency_fetch_file name dir)
+	set(kyty_dep_context "kyty_dependency_fetch_file(${name})")
+	_kyty_dependency_require(${name} "${kyty_dep_context}")
+	_kyty_dependency_get(${name} KIND kyty_dep_kind)
+	if(NOT kyty_dep_kind STREQUAL "URL")
+		message(FATAL_ERROR "${kyty_dep_context}: only URL entries name a file")
+	endif()
+	kyty_make_dependency_available(${name})
+	_kyty_dependency_get(${name} URL kyty_dep_url)
+	_kyty_dependency_get(${name} SHA256 kyty_dep_sha256)
+	_kyty_dependency_get(${name} FILENAME kyty_dep_filename)
+	set(kyty_dep_file "${dir}/${kyty_dep_filename}")
+	file(MAKE_DIRECTORY "${dir}")
+	if(${name}_ARCHIVE)
+		file(COPY_FILE "${${name}_ARCHIVE}" "${kyty_dep_file}" ONLY_IF_DIFFERENT)
+	else()
+		set(kyty_dep_have "")
+		if(EXISTS "${kyty_dep_file}")
+			file(SHA256 "${kyty_dep_file}" kyty_dep_have)
+		endif()
+		if(NOT kyty_dep_have STREQUAL kyty_dep_sha256)
+			file(DOWNLOAD "${kyty_dep_url}" "${kyty_dep_file}" STATUS kyty_dep_status)
+			list(GET kyty_dep_status 0 kyty_dep_code)
+			if(NOT kyty_dep_code EQUAL 0)
+				file(REMOVE "${kyty_dep_file}")
+				message(FATAL_ERROR "${kyty_dep_context}: could not download ${kyty_dep_url}: "
+					"${kyty_dep_status}")
+			endif()
+		endif()
+		kyty_dependency_set_source(${name} "${kyty_dep_file}")
+	endif()
+	file(SHA256 "${kyty_dep_file}" kyty_dep_have)
+	if(NOT kyty_dep_have STREQUAL kyty_dep_sha256)
+		message(FATAL_ERROR "${kyty_dep_context}: ${kyty_dep_file} has SHA-256 ${kyty_dep_have}, "
+			"not the registry's ${kyty_dep_sha256}")
+	endif()
+endfunction()
+
 # The registry. The FFmpeg tag 9ac4cfd195f1 is the 3rdparty/ffmpeg-core submodule commit.
 kyty_declare_dependency(opus
 	GIT https://github.com/xiph/opus.git
@@ -470,6 +513,30 @@ kyty_declare_dependency(ffmpeg_core_prebuilt
 	URL https://github.com/KytyPS5/ext-ffmpeg-core/releases/download/9ac4cfd195f1/ffmpeg-linux-x64.zip
 	SHA256 f4659ad09e6f2b99ecf0227ca56fe4bbb34572cdd8d85ff85384f74ba38f23ef
 	FILENAME ffmpeg-linux-x64.zip)
+# Noto Sans v2.015 (SIL Open Font License 1.1), libFont's fallback font: the license and the four
+# hinted TTF files of notofonts.github.io at 42af67cc.
+set(kyty_noto_sans_url
+	"https://raw.githubusercontent.com/notofonts/notofonts.github.io/42af67ccd12bc0e31ed85384bf73e39248265374/fonts")
+kyty_declare_dependency(noto_sans_license
+	URL "${kyty_noto_sans_url}/LICENSE"
+	SHA256 f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8
+	FILENAME LICENSE)
+kyty_declare_dependency(noto_sans_regular
+	URL "${kyty_noto_sans_url}/NotoSans/hinted/ttf/NotoSans-Regular.ttf"
+	SHA256 478c558ea716033cd60c03438f628dfa75694dcf6b5f6d505a2f05fd2b4f3823
+	FILENAME NotoSans-Regular.ttf)
+kyty_declare_dependency(noto_sans_bold
+	URL "${kyty_noto_sans_url}/NotoSans/hinted/ttf/NotoSans-Bold.ttf"
+	SHA256 1df075a380fc7cb898acf64c1f7b3b4dd780de3caa860178bf929de35817a913
+	FILENAME NotoSans-Bold.ttf)
+kyty_declare_dependency(noto_sans_italic
+	URL "${kyty_noto_sans_url}/NotoSans/hinted/ttf/NotoSans-Italic.ttf"
+	SHA256 467e3f89eeca4108bb8710a2b9e0cf2281ac56d5b0609211a83776d0505eecb5
+	FILENAME NotoSans-Italic.ttf)
+kyty_declare_dependency(noto_sans_bold_italic
+	URL "${kyty_noto_sans_url}/NotoSans/hinted/ttf/NotoSans-BoldItalic.ttf"
+	SHA256 1b602a9d6353be42c91df097a4857b69fa2696f26703d7a33b54a15d87c2622c
+	FILENAME NotoSans-BoldItalic.ttf)
 # Property tests only; undeclared, so neither fetched nor checked, when BUILD_TESTING is OFF.
 if(BUILD_TESTING)
 	# ext/catch and ext/googletest are only used by RapidCheck's own tests (RC_ENABLE_TESTS is OFF).

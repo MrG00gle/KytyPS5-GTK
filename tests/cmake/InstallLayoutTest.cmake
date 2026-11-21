@@ -2,13 +2,13 @@
 # build tree into WORK_DIR, then the first-party files of the configured KYTY_INSTALL_LAYOUT,
 # exactly:
 #   portable  kyty_emulator, assets/sounds/trophy-unlock.wav, assets/cursors/<every file of
-#             assets/cursors>, and with the launcher kyty_launcher and kyty_updater; with or without
-#             the launcher, LICENSE and LICENSES/<path> for every other path of
-#             BUILD_DIR/licenses-manifest.txt, from the file that BUILD_DIR/licenses-sources.txt
-#             names (no manifest);
+#             assets/cursors>, assets/fonts/<the four Noto Sans TTF files of FONTS_DIR>, and with
+#             the launcher kyty_launcher and kyty_updater; with or without the launcher, LICENSE
+#             and LICENSES/<path> for every other path of BUILD_DIR/licenses-manifest.txt, from the
+#             file that BUILD_DIR/licenses-sources.txt names (no manifest);
 #   fhs       bin/kyty_emulator, share/kyty/assets/sounds/trophy-unlock.wav,
-#             share/kyty/assets/cursors/<...>, and with the launcher bin/kyty_launcher,
-#             bin/kyty_updater, share/applications/<App_ID>.desktop,
+#             share/kyty/assets/cursors/<...>, share/kyty/assets/fonts/<...>, and with the launcher
+#             bin/kyty_launcher, bin/kyty_updater, share/applications/<App_ID>.desktop,
 #             share/metainfo/<App_ID>.metainfo.xml, share/icons/hicolor/scalable/apps/<App_ID>.svg,
 #             and share/icons/hicolor/256x256/apps/<App_ID>.png; with or without the launcher,
 #             share/licenses/<App_ID>/<path> for every path of BUILD_DIR/licenses-manifest.txt, from
@@ -21,11 +21,12 @@
 # Run as
 #   cmake -DBUILD_DIR=<build tree> -DSOURCE_DIR=<source tree> [-DCONFIG=<configuration>]
 #         -DLAYOUT=<portable|fhs> -DFLATPAK=<ON|OFF> -DLAUNCHER=<ON|OFF> -DAPP_ID=<App_ID>
-#         -DWORK_DIR=<scratch directory> -P InstallLayoutTest.cmake
+#         -DFONTS_DIR=<KYTY_NOTO_SANS_DIR of the build> -DWORK_DIR=<scratch directory>
+#         -P InstallLayoutTest.cmake
 # WORK_DIR is the install prefix. It is recreated at the start and removed when every check passes.
 cmake_minimum_required(VERSION 3.22)
 
-foreach(kyty_variable IN ITEMS BUILD_DIR SOURCE_DIR LAYOUT FLATPAK LAUNCHER APP_ID WORK_DIR)
+foreach(kyty_variable IN ITEMS BUILD_DIR SOURCE_DIR LAYOUT FLATPAK LAUNCHER APP_ID FONTS_DIR WORK_DIR)
 	if(NOT DEFINED ${kyty_variable} OR "${${kyty_variable}}" STREQUAL "")
 		message(FATAL_ERROR "InstallLayoutTest: ${kyty_variable} is not set")
 	endif()
@@ -58,6 +59,9 @@ if(NOT kyty_cursors)
 endif()
 foreach(kyty_cursor IN LISTS kyty_cursors)
 	list(APPEND kyty_expected "${kyty_assets}/cursors/${kyty_cursor}|${SOURCE_DIR}/assets/cursors/${kyty_cursor}")
+endforeach()
+foreach(kyty_font IN ITEMS NotoSans-Regular.ttf NotoSans-Bold.ttf NotoSans-Italic.ttf NotoSans-BoldItalic.ttf)
+	list(APPEND kyty_expected "${kyty_assets}/fonts/${kyty_font}|${FONTS_DIR}/${kyty_font}")
 endforeach()
 if(LAUNCHER)
 	list(APPEND kyty_expected "${kyty_bin}kyty_launcher|")

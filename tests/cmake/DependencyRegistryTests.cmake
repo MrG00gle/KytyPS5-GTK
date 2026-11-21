@@ -81,14 +81,20 @@ function(kyty_registry_repo name content out)
 endfunction()
 
 # Fills <farm> with a stand-in for every entry of the registry's table that is active with
-# BUILD_TESTING unset: a README.md in each tree and in the zydis submodule, and the FFmpeg archive.
-# No case adds these trees, so their contents do not matter.
+# BUILD_TESTING unset: a README.md in each tree and in the zydis submodule, the FFmpeg archive, and
+# the Noto Sans files. No case adds these trees or reads these files, so their contents do not
+# matter.
 function(kyty_registry_farm farm)
 	foreach(kyty_entry IN ITEMS opus openxr xbyak zydis zydis/dependencies/zycore zstd
 			zarchive_source)
 		file(WRITE "${farm}/${kyty_entry}/README.md" "Stand-in for ${kyty_entry}.\n")
 	endforeach()
 	file(WRITE "${farm}/ffmpeg_core_prebuilt/ffmpeg-linux-x64.zip" "Stand-in archive.\n")
+	foreach(kyty_entry IN ITEMS noto_sans_license/LICENSE noto_sans_regular/NotoSans-Regular.ttf
+			noto_sans_bold/NotoSans-Bold.ttf noto_sans_italic/NotoSans-Italic.ttf
+			noto_sans_bold_italic/NotoSans-BoldItalic.ttf)
+		file(WRITE "${farm}/${kyty_entry}" "Stand-in file.\n")
+	endforeach()
 endfunction()
 
 # Writes the project: the two modules, then <body> with its @variables@ replaced.
@@ -173,7 +179,7 @@ message(STATUS "dependency_registry: check=passed")
 	kyty_registry_configure(configure "-DKYTY_PREFETCHED_SOURCES_DIR=${kyty_farm}")
 	kyty_expect_exit(configure failure)
 	string(CONCAT kyty_expected "KYTY_PREFETCHED_SOURCES_DIR=${kyty_farm} lacks the sources of "
-		"2 of 7 dependencies: opus, zydis.")
+		"2 of 12 dependencies: opus, zydis.")
 	kyty_expect_text(configure "${kyty_expected}")
 	kyty_expect_text(configure "opus: ${kyty_farm}/opus (")
 	kyty_expect_text(configure "zydis: ${kyty_zycore} (submodule dependencies/zycore of")

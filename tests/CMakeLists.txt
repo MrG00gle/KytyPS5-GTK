@@ -38,6 +38,12 @@ kyty_add_test_executable(page_manager_tests
 )
 target_include_directories(page_manager_tests PRIVATE ${inc_headers})
 
+# Fails to compile unless the global flags target x86-64-v3, and fails at run time when they let the
+# compiler contract a * b + c.
+kyty_add_test_executable(build_flags_tests
+	SOURCES "${KYTY_TESTS_DIR}/BuildFlagsTests.cpp"
+)
+
 kyty_add_test_executable(archive_file_tests
 	SOURCES "${KYTY_TESTS_DIR}/ArchiveFileTests.cpp"
 	LINK common ZArchive::zarchive
@@ -76,6 +82,11 @@ kyty_add_test_executable(lru_cache_tests
 	SOURCES "${KYTY_TESTS_DIR}/LruCacheTests.cpp"
 )
 target_include_directories(lru_cache_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(slot_vector_tests
+	SOURCES "${KYTY_TESTS_DIR}/SlotVectorTests.cpp"
+)
+target_include_directories(slot_vector_tests PRIVATE ${inc_headers})
 
 kyty_add_test_executable(ime_dialog_tests
 	SOURCES
@@ -180,6 +191,24 @@ kyty_add_test_executable(png_enc_tests
 )
 target_include_directories(png_enc_tests PRIVATE ${inc_headers})
 
+kyty_add_test_executable(jpeg_dec_tests
+	SOURCES "${KYTY_TESTS_DIR}/JpegDecTests.cpp"
+	LINK common fmt::fmt
+)
+target_include_directories(jpeg_dec_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(jpeg_enc_tests
+	SOURCES "${KYTY_TESTS_DIR}/JpegEncTests.cpp"
+	LINK common fmt::fmt
+)
+target_include_directories(jpeg_enc_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(occlusion_queries_tests
+	SOURCES "${KYTY_TESTS_DIR}/OcclusionQueriesTests.cpp"
+	LINK common fmt::fmt Vulkan::Headers
+)
+target_include_directories(occlusion_queries_tests PRIVATE ${inc_headers})
+
 kyty_add_test_executable(ces_tests
 	SOURCES "${KYTY_TESTS_DIR}/CesTests.cpp"
 	LINK common fmt::fmt SDL3::SDL3-static
@@ -282,12 +311,14 @@ kyty_add_test(NAME scalar_provenance COMMAND $<TARGET_FILE:scalar_provenance_tes
 kyty_add_test(NAME image_page_table COMMAND $<TARGET_FILE:image_page_table_tests>)
 kyty_add_test(NAME memory_tracker COMMAND $<TARGET_FILE:memory_tracker_tests>)
 kyty_add_test(NAME page_manager COMMAND $<TARGET_FILE:page_manager_tests>)
+kyty_add_test(NAME build_flags COMMAND $<TARGET_FILE:build_flags_tests>)
 kyty_add_test(NAME archive_file COMMAND $<TARGET_FILE:archive_file_tests>)
 kyty_add_test(NAME trophy_system COMMAND $<TARGET_FILE:trophy_system_tests>)
 kyty_add_test(NAME avplayer_file COMMAND $<TARGET_FILE:avplayer_file_tests>)
 kyty_add_test(NAME vdecsw COMMAND $<TARGET_FILE:vdecsw_tests>)
 kyty_add_test(NAME bit_array COMMAND $<TARGET_FILE:bit_array_tests>)
 kyty_add_test(NAME lru_cache COMMAND $<TARGET_FILE:lru_cache_tests>)
+kyty_add_test(NAME slot_vector COMMAND $<TARGET_FILE:slot_vector_tests>)
 kyty_add_test(NAME shader_vertex_metadata COMMAND $<TARGET_FILE:shader_vertex_metadata_tests>)
 kyty_add_test(NAME resource_materialization COMMAND $<TARGET_FILE:resource_materialization_tests>)
 kyty_add_test(NAME resource_tracking COMMAND $<TARGET_FILE:resource_tracking_tests>)
@@ -308,6 +339,9 @@ kyty_add_test(NAME controller_settings COMMAND $<TARGET_FILE:controller_settings
 kyty_add_test(NAME host_input COMMAND $<TARGET_FILE:host_input_tests>)
 kyty_add_test(NAME save_data_memory COMMAND $<TARGET_FILE:save_data_memory_tests>)
 kyty_add_test(NAME png_enc COMMAND $<TARGET_FILE:png_enc_tests>)
+kyty_add_test(NAME jpeg_dec COMMAND $<TARGET_FILE:jpeg_dec_tests>)
+kyty_add_test(NAME jpeg_enc COMMAND $<TARGET_FILE:jpeg_enc_tests>)
+kyty_add_test(NAME occlusion_queries COMMAND $<TARGET_FILE:occlusion_queries_tests>)
 kyty_add_test(NAME ces COMMAND $<TARGET_FILE:ces_tests>)
 kyty_add_test(NAME save_data_dialog COMMAND $<TARGET_FILE:save_data_dialog_tests>)
 kyty_add_test(NAME http_uri_parse COMMAND $<TARGET_FILE:http_uri_parse_tests>)
@@ -342,6 +376,22 @@ kyty_add_test(NAME stream_buffer_ring
 	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME gpu_command_lane
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --gpu-command-lane-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+# These two modes create a hidden window (WindowContext::CreateVulkan), so they run inside a private
+# headless Wayland session, as kernel_file_system does.
+kyty_add_test(NAME wait_until_safe_for_rendering
+	COMMAND "${KYTY_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh" wayland --
+	        $<TARGET_FILE:shader_recompiler_compute_tests> --wait-until-safe-for-rendering-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME pm4_flip
+	COMMAND "${KYTY_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh" wayland --
+	        $<TARGET_FILE:shader_recompiler_compute_tests> --flip-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME depth_bits
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --depth-bits-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME msaa_storage
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --msaa-storage-only
 	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME pm4_context_state
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --context-state-only
@@ -488,6 +538,7 @@ kyty_add_test(NAME install_layout_tree
 	COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
 	        "-DCONFIG=$<CONFIG>" "-DLAYOUT=${KYTY_INSTALL_LAYOUT}" "-DFLATPAK=${KYTY_FLATPAK_BUILD}"
 	        "-DLAUNCHER=${KYTY_BUILD_LAUNCHER}" "-DAPP_ID=${KYTY_APP_ID}"
+	        "-DFONTS_DIR=${KYTY_NOTO_SANS_DIR}"
 	        "-DWORK_DIR=${kyty_selftests_dir}/install_layout_tree"
 	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/InstallLayoutTest.cmake"
 	TIMEOUT 120)

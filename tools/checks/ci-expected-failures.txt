@@ -13,10 +13,12 @@ buffer_cache_ranges ShaderRecompilerComputeTests: VulkanHarness failed at dispat
 color_render_target_1d ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 command_scheduler_timeline ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 compute_meta_clear_classification ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
+depth_bits ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 gpu_command_lane ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 gpu_tiler ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 graphics_pipeline_rasterization ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 host_image_allocation ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
+msaa_storage ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 pm4_context_state ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 shader_recompiler_alignbyte ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 shader_recompiler_compute ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics

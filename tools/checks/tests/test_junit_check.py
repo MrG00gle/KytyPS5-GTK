@@ -666,9 +666,10 @@ class CommittedLists(unittest.TestCase):
 
     VULKAN_HARNESS_MODES = (
         "buffer_cache_dirty_gc", "buffer_cache_ranges", "color_render_target_1d",
-        "command_scheduler_timeline", "compute_meta_clear_classification", "gpu_command_lane",
-        "gpu_tiler", "graphics_pipeline_rasterization", "host_image_allocation",
-        "pm4_context_state", "shader_recompiler_alignbyte", "shader_recompiler_compute",
+        "command_scheduler_timeline", "compute_meta_clear_classification", "depth_bits",
+        "gpu_command_lane", "gpu_tiler", "graphics_pipeline_rasterization",
+        "host_image_allocation", "msaa_storage", "pm4_context_state",
+        "shader_recompiler_alignbyte", "shader_recompiler_compute",
         "shader_recompiler_float_min_max", "stream_buffer_ring", "texture_cache_htile_clear",
         "texture_cache_image_overlap", "texture_cache_image_views", "texture_cache_layered_image",
         "texture_cache_storage_sampled")

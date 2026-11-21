@@ -271,6 +271,8 @@ function(kyty_register_third_party_licenses)
 	kyty_register_license(zstd SOURCE_DIR "${kyty_lic_zstd}")
 	_kyty_license_dependency_dir(zarchive_source kyty_lic_zarchive)
 	kyty_register_license(ZArchive SOURCE_DIR "${kyty_lic_zarchive}")
+	# The fallback font's directory holds its LICENSE (the SIL Open Font License) next to the fonts.
+	kyty_register_license(noto-sans SOURCE_DIR "${KYTY_NOTO_SANS_DIR}")
 
 	# The FFmpeg libraries come from the prebuilt archive, unpacked by 3rdparty/ffmpeg-core. Its
 	# share/ffmpeg/copyright equals ffmpeg-core's copyright; its SOURCE.txt adds the LGPL statement,
