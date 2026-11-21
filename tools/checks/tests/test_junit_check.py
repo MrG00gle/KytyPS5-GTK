@@ -668,11 +668,13 @@ class CommittedLists(unittest.TestCase):
         "buffer_cache_dirty_gc", "buffer_cache_ranges", "color_render_target_1d",
         "command_scheduler_timeline", "compute_meta_clear_classification", "depth_bits",
         "gpu_command_lane", "gpu_tiler", "graphics_pipeline_rasterization",
-        "host_image_allocation", "msaa_storage", "pm4_context_state",
+        "host_image_allocation", "msaa_storage", "pm4_context_state", "pssr",
         "shader_recompiler_alignbyte", "shader_recompiler_compute",
-        "shader_recompiler_float_min_max", "stream_buffer_ring", "texture_cache_htile_clear",
-        "texture_cache_image_overlap", "texture_cache_image_views", "texture_cache_layered_image",
-        "texture_cache_storage_sampled")
+        "shader_recompiler_float_min_max", "shader_recompiler_integer16_ternary",
+        "shader_recompiler_mad_u16", "shader_recompiler_mul_hi24", "shader_recompiler_quadmask",
+        "shader_recompiler_vop3_conversions", "srgb_texture", "stream_buffer_ring",
+        "texture_cache_htile_clear", "texture_cache_image_overlap", "texture_cache_image_views",
+        "texture_cache_layered_image", "texture_cache_storage_sampled", "video_out_hdr10_to_sdr")
 
     def test_the_expected_failures_are_the_vulkan_harness_modes_with_their_text(self):
         expected = junit_check.read_expected_failures(

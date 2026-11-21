@@ -22,7 +22,6 @@ kyty_add_test_executable(scalar_provenance_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/ScalarProvenanceTests.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/guest_gpu/gpu_format.cpp"
-	"${KYTY_SOURCE_DIR}/graphics/host_gpu/hostMemory.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/ReadLaneElimination.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/ResourceMaterialization.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/SrtWalker.cpp"
@@ -108,7 +107,6 @@ target_include_directories(memory_tracker_tests PRIVATE ${inc_headers})
 kyty_add_test_executable(shader_vertex_metadata_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/ShaderVertexMetadataTests.cpp"
-	"${KYTY_SOURCE_DIR}/graphics/host_gpu/hostMemory.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/shaderVertexMetadata.cpp"
 )
 target_include_directories(shader_vertex_metadata_tests PRIVATE ${inc_headers})
@@ -117,7 +115,6 @@ kyty_add_test_executable(resource_materialization_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/ResourceMaterializationTests.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/guest_gpu/gpu_format.cpp"
-	"${KYTY_SOURCE_DIR}/graphics/host_gpu/hostMemory.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/ResourceMaterialization.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/SrtWalker.cpp"
 	LINK fmt::fmt xbyak::xbyak
@@ -128,7 +125,6 @@ kyty_add_test_executable(resource_tracking_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/ResourceTrackingTests.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/guest_gpu/gpu_format.cpp"
-	"${KYTY_SOURCE_DIR}/graphics/host_gpu/hostMemory.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/shaderPixelParameter.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/SrtWalker.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/ResourceTracking.cpp"
@@ -160,6 +156,14 @@ kyty_add_test_executable(ngs2_sampler_tests
 	LINK common fmt::fmt LibAtrac9
 )
 target_include_directories(ngs2_sampler_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(ajm_resample_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/AjmResampleTests.cpp"
+	"${KYTY_SOURCE_DIR}/loader/timer.cpp"
+	LINK common fmt::fmt FFmpeg::ffmpeg LibAtrac9 opus
+)
+target_include_directories(ajm_resample_tests PRIVATE ${inc_headers})
 
 kyty_add_test_executable(pad_haptics_tests
 	SOURCES "${KYTY_TESTS_DIR}/PadHapticsTests.cpp"
@@ -280,6 +284,37 @@ add_kyty_full_emulator_test(virtual_memory_allocation_tests "${KYTY_TESTS_DIR}/V
 target_compile_definitions(virtual_memory_allocation_tests PRIVATE
 	KYTY_VIRTUAL_MEMORY_ALLOCATION_TESTS=1)
 
+# googletest from the fmt submodule, for the tests written with it. Built only for those tests and
+# never installed.
+add_library(kyty_test_gtest STATIC EXCLUDE_FROM_ALL
+	"${KYTY_THIRD_PARTY_DIR}/fmt/test/gtest/gmock-gtest-all.cc")
+target_include_directories(kyty_test_gtest PUBLIC "${KYTY_THIRD_PARTY_DIR}/fmt/test/gtest")
+target_sources(virtual_memory_allocation_tests PRIVATE "${KYTY_TESTS_DIR}/TrinityTests.cpp")
+target_link_libraries(virtual_memory_allocation_tests kyty_test_gtest)
+
+add_kyty_full_emulator_test(net_resolver_tests "${KYTY_TESTS_DIR}/NetResolverTests.cpp")
+target_link_libraries(net_resolver_tests kyty_test_gtest)
+
+kyty_add_test_executable(psml_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/PsmlTests.cpp"
+	"${KYTY_SOURCE_DIR}/libs/libPsml.cpp"
+	"${KYTY_SOURCE_DIR}/loader/symbolDatabase.cpp"
+	"${KYTY_SOURCE_DIR}/loader/timer.cpp"
+	LINK common kyty_test_gtest
+)
+target_include_directories(psml_tests PRIVATE ${inc_headers})
+
+# Checks the task shader that the top-level CMakeLists.txt compiles for indirect mesh draws.
+kyty_add_test_executable(gpu_blit_shader_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/GpuBlitShaderTests.cpp"
+	"${gpu_blit_generated_dir}/gpu_mesh_indirect_spv.h"
+	LINK kyty_test_gtest
+)
+target_include_directories(gpu_blit_shader_tests PRIVATE ${inc_headers})
+add_dependencies(gpu_blit_shader_tests kyty_emulator_generated_headers)
+
 kyty_add_test_executable(sse4a_emulation_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/Sse4aEmulationTests.cpp"
@@ -334,6 +369,7 @@ kyty_add_test(NAME sync_on_address COMMAND $<TARGET_FILE:sync_on_address_tests>)
 kyty_add_test(NAME audio_out2_port COMMAND $<TARGET_FILE:audio_out2_port_tests>)
 kyty_add_test(NAME audio_out_timing COMMAND $<TARGET_FILE:audio_out_timing_tests>)
 kyty_add_test(NAME ngs2_sampler COMMAND $<TARGET_FILE:ngs2_sampler_tests>)
+kyty_add_test(NAME ajm_resample COMMAND $<TARGET_FILE:ajm_resample_tests>)
 kyty_add_test(NAME pad_haptics COMMAND $<TARGET_FILE:pad_haptics_tests>)
 kyty_add_test(NAME controller_settings COMMAND $<TARGET_FILE:controller_settings_tests>)
 kyty_add_test(NAME host_input COMMAND $<TARGET_FILE:host_input_tests>)
@@ -356,6 +392,21 @@ kyty_add_test(NAME shader_recompiler_tessellation
 kyty_add_test(NAME shader_recompiler_float_min_max
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --float-min-max-only
 	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_vop3_conversions
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --vop3-conversions-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_quadmask
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --quadmask-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_integer16_ternary
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --integer16-ternary-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_mad_u16
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --mad-u16-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_mul_hi24
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --mul-hi24-only
+	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME shader_recompiler_alignbyte
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --alignbyte-only
 	LABELS gpu SKIP_RETURN_CODE 77)
@@ -366,6 +417,14 @@ kyty_add_test(NAME graphics_draw_offsets
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --draw-offset-only)
 kyty_add_test(NAME virtual_memory_allocation
 	COMMAND $<TARGET_FILE:virtual_memory_allocation_tests>)
+kyty_add_test(NAME trinity_mode
+	COMMAND $<TARGET_FILE:virtual_memory_allocation_tests> --trinity-only)
+kyty_add_test(NAME psml COMMAND $<TARGET_FILE:psml_tests>)
+kyty_add_test(NAME net_resolver COMMAND $<TARGET_FILE:net_resolver_tests>)
+kyty_add_test(NAME gpu_blit_shader COMMAND $<TARGET_FILE:gpu_blit_shader_tests>)
+kyty_add_test(NAME pssr
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --pssr-only
+	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME guest_red_zone_patcher
 	COMMAND $<TARGET_FILE:virtual_memory_allocation_tests> --red-zone-patcher-only)
 kyty_add_test(NAME command_scheduler_timeline
@@ -379,16 +438,22 @@ kyty_add_test(NAME gpu_command_lane
 	LABELS gpu SKIP_RETURN_CODE 77)
 # These two modes create a hidden window (WindowContext::CreateVulkan), so they run inside a private
 # headless Wayland session, as kernel_file_system does.
-kyty_add_test(NAME wait_until_safe_for_rendering
-	COMMAND "${KYTY_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh" wayland --
-	        $<TARGET_FILE:shader_recompiler_compute_tests> --wait-until-safe-for-rendering-only
-	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME pm4_flip
 	COMMAND "${KYTY_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh" wayland --
 	        $<TARGET_FILE:shader_recompiler_compute_tests> --flip-only
 	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME device_creation
+	COMMAND "${KYTY_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh" wayland --
+	        $<TARGET_FILE:shader_recompiler_compute_tests> --device-creation-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME video_out_hdr10_to_sdr
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --video-out-only
+	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME depth_bits
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --depth-bits-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME srgb_texture
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --srgb-texture-only
 	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME msaa_storage
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --msaa-storage-only

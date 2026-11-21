@@ -504,8 +504,11 @@ void PrepareCallTargets(ShaderSource& source, const CompileOptions& options) {
 	};
 	Register = [&](uint32_t before, uint32_t code) -> Value {
 		std::vector<uint32_t> crossed_calls;
-		const auto index = CFG::FindScalarDefinition(source.decoded, graph, before, code,
-		                                             source.wave_size, crossed_calls);
+		const auto definition = CFG::FindScalarDefinition(source.decoded, graph, before, code,
+		                                                  source.wave_size, crossed_calls);
+		// Several reaching definitions select the value on the GPU, so no SRT walk evaluates it.
+		if (!definition) return Value(&block.AppendNewInst(ValueOpcode::UndefU32));
+		const auto index = *definition;
 		for (const auto crossed: crossed_calls) {
 			std::ranges::find(source.calls, crossed, &ShaderSource::Call::instruction)->preserved_registers.set(code);
 		}
@@ -755,13 +758,6 @@ TranslateResult TranslateProgram(const Decoder::Program& decoded, const CompileO
 				EXIT("shader call at pc 0x%08x must be linked before translation", inst.pc);
 		}
 	}
-	if (options.stage != ShaderType::Compute && options.stage != ShaderType::Vertex &&
-	    options.stage != ShaderType::Pixel && options.stage != ShaderType::Mesh &&
-	    options.stage != ShaderType::Local && options.stage != ShaderType::TessellationControl &&
-	    options.stage != ShaderType::TessellationEvaluation) {
-		EXIT("shader recompiler received unsupported stage %u\n",
-		     static_cast<unsigned>(options.stage));
-	}
 
 	const auto* stage        = StageName(options.stage);
 	const auto compile_begin = std::chrono::steady_clock::now();
@@ -814,7 +810,7 @@ TranslateResult TranslateProgram(const Decoder::Program& decoded, const CompileO
 	const auto& cfg = *selected_cfg;
 	Frontend::EmbeddedFetchPlan embedded_fetch;
 	if ((options.stage == ShaderType::Vertex || options.stage == ShaderType::Local) &&
-	    options.input_info.vertex->fetch_embedded) {
+	    options.input_info.vertex->has_dynamic_vertex_fetch) {
 		embedded_fetch = DetectEmbeddedVertexFetch(
 		    decoded, *options.input_info.vertex, options.user_data_base,
 		    static_cast<uint32_t>(options.user_data.size()), options.wave_size);

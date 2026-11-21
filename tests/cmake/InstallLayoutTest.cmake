@@ -16,8 +16,10 @@
 #             share/kyty/licenses-manifest.txt (cmake/KytyLicenses.cmake).
 # A Flatpak build (FLATPAK=ON, fhs only) installs no kyty_updater (Requirement 13.4). Each data file
 # equals its source byte for byte, and each executable is executable. A missing or an extra
-# first-party file fails the test. The files that the dependency and license rules install under
-# the top-level include/, lib/, lib64/, and licenses/ directories are listed, not checked.
+# first-party file fails the test, and so does any file under the top-level include/, lib/, or lib64/
+# directories: the package ships no headers, libraries, or CMake and pkg-config files of the
+# dependencies. The files that the license rules install under the top-level licenses/ directory are
+# listed, not checked.
 # Run as
 #   cmake -DBUILD_DIR=<build tree> -DSOURCE_DIR=<source tree> [-DCONFIG=<configuration>]
 #         -DLAYOUT=<portable|fhs> -DFLATPAK=<ON|OFF> -DLAUNCHER=<ON|OFF> -DAPP_ID=<App_ID>
@@ -123,15 +125,17 @@ file(GLOB_RECURSE kyty_installed LIST_DIRECTORIES false RELATIVE "${WORK_DIR}" "
 list(SORT kyty_installed)
 set(kyty_third_party "")
 set(kyty_first_party "")
+set(kyty_failures "")
 foreach(kyty_path IN LISTS kyty_installed)
-	if(kyty_path MATCHES "^(include|lib|lib64|licenses)/")
+	if(kyty_path MATCHES "^licenses/")
 		list(APPEND kyty_third_party "${kyty_path}")
+	elseif(kyty_path MATCHES "^(include|lib|lib64)/")
+		string(APPEND kyty_failures "\n  dependency file: ${kyty_path}")
 	else()
 		list(APPEND kyty_first_party "${kyty_path}")
 	endif()
 endforeach()
 
-set(kyty_failures "")
 set(kyty_expected_paths "")
 foreach(kyty_entry IN LISTS kyty_expected)
 	string(FIND "${kyty_entry}" "|" kyty_separator)
@@ -168,8 +172,8 @@ list(JOIN kyty_first_party "\n  " kyty_first_party_text)
 list(JOIN kyty_third_party "\n  " kyty_third_party_text)
 message(STATUS "InstallLayoutTest: ${kyty_first_party_count} first-party file(s):\n  "
 	"${kyty_first_party_text}")
-message(STATUS "InstallLayoutTest: ${kyty_third_party_count} file(s) of the dependency and license "
-	"rules (listed, not checked):\n  ${kyty_third_party_text}")
+message(STATUS "InstallLayoutTest: ${kyty_third_party_count} file(s) of the license rules under "
+	"licenses/ (listed, not checked):\n  ${kyty_third_party_text}")
 if(kyty_failures)
 	message(FATAL_ERROR "InstallLayoutTest: FAILED (the tree stays in ${WORK_DIR}):"
 		"${kyty_failures}")

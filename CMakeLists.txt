@@ -195,6 +195,10 @@ target_include_directories(kyty_vulkan_device_selection PUBLIC ${KYTY_SOURCE_DIR
 add_subdirectory("${KYTY_SOURCE_DIR}/launcher/core" "${CMAKE_CURRENT_BINARY_DIR}/launcher/core")
 # The Updater: kyty_updater_core whatever KYTY_BUILD_LAUNCHER is, and the kyty_updater helper.
 add_subdirectory("${KYTY_SOURCE_DIR}/updater" "${CMAKE_CURRENT_BINARY_DIR}/updater")
+# Release builds ship the helper stripped, as kyty_emulator and kyty_launcher.
+if(TARGET kyty_updater)
+	target_link_options(kyty_updater PRIVATE $<$<CONFIG:Release>:-Wl,--strip-all>)
+endif()
 
 file(GLOB kyty_emulator_src CONFIGURE_DEPENDS
 	"${KYTY_SOURCE_DIR}/libs/*.cpp"
@@ -311,7 +315,7 @@ function(add_gpu_blit_shader shader_name shader_file)
 		        "-I${gpu_tiler_shader_dir}" -o "${shader_spv}" "${shader_source}"
 		COMMAND ${CMAKE_COMMAND} -DINPUT=${shader_spv} -DOUTPUT=${shader_header}
 		        -DSYMBOL=${shader_symbol} -P "${KYTY_SOURCE_DIR}/embed_spirv.cmake"
-		DEPENDS "${shader_source}"
+		DEPENDS "${shader_source}" "${gpu_tiler_shader_dir}/gpu_video_out_hdr10_to_sdr.inc"
 		VERBATIM
 	)
 	set(gpu_blit_shader_headers ${gpu_blit_shader_headers} "${shader_header}" PARENT_SCOPE)
@@ -320,6 +324,9 @@ add_gpu_blit_shader(gpu_blit_fs_triangle gpu_blit_fs_triangle.vert)
 add_gpu_blit_shader(gpu_blit_color_to_ms_depth gpu_blit_color_to_ms_depth.frag)
 add_gpu_blit_shader(gpu_video_out_overlay gpu_video_out_overlay.frag)
 add_gpu_blit_shader(gpu_imgui_hdr gpu_video_out_overlay.frag -DIMGUI_HDR=1)
+add_gpu_blit_shader(gpu_pssr_linear gpu_pssr_linear.comp)
+# At SPIR-V 1.6 glslang declares a task shader's workgroup size with LocalSizeId, which needs maintenance4.
+add_gpu_blit_shader(gpu_mesh_indirect gpu_mesh_indirect.task --target-env spirv1.5)
 list(APPEND kyty_emulator_src ${gpu_blit_shader_headers})
 
 # Targets in other directories (tests/) get no build-order edge to the custom commands above, so they

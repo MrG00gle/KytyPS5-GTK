@@ -26,7 +26,6 @@ enum class ShaderType {
 	Unknown,
 	Vertex,
 	Pixel,
-	Fetch,
 	Compute,
 	Mesh,
 	Local,
@@ -125,8 +124,7 @@ struct ShaderTessellationInputInfo {
 };
 
 // GS user-data slots an indirect draw packet writes its record's base vertex and first instance
-// to. Like the hardware index VGPRs, the vertex shader's indices exclude both bases once either
-// slot is set.
+// to. A packet can leave both slots unused even when its record contains nonzero offsets.
 struct ShaderIndirectOffsets {
 	static constexpr uint8_t None = UINT8_MAX;
 
@@ -159,8 +157,10 @@ struct ShaderVertexInputInfo {
 	ShaderMeshInputInfo      mesh;
 	ShaderTessellationInputInfo tess;
 	ShaderIndirectOffsets   indirect_offsets;
-	bool                    fetch_external      = false;
-	bool                    fetch_embedded      = false;
+	// GPU-read records add Vulkan bases even when the packet patches no user SGPRs.
+	bool                    indirect_draw       = false;
+	// Attribute-table metadata enables dynamic fetch detection; loads are matched later.
+	bool                    has_dynamic_vertex_fetch = false;
 };
 
 struct ShaderComputeInputInfo: ShaderWorkgroupInputInfo {
@@ -220,7 +220,6 @@ struct ShaderPixelInputInfo {
 	// Export logical alpha or per-channel source factors through MRT1 after channel swizzling.
 	ShaderAlphaBlendSource                         alpha_blend_source = ShaderAlphaBlendSource::None;
 	bool                                           ps_early_z                   = false;
-	bool                                           ps_execute_on_noop           = false;
 	ShaderStageRuntime                             stage;
 
 	bool HasPositionInput() const { return ps_pos_x || ps_pos_y || ps_pos_z || ps_pos_w; }
