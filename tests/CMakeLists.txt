@@ -51,7 +51,7 @@ target_include_directories(archive_file_tests PRIVATE ${inc_headers})
 
 kyty_add_test_executable(trophy_system_tests
 	SOURCES "${KYTY_TESTS_DIR}/TrophySystemTests.cpp"
-	LINK common
+	LINK common Vulkan::Headers
 )
 target_include_directories(trophy_system_tests PRIVATE ${inc_headers})
 
@@ -305,6 +305,21 @@ kyty_add_test_executable(psml_tests
 )
 target_include_directories(psml_tests PRIVATE ${inc_headers})
 
+kyty_add_test_executable(common_tests
+	SOURCES "${KYTY_TESTS_DIR}/CommonTests.cpp"
+	LINK common kyty_test_gtest
+)
+
+kyty_add_test_executable(rtc_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/RtcTests.cpp"
+	"${KYTY_SOURCE_DIR}/libs/libRtc.cpp"
+	"${KYTY_SOURCE_DIR}/loader/symbolDatabase.cpp"
+	"${KYTY_SOURCE_DIR}/loader/timer.cpp"
+	LINK common kyty_test_gtest
+)
+target_include_directories(rtc_tests PRIVATE ${inc_headers})
+
 # Checks the task shader that the top-level CMakeLists.txt compiles for indirect mesh draws.
 kyty_add_test_executable(gpu_blit_shader_tests
 	SOURCES
@@ -420,6 +435,8 @@ kyty_add_test(NAME virtual_memory_allocation
 kyty_add_test(NAME trinity_mode
 	COMMAND $<TARGET_FILE:virtual_memory_allocation_tests> --trinity-only)
 kyty_add_test(NAME psml COMMAND $<TARGET_FILE:psml_tests>)
+kyty_add_test(NAME common COMMAND $<TARGET_FILE:common_tests>)
+kyty_add_test(NAME rtc COMMAND $<TARGET_FILE:rtc_tests>)
 kyty_add_test(NAME net_resolver COMMAND $<TARGET_FILE:net_resolver_tests>)
 kyty_add_test(NAME gpu_blit_shader COMMAND $<TARGET_FILE:gpu_blit_shader_tests>)
 kyty_add_test(NAME pssr

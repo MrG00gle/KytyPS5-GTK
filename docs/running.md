@@ -124,7 +124,7 @@ SDL_VULKAN_LIBRARY=/path/to/libvulkan.so.1 ./kyty_emulator --game "/games/Exampl
 ## Emulator options
 
 Every option of `kyty_emulator --help`. A flag takes no value; its default is off unless the table
-says otherwise. Enumerated values are case-sensitive.
+says otherwise. Enumerated values are case-insensitive: `mailbox` and `Mailbox` are the same value.
 
 | Option | Value format | Accepted values or range | Default | Effect |
 |---|---|---|---|---|
@@ -155,7 +155,6 @@ says otherwise. Enumerated values are case-sensitive.
 | `--gpu-assisted-validation` | flag | – | off | Bounds-checks shader accesses on the GPU. Implies `--vulkan-validation`; very slow. |
 | `--shader-validation` | flag | – | off | Enables shader validation. |
 | `--tessellation` | flag | – | off | Draws tessellation patches, which are skipped by default. |
-| `--shader-optimization-type` | `<value>` | `None`, `Size`, `Performance` | `None` | Shader optimization. The launcher does not pass it. |
 | `--shader-log-direction` | `<value>` | `Silent`, `Console`, `File` | `Silent` | Where shader logs go. |
 | `--shader-log-folder` | `<path>` | Any folder | `_Shaders` | Shader log folder for `File`. |
 | `--command-buffer-dump` | flag | – | off | Enables command buffer dumps. |

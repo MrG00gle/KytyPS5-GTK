@@ -2,7 +2,6 @@
 
 #include "common/assert.h"
 #include "common/common.h"
-#include "common/dateTime.h"
 #include "common/emulatorConfig.h"
 #include "common/hostException.h"
 #include "common/logging/log.h"
@@ -14,7 +13,6 @@
 #include "libs/errno.h"
 #include "libs/libs.h"
 #include "loader/runtimeLinker.h"
-#include "loader/timer.h"
 
 #include <algorithm>
 #include <array>
@@ -108,48 +106,36 @@ static uint64_t GetHostThreadId() {
 	return static_cast<uint64_t>(::syscall(SYS_gettid));
 }
 
+static constexpr uint64_t NANOS_PER_SEC = 1000000000;
+
 static uint64_t KernelHostTsc() {
 #if defined(__x86_64__)
 	return __rdtsc();
 #else
-	return Common::Timer::QueryPerformanceCounter();
+	return Common::SteadyNs();
 #endif
 }
 
 static uint64_t KernelHostTscFrequency() {
 	static const uint64_t frequency = [] {
 #if defined(__x86_64__)
-		const auto host_frequency = Common::Timer::QueryPerformanceFrequency();
-		if (host_frequency == 0) {
-			return uint64_t {1000000000};
-		}
-
 		KernelHostTsc();
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		KernelHostTsc();
 
-		const auto host_start = Common::Timer::QueryPerformanceCounter();
+		const auto host_start = Common::SteadyNs();
 		const auto tsc_start  = KernelHostTsc();
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
-		const auto host_end = Common::Timer::QueryPerformanceCounter();
+		const auto host_end = Common::SteadyNs();
 		const auto tsc_end  = KernelHostTsc();
 
-		const auto host_delta = host_end - host_start;
-		const auto tsc_delta  = tsc_end - tsc_start;
-		if (host_delta == 0 || tsc_delta == 0) {
-			return host_frequency;
-		}
-
-		auto freq = static_cast<uint64_t>(
-		    (static_cast<long double>(tsc_delta) * static_cast<long double>(host_frequency)) /
-		    static_cast<long double>(host_delta));
+		const auto freq = static_cast<uint64_t>(static_cast<long double>(tsc_end - tsc_start) *
+		                                        static_cast<long double>(NANOS_PER_SEC) /
+		                                        static_cast<long double>(host_end - host_start));
 		static constexpr uint64_t ROUND_TO = 100000;
-		const auto                mod      = freq % ROUND_TO;
-		freq = (mod >= ROUND_TO / 2 ? freq - mod + ROUND_TO : freq - mod);
-
-		return freq != 0 ? freq : host_frequency;
+		return (freq + ROUND_TO / 2) / ROUND_TO * ROUND_TO;
 #else
-		return Common::Timer::QueryPerformanceFrequency();
+		return NANOS_PER_SEC;
 #endif
 	}();
 
@@ -191,14 +177,8 @@ static uint64_t KernelGetElapsedTsc() {
 }
 
 static uint64_t KernelGetProcessTimeUsNative() {
-	const auto frequency = KernelGetTscFrequencyNative();
-	if (frequency == 0) {
-		return static_cast<uint64_t>(Loader::Timer::GetTimeMs() * 1000.0);
-	}
-
-	const auto elapsed = KernelGetElapsedTsc();
-	return static_cast<uint64_t>((static_cast<long double>(elapsed) * 1000000.0L) /
-	                             static_cast<long double>(frequency));
+	return static_cast<uint64_t>((static_cast<long double>(KernelGetElapsedTsc()) * 1000000.0L) /
+	                             static_cast<long double>(KernelGetTscFrequencyNative()));
 }
 
 static void KernelUsToTimespec(uint64_t us, KernelTimespec* tp) {
@@ -426,7 +406,7 @@ struct PthreadStaticObject {
 class PthreadStaticObjects {
 public:
 	PthreadStaticObjects() { EXIT_NOT_IMPLEMENTED(!Common::Thread::IsMainThread()); }
-	virtual ~PthreadStaticObjects() { KYTY_NOT_IMPLEMENTED; }
+	virtual ~PthreadStaticObjects() { EXIT_NOT_IMPLEMENTED(true); }
 
 	KYTY_CLASS_NO_COPY(PthreadStaticObjects);
 
@@ -456,7 +436,7 @@ static thread_local std::unique_ptr<PthreadSpecificValue[]> g_pthread_specific;
 class PthreadPool {
 public:
 	PthreadPool() { EXIT_NOT_IMPLEMENTED(!Common::Thread::IsMainThread()); }
-	virtual ~PthreadPool() { KYTY_NOT_IMPLEMENTED; }
+	virtual ~PthreadPool() { EXIT_NOT_IMPLEMENTED(true); }
 
 	KYTY_CLASS_NO_COPY(PthreadPool);
 
@@ -472,7 +452,7 @@ private:
 class PThreadContext {
 public:
 	PThreadContext() { EXIT_NOT_IMPLEMENTED(!Common::Thread::IsMainThread()); }
-	virtual ~PThreadContext() { KYTY_NOT_IMPLEMENTED; }
+	virtual ~PThreadContext() { EXIT_NOT_IMPLEMENTED(true); }
 
 	KYTY_CLASS_NO_COPY(PThreadContext);
 
@@ -884,8 +864,7 @@ void Initialize() {
 
 	PRINT_NAME_ENABLE(true);
 
-	Common::Thread thread(FreeDetachedThreads, nullptr);
-	thread.Detach();
+	std::thread(FreeDetachedThreads, nullptr).detach();
 }
 
 static int PthreadAttrCopy(PthreadAttr* dst, const PthreadAttr* src) {
@@ -3381,8 +3360,7 @@ int KYTY_SYSV_ABI KernelClockGetres(KernelClockid clock_id, KernelTimespec* tp) 
 		const auto frequency = KernelGetTscFrequencyNative();
 		tp->tv_sec           = 0;
 		tp->tv_nsec          = static_cast<int64_t>(
-		    frequency != 0 ? std::max<uint64_t>((1000000000 + (frequency >> 1)) / frequency, 1)
-		                   : 1);
+		    std::max<uint64_t>((NANOS_PER_SEC + (frequency >> 1)) / frequency, 1));
 		return OK;
 	}
 
@@ -3542,14 +3520,7 @@ uint64_t KYTY_SYSV_ABI KernelReadTsc() {
 }
 
 uint64_t KYTY_SYSV_ABI KernelGetProcessTime() {
-	const auto frequency = KernelGetTscFrequencyNative();
-	if (frequency == 0) {
-		return static_cast<uint64_t>(Loader::Timer::GetTimeMs() * 1000.0);
-	}
-
-	const auto elapsed = KernelGetElapsedTsc();
-	return static_cast<uint64_t>((static_cast<long double>(elapsed) * 1000000.0L) /
-	                             static_cast<long double>(frequency));
+	return KernelGetProcessTimeUsNative();
 }
 
 uint64_t KYTY_SYSV_ABI KernelGetProcessTimeCounter() {

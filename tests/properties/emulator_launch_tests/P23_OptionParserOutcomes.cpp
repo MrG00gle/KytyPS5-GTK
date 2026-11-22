@@ -2,13 +2,13 @@
 //
 // Validates Requirements 3.8, 5.5, 5.9, and 15.13. Each case builds an argument list from valid
 // options of Emulator::Options(): --game once (an existing directory or ELF), other options at
-// random with valid values (--keymap up to three times), now and then --help or -h, and now and
-// then --guest-exec with guest arguments at the end. Then at most one fault is injected: an
-// unknown option (--redzone, another --name, or -x), a value option without its value at the
-// end, a malformed or out-of-range value, a --game path that does not exist, or a --game path
-// that exists but is not readable. With a fault, ParseOptions returns Error and the message names
-// the option or the path; without one, it returns Help when --help or -h is present and Run
-// otherwise. UsageText() names every option of the table.
+// random with valid values (enumerated values in any letter case, --keymap up to three times),
+// now and then --help or -h, and now and then --guest-exec with guest arguments at the end. Then
+// at most one fault is injected: an unknown option (--redzone, another --name, or -x), a value
+// option without its value at the end, a malformed or out-of-range value, a --game path that does
+// not exist, or a --game path that exists but is not readable. With a fault, ParseOptions returns
+// Error and the message names the option or the path; without one, it returns Help when --help or
+// -h is present and Run otherwise. UsageText() names every option of the table.
 //
 // Unreadable paths cannot be made with chmod when the tests run as root (the CI container does),
 // so this file interposes access(): a call for a path below the marked prefix with a mode other
@@ -110,8 +110,17 @@ std::string AnyText() {
 	return ConfigGen::AnyText(12);
 }
 
-std::string OneOf(const std::vector<std::string>& values) {
-	return PickOf(values);
+// An enumerator name in any letter case ("mAilBox"): the parser ignores case.
+std::string OneOfAnyCase(const std::vector<std::string>& values) {
+	auto value = PickOf(values);
+	if (OneIn(2)) {
+		for (auto& c: value) {
+			if (OneIn(2)) {
+				c = static_cast<char>(c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c - 'A' + 'a');
+			}
+		}
+	}
+	return value;
 }
 
 // A value that the option accepts, or nothing for an option this property does not know (a new
@@ -161,7 +170,7 @@ std::optional<std::string> ValidValue(std::string_view name) {
 		return Decimal(0, Config::MAX_PLAYERS);
 	}
 	if (name == "--present-mode") {
-		return OneOf({"Fifo", "Mailbox", "Immediate"});
+		return OneOfAnyCase({"Fifo", "Mailbox", "Immediate"});
 	}
 	if (name == "--gpu") {
 		return std::to_string(Choose<int64_t>(std::numeric_limits<int32_t>::min(),
@@ -173,11 +182,8 @@ std::optional<std::string> ValidValue(std::string_view name) {
 	if (name == "--console-language") {
 		return Decimal(0, Config::MAX_CONSOLE_LANGUAGE);
 	}
-	if (name == "--shader-optimization-type") {
-		return OneOf({"None", "Size", "Performance"});
-	}
 	if (name == "--shader-log-direction" || name == "--printf-direction") {
-		return OneOf({"Silent", "Console", "File"});
+		return OneOfAnyCase({"Silent", "Console", "File"});
 	}
 	if (name == "--keymap") {
 		std::string control = "Pad:Cross";
@@ -219,7 +225,7 @@ std::vector<std::string> InvalidValues(std::string_view name) {
 		return {"5", "-1", "x", ""};
 	}
 	if (name == "--present-mode") {
-		return {"mailbox", "FIFO", "", "3", "Vsync"};
+		return {"", "3", "Vsync", " Fifo", "Mailboxes"};
 	}
 	if (name == "--gpu") {
 		return {"x", "2147483648", "-2147483649", "", "1.0"};
@@ -230,11 +236,8 @@ std::vector<std::string> InvalidValues(std::string_view name) {
 	if (name == "--console-language") {
 		return {"30", "-1", "x", ""};
 	}
-	if (name == "--shader-optimization-type") {
-		return {"Fast", "none", ""};
-	}
 	if (name == "--shader-log-direction" || name == "--printf-direction") {
-		return {"Loud", "file", ""};
+		return {"Loud", "", "Files"};
 	}
 	if (name == "--keymap") {
 		return {"NoEquals", "=x", "x=", "", "="};

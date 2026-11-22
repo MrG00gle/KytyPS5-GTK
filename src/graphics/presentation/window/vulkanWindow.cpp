@@ -5,8 +5,8 @@
 #include "common/logging/log.h"
 #include "common/profiler.h"
 #include "common/stringUtils.h"
+#include "common/subsystems.h"
 #include "common/threads.h"
-#include "common/timer.h"
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
@@ -19,6 +19,7 @@
 #include "graphics/presentation/window/vulkanDeviceSelection.h"
 #include "graphics/presentation/window/windowInternal.h"
 #include "kernel/memory.h"
+#include "kytyGitVersion.h"
 #include "libs/controller.h"
 #include "loader/systemContent.h"
 
@@ -27,6 +28,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fmt/format.h>
 #include <memory>
@@ -762,8 +764,8 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL VulkanDebugMessengerCallback(
 	}
 
 	if (error) {
-		EXIT_COLOR(severity_style, "[Vulkan][%s][%u]: %s\n", severity_str,
-		           static_cast<uint32_t>(message_types), callback_data->pMessage);
+		EXIT("[Vulkan][%s][%u]: %s\n", severity_str, static_cast<uint32_t>(message_types),
+		     callback_data->pMessage);
 	}
 
 	if (!skip) {
@@ -903,9 +905,14 @@ void WindowContext::CreateVulkan() {
 	                         rejected_devices);
 
 	if (graphic_ctx.physical_device == nullptr) {
-		// Every device with its reasons, or that there is none, then exit status 1.
-		Common::DbgExitHandler(__FILE__, __LINE__, rejected_devices);
-		Common::DbgExit(1);
+		// Every device with its reasons, or that there is none, in the fatal-error report, then
+		// exit status 1 (Common::DbgExitHandler would exit with 321).
+		Log::WriteToConsoleAndLog(fmt::format("--- Build ---\n{}\n--- Error ---\n{} in {}:{}\n",
+		                                      KYTY_BUILD_LABEL, rejected_devices, __FILE__,
+		                                      __LINE__));
+		Common::Subsystems::EmergencyShutdownActive();
+		std::fflush(nullptr);
+		std::_Exit(1);
 	}
 
 	graphic_ctx.physical_device.getMemoryProperties(&graphic_ctx.physical_device_memory_properties);

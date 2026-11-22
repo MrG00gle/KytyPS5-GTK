@@ -1,38 +1,34 @@
 #include "common/common.h"
-#include "common/dateTime.h"
-#include "common/debug.h"
 #include "common/threads.h"
-#include "common/virtualMemory.h"
 #include "emulator.h"
 #include "emulatorOptions.h"
 #include "kytyGitVersion.h"
 
 #include <cstdio>
-#include <string>
-#include <vector>
 #include <fmt/format.h>
+#include <string>
+#include <string_view>
+#include <vector>
 
 using namespace Common;
 using namespace Emulator;
 
+// The build date as YYYY.MM.DD, from __DATE__ ("Mmm dd yyyy", the day padded with a space).
+static std::string GetBuildDate() {
+	constexpr std::string_view months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+	constexpr std::string_view date   = __DATE__;
+
+	const auto month = months.find(date.substr(0, 3)) / 3 + 1;
+	const char tens  = date[4] == ' ' ? '0' : date[4];
+	return fmt::format("{}.{:02}.{}{}", date.substr(7), month, tens, date[5]);
+}
+
+// "Release, clang-lld, ver = …, git = …, date = …", the first line of the help and error output.
 static std::string GetBuildString() {
-	Date date = Date::FromMacros(std::string(__DATE__));
+	const char* type = KYTY_BUILD == KYTY_BUILD_DEBUG ? "Debug" : "Release";
 
-#if KYTY_BUILD == KYTY_BUILD_DEBUG
-	std::string type = "Debug";
-#elif KYTY_BUILD == KYTY_BUILD_RELEASE
-	std::string type = "Release";
-#else
-	std::string type = "????";
-#endif
-
-	std::string compiler = Debug::GetCompiler() + "-" + Debug::GetLinker();
-
-	std::string str =
-	    fmt::format("{}, {}, ver = {}, git = {}, date = {}", type.c_str(), compiler.c_str(),
-	                KYTY_VERSION, KYTY_GIT_VERSION, date.ToString().c_str());
-
-	return str;
+	return fmt::format("{}, {}, ver = {}, git = {}, date = {}", type, KYTY_TOOLCHAIN, KYTY_VERSION,
+	                   KYTY_GIT_VERSION, GetBuildDate());
 }
 
 static int Main(int argc, char* argv[]) {
@@ -62,7 +58,6 @@ static int Main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	VirtualMemory::Init();
 	InitializeThreads();
 
 	Run(outcome.options);

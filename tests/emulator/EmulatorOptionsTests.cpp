@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <regex>
 #include <spawn.h>
 #include <string>
 #include <string_view>
@@ -226,7 +227,6 @@ std::vector<std::pair<std::string_view, std::string>> ValidValues(const Fixtures
 	    {"--gpu", "0"},
 	    {"--vblank-frequency", "60"},
 	    {"--console-language", "29"},
-	    {"--shader-optimization-type", "Performance"},
 	    {"--shader-log-direction", "File"},
 	    {"--shader-log-folder", (fixtures.root / "shaders").string()},
 	    {"--command-buffer-dump-folder", (fixtures.root / "buffers").string()},
@@ -256,7 +256,7 @@ void TestOptionTable() {
 		          !option.value_hint.empty(),
 		      "only Value and Terminal options have a value hint: " + std::string(option.name));
 	}
-	Check(Emulator::Options().size() == 50, "Options() has 50 entries");
+	Check(Emulator::Options().size() == 49, "Options() has 49 entries");
 	Check(flags > 0 && values > 0, "Options() has Flag and Value options");
 	Check(help == std::vector<std::string_view> {"--help", "-h"}, "Help options are --help and -h");
 	Check(terminal == std::vector<std::string_view> {"--guest-exec"},
@@ -324,6 +324,30 @@ void TestValueOptions(const Fixtures& fixtures) {
 	          config.keymap == Config::Keymap {"Cross=Return", "Circle=Escape"} &&
 	          config.controller_color == Config::ControllerColor {0x11, 0x22, 0x33},
 	      "value options store their values, and --keymap may be repeated");
+}
+
+// Enumerated values match without regard to case; anything else is still invalid.
+void TestEnumCase(const Fixtures& fixtures) {
+	const auto game = fixtures.game_dir.string();
+	for (const char* value: {"immediate", "IMMEDIATE", "iMmEdIaTe"}) {
+		const auto run = CheckRun({"--game", game, "--present-mode", value});
+		Check(run.options.config.present_mode == Config::PresentMode::Immediate,
+		      std::string("--present-mode ") + value + " is Immediate");
+	}
+	for (const char* value: {"console", "CONSOLE"}) {
+		const auto run = CheckRun(
+		    {"--game", game, "--shader-log-direction", value, "--printf-direction", value});
+		Check(run.options.config.shader_log_direction == Config::LogDirection::Console &&
+		          run.options.config.printf_direction == Config::LogDirection::Console,
+		      std::string("--shader-log-direction and --printf-direction ") + value +
+		          " are Console");
+	}
+	for (const char* value: {"immediate ", " immediate", "immediat", "immediately", "fifo2", ""}) {
+		CheckError({"--game", game, "--present-mode", value},
+		           InvalidValue("--present-mode", value, "expected Fifo, Mailbox, or Immediate"));
+	}
+	CheckError({"--game", game, "--shader-optimization-type", "None"},
+	           "unknown option: --shader-optimization-type");
 }
 
 void TestHelp(const Fixtures& fixtures) {
@@ -403,7 +427,6 @@ void TestErrorMessages(const Fixtures& fixtures) {
 	    {"--gpu", "x", "expected an integer"},
 	    {"--vblank-frequency", "-1", "expected a non-negative integer"},
 	    {"--console-language", "30", "expected 0-29"},
-	    {"--shader-optimization-type", "Fast", "expected None, Size, or Performance"},
 	    {"--shader-log-direction", "Up", "expected Silent, Console, or File"},
 	    {"--printf-direction", "Up", "expected Silent, Console, or File"},
 	    {"--trophy-duration", "x", "expected a non-negative integer"},
@@ -535,11 +558,17 @@ ProcessResult RunProcess(const std::string& program, const std::vector<std::stri
 	return result;
 }
 
-// CTest emulator_help: kyty_emulator --help exits 0 and prints UsageText(), which names every
-// option.
+// CTest emulator_help: kyty_emulator --help exits 0, starts with the build line
+// ("Release, clang-lld, ver = …, git = …, date = YYYY.MM.DD"), and prints UsageText(), which
+// names every option.
 void CheckEmulatorHelp(const std::string& emulator) {
 	const auto result = RunProcess(emulator, {"--help"});
 	Check(result.exit_code == 0, "--help exits 0, got " + std::to_string(result.exit_code));
+	const auto       first_line = result.out.substr(0, result.out.find('\n'));
+	const std::regex build_line("(Debug|Release), (clang|gcc)-lld, ver = [^,]+, git = [^,]+, "
+	                            "date = [0-9]{4}\\.[0-9]{2}\\.[0-9]{2}");
+	Check(std::regex_match(first_line, build_line),
+	      "the first line is the build line, got '" + first_line + "'");
 	Check(EndsWith(result.out, Emulator::UsageText()), "--help prints UsageText() last");
 	for (const auto& option: Emulator::Options()) {
 		Check(ListsOption(result.out, option.name), "--help lists " + std::string(option.name));
@@ -581,6 +610,7 @@ int main(int argc, char* argv[]) {
 	TestOptionTable();
 	TestFlagOptions(fixtures);
 	TestValueOptions(fixtures);
+	TestEnumCase(fixtures);
 	TestHelp(fixtures);
 	TestGuestExec(fixtures);
 	TestUsageText();

@@ -3,6 +3,7 @@
 #include "common/common.h"
 #include "common/emulatorConfig.h"
 #include "common/file.h"
+#include "common/hostException.h"
 #include "common/logging/log.h"
 #include "common/singleton.h"
 #include "common/stringUtils.h"
@@ -817,11 +818,6 @@ static void ApplySignalUcontextToHost(ucontext_t* dst_ctx, const SignalUcontext&
 	// The kernel validates packed segment selectors on sigreturn.
 }
 
-static int SignalDispatchHostSignal() {
-	static const int host_signal = SIGRTMIN + 3;
-	return host_signal;
-}
-
 static void HostSignalDispatchHandler(int /*host_signal*/, siginfo_t* /*info*/,
                                       void* native_context) {
 	Pthread current = PthreadSelfOrNull();
@@ -859,7 +855,8 @@ static bool EnsureHostSignalDispatchInstalled() {
 		action.sa_sigaction = HostSignalDispatchHandler;
 		sigemptyset(&action.sa_mask);
 		action.sa_flags = SA_SIGINFO | SA_RESTART;
-		return ::sigaction(SignalDispatchHostSignal(), &action, nullptr) == 0;
+		const int signal_number = Common::HostException::GuestSignalDispatchSignal();
+		return ::sigaction(signal_number, &action, nullptr) == 0;
 	}();
 	return installed;
 }
@@ -944,7 +941,7 @@ static int KYTY_SYSV_ABI KernelRaiseException(Pthread thread, int signum) {
 		}
 
 		PthreadQueuePendingSignal(thread, signum);
-		if (!PthreadKillHost(thread, SignalDispatchHostSignal())) {
+		if (!PthreadKillHost(thread, Common::HostException::GuestSignalDispatchSignal())) {
 			PthreadTakePendingSignal(thread, signum);
 			LOGF("\t pthread_kill failed for target thread\n");
 			return KERNEL_ERROR_EINVAL;

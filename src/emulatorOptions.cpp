@@ -26,9 +26,11 @@ namespace {
 
 using Config::ConfigOptions;
 
+// Enumerator names match without regard to case ("immediate" is Immediate), as upstream parses
+// them.
 template <typename E>
 bool ParseEnum(const std::string& value, E& out) {
-	auto enum_value = magic_enum::enum_cast<E>(value.c_str());
+	auto enum_value = magic_enum::enum_cast<E>(value, magic_enum::case_insensitive);
 	if (!enum_value.has_value()) {
 		return false;
 	}
@@ -295,11 +297,6 @@ std::string ApplyConsoleLanguage(RunOptions& options, std::string_view name,
 	return {};
 }
 
-std::string ApplyShaderOptimizationType(RunOptions& options, std::string_view name,
-                                        const std::string& value) {
-	return ApplyEnum(options.config.shader_optimization_type, name, value);
-}
-
 std::string ApplyShaderLogDirection(RunOptions& options, std::string_view name,
                                     const std::string& value) {
 	return ApplyEnum(options.config.shader_log_direction, name, value);
@@ -426,8 +423,6 @@ constexpr OptionDef OPTION_DEFS[] = {
                "Enable shader validation."),
     FlagOption("--tessellation", &ConfigOptions::tessellation_enabled,
                "Draw tessellation patches; skipped by default."),
-    ValueOption("--shader-optimization-type", "<value>", ApplyShaderOptimizationType,
-                "None, Size, or Performance."),
     ValueOption("--shader-log-direction", "<value>", ApplyShaderLogDirection,
                 "Silent, Console, or File."),
     ValueOption("--shader-log-folder", "<path>", ApplyShaderLogFolder,
