@@ -37,7 +37,6 @@ using kyty::core::InvalidMappingEntry;
 using kyty::core::LogDirection;
 using kyty::core::PresentMode;
 using kyty::core::ScreenResolution;
-using kyty::core::ShaderOptimizationType;
 using kyty::core::Validate;
 using kyty::core::ValidationScope;
 
@@ -106,8 +105,6 @@ void TestDefaults() {
 	Check(c.trophy_duration_seconds == 6, "trophy_duration_seconds default");
 	Check(c.vblank_frequency == 60, "vblank_frequency default");
 	Check(c.console_language == 1, "console_language default");
-	Check(c.shader_optimization_type == ShaderOptimizationType::Performance,
-	      "shader_optimization_type default");
 	Check(c.shader_log_direction == LogDirection::Silent, "shader_log_direction default");
 	Check(c.shader_log_folder == "_Shaders", "shader_log_folder default");
 	Check(c.command_buffer_dump_folder == "_Buffers", "command_buffer_dump_folder default");
@@ -146,7 +143,6 @@ void TestTable() {
 	                                              "console_language",
 	                                              "vulkan_validation_enabled",
 	                                              "shader_validation_enabled",
-	                                              "shader_optimization_type",
 	                                              "shader_log_direction",
 	                                              "shader_log_folder",
 	                                              "command_buffer_dump_enabled",
@@ -160,7 +156,7 @@ void TestTable() {
 	                                              "input_mapping_custom",
 	                                              "host_input_mapping"};
 	const auto                          fields = GameConfigurationFields();
-	Check(fields.size() == names.size(), "35 Game_Configuration fields");
+	Check(fields.size() == names.size(), "34 Game_Configuration fields");
 	for (size_t i = 0; i < names.size(); i++) {
 		Check(fields[i].name == names[i], "field " + std::to_string(i) + " is " +
 		                                      std::string(names[i]) + ", got " +
@@ -173,6 +169,8 @@ void TestTable() {
 	}
 	Check(FindGameConfigurationField("red_zone_protection_enabled") == nullptr,
 	      "red_zone_protection_enabled is not a field (Requirement 3.4)");
+	Check(FindGameConfigurationField("shader_optimization_type") == nullptr,
+	      "shader_optimization_type is not a field (the emulator drops its option)");
 	Check(FindGameConfigurationField("name") == nullptr &&
 	          FindGameConfigurationField("game_path") == nullptr &&
 	          FindGameConfigurationField("controller_color") == nullptr &&
@@ -212,7 +210,6 @@ void TestFieldRoundTrip() {
 	c.trophy_duration_seconds     = 10;
 	c.vblank_frequency            = 360;
 	c.console_language            = 29;
-	c.shader_optimization_type    = ShaderOptimizationType::None;
 	c.shader_log_direction        = LogDirection::File;
 	c.shader_log_folder           = "logs/shaders";
 	c.command_buffer_dump_enabled = true;
@@ -300,11 +297,6 @@ void TestEnumSpellings() {
 	    {"present_mode", "3", std::nullopt},
 	    {"present_mode", "mailbox", std::nullopt},
 	    {"present_mode", "MAILBOX", std::nullopt},
-	    {"shader_optimization_type", "None", 0},
-	    {"shader_optimization_type", "Size", 1},
-	    {"shader_optimization_type", "Performance", 2},
-	    {"shader_optimization_type", "1", 1},
-	    {"shader_optimization_type", "Speed", std::nullopt},
 	    {"shader_log_direction", "Silent", 0},
 	    {"shader_log_direction", "Console", 1},
 	    {"shader_log_direction", "File", 2},
@@ -324,7 +316,7 @@ void TestEnumSpellings() {
 	}
 	Check(Field("screen_resolution").format(FieldValue(int64_t {1})) == "R1920X1080" &&
 	          Field("present_mode").format(FieldValue(int64_t {0})) == "Fifo" &&
-	          Field("shader_optimization_type").format(FieldValue(int64_t {1})) == "Size" &&
+	          Field("shader_log_direction").format(FieldValue(int64_t {1})) == "Console" &&
 	          Field("printf_direction").format(FieldValue(int64_t {2})) == "File",
 	      "enums are written as their key names");
 }

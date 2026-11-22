@@ -245,7 +245,6 @@ inline kyty::core::GameConfiguration ValidConfiguration(bool paths_required = fa
 	c.console_language            = Choose(0, kyty::core::kMaxConsoleLanguage + 1);
 	c.vulkan_validation_enabled   = OneIn(2);
 	c.shader_validation_enabled   = OneIn(2);
-	c.shader_optimization_type    = static_cast<kyty::core::ShaderOptimizationType>(Choose(0, 3));
 	c.shader_log_direction        = static_cast<LogDirection>(Choose(0, 3));
 	c.command_buffer_dump_enabled = OneIn(2);
 	c.printf_direction            = static_cast<LogDirection>(Choose(0, 3));
@@ -291,6 +290,7 @@ inline const std::vector<std::string>& UnknownKeys() {
 	                                              "LauncherWindow/x",
 	                                              "SettingsWindow/x",
 	                                              "GlobalConfiguration/red_zone_protection_enabled",
+	                                              "GlobalConfiguration/shader_optimization_type",
 	                                              "GlobalConfiguration/name",
 	                                              "GlobalConfiguration/custom_settings",
 	                                              "ConfigurationEditDialog/geometry",
@@ -301,8 +301,8 @@ inline const std::vector<std::string>& UnknownKeys() {
 
 // Element keys outside the schema.
 inline const std::vector<std::string>& UnknownElementKeys() {
-	static const std::vector<std::string> keys = {"red_zone_protection_enabled", "future_key",
-	                                              "extra/nested"};
+	static const std::vector<std::string> keys = {
+	    "red_zone_protection_enabled", "shader_optimization_type", "future_key", "extra/nested"};
 	return keys;
 }
 

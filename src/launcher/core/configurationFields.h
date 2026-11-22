@@ -55,7 +55,7 @@ using ControllerFieldDescriptor = BasicFieldDescriptor<ControllerSettings>;
 
 // The Game_Configuration fields in the order of the Qt launcher's Configuration::GameSettings()
 // (screen_resolution ... amd_cpu_enabled, elf), then input_mapping_custom and host_input_mapping:
-// 35 fields.
+// 34 fields.
 std::span<const FieldDescriptor> GameConfigurationFields();
 
 // controller_color, controller_speaker_volume, controller_vibration_intensity,

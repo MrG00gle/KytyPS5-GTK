@@ -155,7 +155,7 @@ says otherwise. Enumerated values are case-sensitive.
 | `--gpu-assisted-validation` | flag | – | off | Bounds-checks shader accesses on the GPU. Implies `--vulkan-validation`; very slow. |
 | `--shader-validation` | flag | – | off | Enables shader validation. |
 | `--tessellation` | flag | – | off | Draws tessellation patches, which are skipped by default. |
-| `--shader-optimization-type` | `<value>` | `None`, `Size`, `Performance` | `None` | Shader optimization. The launcher's own default is `Performance`. |
+| `--shader-optimization-type` | `<value>` | `None`, `Size`, `Performance` | `None` | Shader optimization. The launcher does not pass it. |
 | `--shader-log-direction` | `<value>` | `Silent`, `Console`, `File` | `Silent` | Where shader logs go. |
 | `--shader-log-folder` | `<path>` | Any folder | `_Shaders` | Shader log folder for `File`. |
 | `--command-buffer-dump` | flag | – | off | Enables command buffer dumps. |

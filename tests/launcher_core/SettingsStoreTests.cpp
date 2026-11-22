@@ -48,7 +48,6 @@ using kyty::core::LoadReport;
 using kyty::core::LogDirection;
 using kyty::core::PresentMode;
 using kyty::core::ScreenResolution;
-using kyty::core::ShaderOptimizationType;
 using kyty::core::ValidationScope;
 using KytyTests::TempDir;
 
@@ -130,6 +129,19 @@ void CheckQtGlobalExtras(const LauncherSettings& settings, const std::string& wh
 	      what + ": unknown GlobalConfiguration/custom_settings");
 }
 
+// shader_optimization_type is no longer a field (the emulator drops its option): the Qt value is an
+// unknown key, and a save writes it back unchanged.
+constexpr const char* kRetiredGlobalKey = "GlobalConfiguration/shader_optimization_type";
+
+void CheckRetiredGlobalKey(const LauncherSettings& settings, const std::string& value,
+                           const std::string& what) {
+	Check(settings.unknown.GetString(kRetiredGlobalKey) == std::optional<std::string>(value),
+	      what + ": unknown " + kRetiredGlobalKey + "=" + value);
+	const auto saved = IniFile::Parse(kyty::core::SerializeSettings(settings));
+	Check(saved.GetString(kRetiredGlobalKey) == std::optional<std::string>(value),
+	      what + ": the re-save keeps " + kRetiredGlobalKey + "=" + value);
+}
+
 // ---- The Qt fixtures
 
 void TestPortable() {
@@ -146,8 +158,9 @@ void TestPortable() {
 	Check(s.global == GameConfiguration {}, "portable global configuration is the default");
 	Check(s.controller == ControllerSettings {}, "portable controller defaults");
 	Check(s.games.empty(), "portable has no game configuration");
-	Check(s.unknown.Entries().size() == 4, "portable unknown keys");
+	Check(s.unknown.Entries().size() == 5, "portable unknown keys");
 	CheckQtGlobalExtras(s, "portable");
+	CheckRetiredGlobalKey(s, "Performance", "portable");
 }
 
 void TestUserStore() {
@@ -169,14 +182,18 @@ void TestUserStore() {
 	Check(s.games.size() == 1, "user-store has one game");
 	const auto& game = s.games[0];
 	Check(game.name == "Astro Bot" && game.basedir == "/home/user/Games/PS5/PPSA01234" &&
-	          game.game_path == "/home/user/Games/PS5/PPSA01234" && game.unknown.empty(),
+	          game.game_path == "/home/user/Games/PS5/PPSA01234",
 	      "user-store game identity");
+	Check(game.unknown.size() == 1 &&
+	          game.unknown.at("shader_optimization_type") == IniValue::FromString("Performance"),
+	      "user-store game: shader_optimization_type is its only unknown key");
 	GameConfiguration custom;
 	custom.screen_resolution  = ScreenResolution::R1920X1080;
 	custom.vblank_frequency   = 120;
 	custom.host_input_mapping = kMapping;
 	Check(game.configuration == custom, "user-store game configuration");
-	Check(s.unknown.Entries().size() == 4, "user-store unknown keys");
+	Check(s.unknown.Entries().size() == 5, "user-store unknown keys");
+	CheckRetiredGlobalKey(s, "Performance", "user-store");
 }
 
 void TestGlobalAllFields() {
@@ -205,7 +222,6 @@ void TestGlobalAllFields() {
 	g.screen_resolution           = ScreenResolution::R3840X2160;
 	g.shader_log_direction        = LogDirection::File;
 	g.shader_log_folder           = "logs/shaders";
-	g.shader_optimization_type    = ShaderOptimizationType::Size;
 	g.shader_validation_enabled   = true;
 	g.skip_notice_screen          = true;
 	g.sync_raw_image_buffers      = true;
@@ -227,10 +243,11 @@ void TestGlobalAllFields() {
 	          s.geometry.has_value(),
 	      "all-fields main dialog");
 	Check(s.games.empty(), "all-fields has no game");
-	Check(s.unknown.Entries().size() == 5 &&
+	Check(s.unknown.Entries().size() == 6 &&
 	          s.unknown.Find("ConfigurationEditDialog/geometry") != nullptr,
 	      "all-fields keeps the settings editor geometry as an unknown key");
 	CheckQtGlobalExtras(s, "all-fields");
+	CheckRetiredGlobalKey(s, "Size", "all-fields");
 }
 
 void TestGameEntries() {
@@ -255,7 +272,6 @@ void TestGameEntries() {
 	astro.hdr_enabled              = true;
 	astro.present_mode             = PresentMode::Fifo;
 	astro.screen_resolution        = ScreenResolution::R1920X1080;
-	astro.shader_optimization_type = ShaderOptimizationType::None;
 	astro.trophy_duration_seconds  = 7;
 	astro.vblank_frequency         = 120;
 	astro.host_input_mapping       = kMapping;
@@ -285,10 +301,21 @@ void TestGameEntries() {
 	Check(s.game_folders == std::vector<std::string> {"/home/user/Games/PS5"} &&
 	          s.addons_dir == "/home/user/Games/PS5-Addons",
 	      "game-entries launcher");
-	for (const auto& game: s.games) {
-		Check(!game.configuration.input_mapping_custom && game.unknown.empty(),
-		      "Qt entries have no input_mapping_custom and no unknown key");
+	// Each Qt entry's shader_optimization_type is its only unknown key, and a save keeps it.
+	const auto saved = IniFile::Parse(kyty::core::SerializeSettings(s));
+	for (std::size_t i = 0; i < s.games.size(); i++) {
+		const auto& game  = s.games[i];
+		const auto  value = i == 1 ? "None" : "Performance";
+		Check(!game.configuration.input_mapping_custom && game.unknown.size() == 1 &&
+		          game.unknown.at("shader_optimization_type") == IniValue::FromString(value),
+		      "Qt entry " + std::to_string(i + 1) +
+		          ": no input_mapping_custom, and shader_optimization_type is unknown");
+		const auto key =
+		    "GameConfigurations/" + std::to_string(i + 1) + "/shader_optimization_type";
+		Check(saved.GetString(key) == std::optional<std::string>(value),
+		      "the re-save keeps " + key);
 	}
+	CheckRetiredGlobalKey(s, "Performance", "game-entries");
 }
 
 void TestSpecialValues() {
@@ -463,7 +490,9 @@ void TestUnknownKeysKept() {
 	      "the Global_Configuration does not read input_mapping_custom");
 	Check(s.unknown.Find("GameConfigurations/2/name") == nullptr,
 	      "an element above size is dropped, as Qt drops it");
-	Check(s.games.size() == 1 && s.games[0].unknown.size() == 2 &&
+	Check(s.games.size() == 1 && s.games[0].unknown.size() == 3 &&
+	          s.games[0].unknown.at("shader_optimization_type") ==
+	              IniValue::FromString("Performance") &&
 	          s.games[0].unknown.at("red_zone_protection_enabled") ==
 	              IniValue::FromString("true") &&
 	          s.games[0].unknown.at("future/nested") == IniValue::FromString("y"),
@@ -866,12 +895,12 @@ void TestGameElements() {
 	});
 	Check(r.settings.games.size() == 2 && r.settings.games[1].game_path == "/other",
 	      "a second element with only game_path");
-	// name, basedir, custom_settings, and 34 fields (input_mapping_custom is optional).
-	Check(r.defaulted_keys.size() == 37 &&
+	// name, basedir, custom_settings, and 33 fields (input_mapping_custom is optional).
+	Check(r.defaulted_keys.size() == 36 &&
 	          std::all_of(
 	              r.defaulted_keys.begin(), r.defaulted_keys.end(),
 	              [](const std::string& key) { return key.starts_with("GameConfigurations/2/"); }),
-	      "its other 37 keys are reported: " + Join(r.defaulted_keys));
+	      "its other 36 keys are reported: " + Join(r.defaulted_keys));
 }
 
 // ---- Files and injected faults (Requirement 12.8)
@@ -1125,7 +1154,9 @@ void TestCustomSettingsLifecycle() {
 	astro_config.hdr_enabled = false;
 	Check(kyty::core::SaveCustomSettings(settings, astro, astro_config).has_value(), "overwrite");
 	Check(settings.games[1].configuration == astro_config &&
-	          settings.games[1].name == "Astro Bot 2" && settings.games[1].unknown.size() == 1,
+	          settings.games[1].name == "Astro Bot 2" && settings.games[1].unknown.size() == 2 &&
+	          settings.games[1].unknown.at("shader_optimization_type") ==
+	              IniValue::FromString("None"),
 	      "an overwrite keeps the position and the unknown keys");
 
 	// A legacy relative element is found through legacy_relative_path and saved as absolute.

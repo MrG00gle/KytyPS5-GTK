@@ -1,22 +1,33 @@
 // Example tests of the Emulator_Arguments (src/launcher/core/emulatorArguments.h, task 15.1): every
 // row of the design's mapping table, both --game forms, the omitted options, the input mapping
-// filter, per-game and global mappings, the cheat plan, and the absence of --redzone.
+// filter, per-game and global mappings, the cheat plan, and the absence of --redzone and
+// --shader-optimization-type. With --check-emulator <kyty_emulator> it instead runs the real
+// emulator on the arguments (CTest emulator_accepts_launcher_arguments).
 
+#include "launcher/core/configurationFields.h"
 #include "launcher/core/emulatorArguments.h"
 #include "launcher/core/gameConfiguration.h"
 #include "launcher/core/settingsStore.h"
 #include "support/fakeEnvironment.h"
 #include "support/noDisplay.h"
+#include "support/tempDir.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <optional>
+#include <spawn.h>
 #include <string>
+#include <string_view>
+#include <sys/wait.h>
 #include <tuple>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -128,8 +139,6 @@ void TestDefaults() {
 	                       "60",
 	                       "--console-language",
 	                       "1",
-	                       "--shader-optimization-type",
-	                       "Performance",
 	                       "--shader-log-direction",
 	                       "Silent",
 	                       "--shader-log-folder",
@@ -172,7 +181,6 @@ void TestEveryOptionInOrder() {
 	c.console_language            = 29;
 	c.vulkan_validation_enabled   = true;
 	c.shader_validation_enabled   = true;
-	c.shader_optimization_type    = kyty::core::ShaderOptimizationType::None;
 	c.shader_log_direction        = kyty::core::LogDirection::File;
 	c.shader_log_folder           = "logs/shaders";
 	c.command_buffer_dump_enabled = true;
@@ -228,8 +236,6 @@ void TestEveryOptionInOrder() {
 	                                 "29",
 	                                 "--vulkan-validation",
 	                                 "--shader-validation",
-	                                 "--shader-optimization-type",
-	                                 "None",
 	                                 "--shader-log-direction",
 	                                 "File",
 	                                 "--shader-log-folder",
@@ -395,7 +401,6 @@ void TestNumbers() {
 void TestEnums() {
 	using kyty::core::LogDirection;
 	using kyty::core::PresentMode;
-	using kyty::core::ShaderOptimizationType;
 	GameConfiguration c;
 	for (const auto& [mode, text]:
 	     std::vector<std::pair<PresentMode, std::string>> {{PresentMode::Fifo, "Fifo"},
@@ -404,13 +409,8 @@ void TestEnums() {
 		c.present_mode = mode;
 		CheckValue(Build(c), "--present-mode", text);
 	}
-	for (const auto& [type, text]: std::vector<std::pair<ShaderOptimizationType, std::string>> {
-	         {ShaderOptimizationType::None, "None"},
-	         {ShaderOptimizationType::Size, "Size"},
-	         {ShaderOptimizationType::Performance, "Performance"}}) {
-		c.shader_optimization_type = type;
-		CheckValue(Build(c), "--shader-optimization-type", text);
-	}
+	// The emulator drops --shader-optimization-type, so the launcher never passes it.
+	CheckAbsent(Build(c), "--shader-optimization-type");
 	for (const auto& [direction, text]:
 	     std::vector<std::pair<LogDirection, std::string>> {{LogDirection::Silent, "Silent"},
 	                                                        {LogDirection::Console, "Console"},
@@ -552,10 +552,153 @@ void TestCheatPlan() {
 	CheckAbsent(Build(resolved, entry), "--game-patch");
 }
 
+// ---- CTest emulator_accepts_launcher_arguments (--check-emulator <kyty_emulator>)
+//
+// The shipped kyty_emulator accepts the arguments that BuildEmulatorArguments passes. P21
+// (tests/properties/emulator_launch_tests) checks them against the in-process parser; this mode
+// runs the real binary, with --help first, so that it parses every option and value and exits 0
+// without starting a game. A removed or renamed emulator option makes it exit 1 instead.
+
+struct ProcessResult {
+	int         exit_code = -1; // -1 unless the process exited normally.
+	std::string output;         // stdout and stderr
+};
+
+// Runs program with args, stdin from /dev/null, and captures stdout and stderr together.
+ProcessResult RunProcess(const std::string& program, const Args& args) {
+	Args storage {program};
+	storage.insert(storage.end(), args.begin(), args.end());
+	std::vector<char*> argv;
+	for (auto& arg: storage) {
+		argv.push_back(arg.data());
+	}
+	argv.push_back(nullptr);
+
+	int pipe_fds[2] = {-1, -1};
+	Check(pipe2(pipe_fds, O_CLOEXEC) == 0, "create the output pipe");
+	posix_spawn_file_actions_t actions;
+	posix_spawn_file_actions_init(&actions);
+	posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+	posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
+	posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDERR_FILENO);
+	pid_t     pid   = 0;
+	const int error = posix_spawn(&pid, program.c_str(), &actions, nullptr, argv.data(), environ);
+	posix_spawn_file_actions_destroy(&actions);
+	close(pipe_fds[1]);
+	Check(error == 0, "spawn " + program + ": " + std::strerror(error));
+
+	ProcessResult result;
+	char          buffer[4096];
+	for (;;) {
+		const auto count = read(pipe_fds[0], buffer, sizeof(buffer));
+		if (count > 0) {
+			result.output.append(buffer, static_cast<std::size_t>(count));
+		} else if (count < 0 && errno == EINTR) {
+			continue;
+		} else {
+			break;
+		}
+	}
+	close(pipe_fds[0]);
+
+	int status = 0;
+	while (waitpid(pid, &status, 0) < 0) {
+		Check(errno == EINTR, "wait for " + program);
+	}
+	if (WIFEXITED(status)) {
+		result.exit_code = WEXITSTATUS(status);
+	}
+	return result;
+}
+
+void CheckEmulatorAccepts(const std::string& emulator, const EffectiveConfiguration& effective,
+                          const GameEntry& entry, const std::string& what) {
+	const auto built = Build(effective, entry);
+	Args       args  = {"--help"};
+	args.insert(args.end(), built.begin(), built.end());
+	const auto result     = RunProcess(emulator, args);
+	const auto first_line = result.output.substr(0, result.output.find('\n'));
+	Check(result.exit_code == 0 && result.output.find("unknown option") == std::string::npos,
+	      what + ": kyty_emulator accepts " + Show(built) + " (exit " +
+	          std::to_string(result.exit_code) + ", first line '" + first_line + "')");
+}
+
+void CheckEmulator(const std::string& emulator) {
+	using kyty::core::FieldKind;
+	using kyty::core::FieldValue;
+	using kyty::core::GameConfigurationFields;
+
+	// --game and --game-patch must name existing files.
+	const KytyTests::TempDir dir("kyty_emulator_arguments");
+	const auto               game = dir.MakeDirectories("game");
+	dir.WriteFile("game/eboot.bin", "");
+	dir.WriteFile("game/bin/game.elf", "");
+	const auto addons = dir.MakeDirectories("addons");
+	const auto plan   = dir.WriteFile("_Patches/PPSA01234.json", "{}\n");
+	const auto entry  = DirectoryEntry(game);
+
+	// (a) The defaults.
+	CheckEmulatorAccepts(emulator, EffectiveConfiguration {}, entry, "the defaults");
+
+	// (b) Every boolean field off and then on (trophy_enabled passes its option when off), with
+	// every optional value and the largest values; then each value of each enum field.
+	EffectiveConfiguration every;
+	auto&                  c  = every.configuration;
+	c.user_name               = " Player One ";
+	c.user_id                 = kyty::core::kMaxUserId;
+	c.audio_input_device      = "Test Microphone";
+	c.gpu_index               = 0;
+	c.trophy_duration_seconds = 10;
+	c.vblank_frequency        = 360;
+	c.console_language        = kyty::core::kMaxConsoleLanguage;
+	c.host_input_mapping      = {"Cross=J", "Pad:Cross=South"};
+	every.controller          = {"#0070D1", 100, 100, kyty::core::kMaxKeyboardPlayer};
+	for (const bool on: {false, true}) {
+		for (const auto& field: GameConfigurationFields()) {
+			if (field.kind == FieldKind::Bool) {
+				Check(field.set(c, FieldValue(on)), "set " + std::string(field.name));
+			}
+		}
+		CheckEmulatorAccepts(emulator, every, entry,
+		                     on ? "every boolean field on" : "every boolean field off");
+	}
+	for (const auto& field: GameConfigurationFields()) {
+		if (field.kind != FieldKind::Enum) {
+			continue;
+		}
+		for (std::size_t i = 0; i < field.enum_keys.size(); i++) {
+			auto value = every;
+			Check(field.set(value.configuration, FieldValue(static_cast<int64_t>(i))),
+			      "set " + std::string(field.name));
+			CheckEmulatorAccepts(emulator, value, entry,
+			                     std::string(field.name) + " " + std::string(field.enum_keys[i]));
+		}
+	}
+	// The other --game form: an executable inside the game directory.
+	auto elf              = every;
+	elf.configuration.elf = "bin/game.elf";
+	CheckEmulatorAccepts(emulator, elf, entry, "an executable other than eboot.bin");
+
+	// (c) An add-ons folder and a cheat plan.
+	auto launch       = every;
+	launch.addons_dir = addons.string();
+	launch.cheat_plan = plan;
+	CheckEmulatorAccepts(emulator, launch, entry, "an add-ons folder and a cheat plan");
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
 	KytyTests::CheckNoDisplay("EmulatorArgumentsTests");
+	if (argc == 3 && std::string_view(argv[1]) == "--check-emulator") {
+		CheckEmulator(argv[2]);
+		std::printf("EmulatorArgumentsTests: kyty_emulator accepts the launcher's arguments\n");
+		return 0;
+	}
+	if (argc != 1) {
+		std::fprintf(stderr, "usage: %s [--check-emulator <kyty_emulator>]\n", argv[0]);
+		return 2;
+	}
 	TestDefaults();
 	TestEveryOptionInOrder();
 	TestScreenResolution();

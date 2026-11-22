@@ -112,16 +112,6 @@ Config::PresentMode EmulatorMode(kyty::core::PresentMode mode) {
 	return Config::PresentMode::Mailbox;
 }
 
-Config::ShaderOptimizationType EmulatorType(kyty::core::ShaderOptimizationType type) {
-	switch (type) {
-		case kyty::core::ShaderOptimizationType::None: return Config::ShaderOptimizationType::None;
-		case kyty::core::ShaderOptimizationType::Size: return Config::ShaderOptimizationType::Size;
-		case kyty::core::ShaderOptimizationType::Performance:
-			return Config::ShaderOptimizationType::Performance;
-	}
-	return Config::ShaderOptimizationType::None;
-}
-
 Config::LogDirection EmulatorDirection(kyty::core::LogDirection direction) {
 	switch (direction) {
 		case kyty::core::LogDirection::Silent: return Config::LogDirection::Silent;
@@ -270,7 +260,6 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		RC_ASSERT(c.console_language == static_cast<uint32_t>(config.console_language));
 		RC_ASSERT(c.vulkan_validation_enabled == config.vulkan_validation_enabled);
 		RC_ASSERT(c.shader_validation_enabled == config.shader_validation_enabled);
-		RC_ASSERT(c.shader_optimization_type == EmulatorType(config.shader_optimization_type));
 		RC_ASSERT(c.shader_log_direction == EmulatorDirection(config.shader_log_direction));
 		RC_ASSERT(c.shader_log_folder.native() == config.shader_log_folder);
 		RC_ASSERT(c.command_buffer_dump_enabled == config.command_buffer_dump_enabled);

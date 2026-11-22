@@ -833,6 +833,15 @@ target_compile_options(kyty_test_support PRIVATE -frtti)
 
 kyty_add_test_directory(tests/launcher_core LINK kyty_launcher_core kyty_test_support
 	ENVIRONMENT_MODIFICATION ${kyty_no_display})
+# The shipped kyty_emulator accepts the arguments the launcher builds: a mode of the Emulator_Arguments
+# tests that runs the real binary. P21 (emulator_launch_tests) checks the in-process parser.
+if(TARGET launcher_core_emulator_arguments_tests)
+	kyty_add_test(NAME emulator_accepts_launcher_arguments
+		COMMAND $<TARGET_FILE:launcher_core_emulator_arguments_tests> --check-emulator
+		        $<TARGET_FILE:kyty_emulator>
+		TIMEOUT 30
+		ENVIRONMENT_MODIFICATION ${kyty_no_display})
+endif()
 # jsonErrorCapture.h is internal to Launcher_Core: it includes nlohmann/json.hpp, which
 # kyty_launcher_core links PRIVATE. Its test includes it too, so it needs the header-only library.
 target_link_libraries(launcher_core_json_error_capture_tests nlohmann_json::nlohmann_json)

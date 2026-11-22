@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <initializer_list>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -46,7 +47,6 @@ using kyty::core::LogDirection;
 using kyty::core::ParseGameSettingsFile;
 using kyty::core::PresentMode;
 using kyty::core::ScreenResolution;
-using kyty::core::ShaderOptimizationType;
 using KytyTests::TempDir;
 
 void Check(bool value, const std::string& message) {
@@ -133,7 +133,6 @@ GameConfiguration Sample() {
 	c.trophy_duration_seconds     = 5;
 	c.vblank_frequency            = 30;
 	c.console_language            = 0;
-	c.shader_optimization_type    = ShaderOptimizationType::Size;
 	c.shader_log_direction        = LogDirection::File;
 	c.shader_log_folder           = "logs\\shaders;v=1";
 	c.command_buffer_dump_enabled = true;
@@ -157,10 +156,13 @@ void TestQtFixture() {
 	          result->by_title.contains("PPSA02468") && result->by_title.contains("PPSA09876"),
 	      "three members");
 	for (const auto& [title, patch]: result->by_title) {
-		Check(patch.fields.size() == 33, title + ": the 33 fields of the Qt export");
+		// The Qt export's 33 fields, less the retired shader_optimization_type, which is ignored.
+		Check(patch.fields.size() == 32, title + ": 32 of the 33 fields of the Qt export");
 		Check(!patch.fields.contains("input_mapping_custom") &&
 		          !patch.fields.contains("host_input_mapping"),
 		      title + ": the Qt export has no input mapping fields");
+		Check(!patch.fields.contains("shader_optimization_type"),
+		      title + ": shader_optimization_type is ignored");
 	}
 
 	GameConfiguration astro;
@@ -168,7 +170,6 @@ void TestQtFixture() {
 	astro.hdr_enabled              = true;
 	astro.present_mode             = PresentMode::Fifo;
 	astro.screen_resolution        = ScreenResolution::R1920X1080;
-	astro.shader_optimization_type = ShaderOptimizationType::None;
 	astro.trophy_duration_seconds  = 7;
 	astro.vblank_frequency         = 120;
 	GameConfiguration souls;
@@ -397,11 +398,37 @@ void TestRejectedFiles() {
 	CheckRejected(Member(""), ImportErrorKind::EmptyMember, "", "PPSA01234", "an empty member");
 	CheckRejected("{\"PPSA00001\": {\"user_id\": \"1\"}, \"PPSA01234\": {}}",
 	              ImportErrorKind::EmptyMember, "", "PPSA01234", "an empty second member");
-	for (const auto* name: {"red_zone_protection_enabled", "name", "game_path", "basedir",
-	                        "custom_settings", "controller_color", "Vblank_frequency", "foo", ""}) {
+	for (const auto* name:
+	     {"red_zone_protection_enabled", "name", "game_path", "basedir", "custom_settings",
+	      "controller_color", "Vblank_frequency", "Shader_optimization_type", "foo", ""}) {
 		CheckRejected(Member("\"" + std::string(name) + "\": \"1\""), ImportErrorKind::UnknownField,
 		              name, "PPSA01234", std::string("unknown field ") + name);
 	}
+}
+
+// Older exports contain shader_optimization_type, which is no longer a field: the import ignores
+// it with any value, and the export no longer writes it.
+void TestRetiredField() {
+	for (const auto* value:
+	     {"\"Performance\"", "\"None\"", "\"Speed\"", "2", "true", "null", "[]"}) {
+		const std::string what   = std::string("shader_optimization_type ") + value;
+		const auto        result = Parsed(
+		    Member("\"user_id\": \"7\", \"shader_optimization_type\": " + std::string(value)),
+		    what);
+		Check(result.by_title.size() == 1 &&
+		          result.by_title.at("PPSA01234").fields ==
+		              std::map<std::string, FieldValue> {{"user_id", FieldValue(int64_t {7})}},
+		      what + " is ignored, the other field imports");
+	}
+	CheckRejected(Member("\"shader_optimization_type\": \"Size\""), ImportErrorKind::EmptyMember,
+	              "", "PPSA01234", "a member with only the retired field");
+	CheckRejected(Member("\"shader_optimization_type\": \"Size\", \"shader_optimization_type\": "
+	                     "\"None\", \"user_id\": \"1\""),
+	              ImportErrorKind::DuplicateField, "shader_optimization_type", "PPSA01234",
+	              "the retired field twice");
+	const auto text = ExportGameSettings("PPSA01234", Sample());
+	Check(text.has_value() && text->find("shader_optimization_type") == std::string::npos,
+	      "the export has no shader_optimization_type");
 }
 
 void TestWrongTypes() {
@@ -723,6 +750,7 @@ int main() {
 	TestExport();
 	TestWriteFile();
 	TestRejectedFiles();
+	TestRetiredField();
 	TestWrongTypes();
 	TestInvalidValues();
 	TestAcceptedForms();

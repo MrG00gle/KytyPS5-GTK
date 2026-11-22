@@ -93,7 +93,6 @@ std::vector<std::string> BuildEmulatorArguments(const GameEntry&              en
 	args.Number("--console-language", config.console_language);
 	args.Flag(config.vulkan_validation_enabled, "--vulkan-validation");
 	args.Flag(config.shader_validation_enabled, "--shader-validation");
-	args.Value("--shader-optimization-type", FieldText(config, "shader_optimization_type"));
 	args.Value("--shader-log-direction", FieldText(config, "shader_log_direction"));
 	args.Value("--shader-log-folder", config.shader_log_folder);
 	args.Flag(config.command_buffer_dump_enabled, "--command-buffer-dump");

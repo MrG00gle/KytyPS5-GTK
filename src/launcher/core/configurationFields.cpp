@@ -21,9 +21,7 @@ using CheckFn = std::optional<std::string> (*)(const FieldValue&);
 constexpr std::array<std::string_view, 4> kScreenResolutionKeys = {"R1280X720", "R1920X1080",
                                                                    "R2560X1440", "R3840X2160"};
 constexpr std::array<std::string_view, 3> kPresentModeKeys      = {"Fifo", "Mailbox", "Immediate"};
-constexpr std::array<std::string_view, 3> kShaderOptimizationTypeKeys = {"None", "Size",
-                                                                         "Performance"};
-constexpr std::array<std::string_view, 3> kLogDirectionKeys = {"Silent", "Console", "File"};
+constexpr std::array<std::string_view, 3> kLogDirectionKeys     = {"Silent", "Console", "File"};
 
 template <typename Enum>
 std::span<const std::string_view> KeysOf();
@@ -35,10 +33,6 @@ std::span<const std::string_view> KeysOf<ScreenResolution>() {
 template <>
 std::span<const std::string_view> KeysOf<PresentMode>() {
 	return kPresentModeKeys;
-}
-template <>
-std::span<const std::string_view> KeysOf<ShaderOptimizationType>() {
-	return kShaderOptimizationTypeKeys;
 }
 template <>
 std::span<const std::string_view> KeysOf<LogDirection>() {
@@ -425,7 +419,7 @@ ControllerFieldDescriptor ClampedField(std::string_view name) {
 } // namespace
 
 std::span<const FieldDescriptor> GameConfigurationFields() {
-	static const std::array<FieldDescriptor, 35> fields = {
+	static const std::array<FieldDescriptor, 34> fields = {
 	    EnumField<ScreenResolution, &GC::screen_resolution>("screen_resolution"),
 	    StringField<&GC::user_name>("user_name", CheckUserName),
 	    IntField<&GC::user_id>("user_id", CheckUserId),
@@ -448,8 +442,6 @@ std::span<const FieldDescriptor> GameConfigurationFields() {
 	    IntField<&GC::console_language>("console_language", CheckConsoleLanguage),
 	    BoolField<&GC::vulkan_validation_enabled>("vulkan_validation_enabled"),
 	    BoolField<&GC::shader_validation_enabled>("shader_validation_enabled"),
-	    EnumField<ShaderOptimizationType, &GC::shader_optimization_type>(
-	        "shader_optimization_type"),
 	    EnumField<LogDirection, &GC::shader_log_direction>("shader_log_direction"),
 	    StringField<&GC::shader_log_folder>("shader_log_folder"),
 	    BoolField<&GC::command_buffer_dump_enabled>("command_buffer_dump_enabled"),

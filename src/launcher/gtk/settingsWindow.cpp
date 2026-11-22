@@ -106,8 +106,7 @@ struct FieldSpec {
 constexpr const char* kResolutions[] = {N_("1280 × 720"), N_("1920 × 1080"), N_("2560 × 1440"),
                                         N_("3840 × 2160")};
 // TRANSLATORS: Vulkan presentation modes.
-constexpr const char* kPresentModes[]        = {N_("Fifo"), N_("Mailbox"), N_("Immediate")};
-constexpr const char* kShaderOptimizations[] = {N_("None"), N_("Size"), N_("Performance")};
+constexpr const char* kPresentModes[] = {N_("Fifo"), N_("Mailbox"), N_("Immediate")};
 // TRANSLATORS: where shader logs and printf output go.
 constexpr const char* kLogDirections[] = {N_("Silent"), N_("Console"), N_("File")};
 // The console languages in the order of their values (0-29), as the Qt launcher named them.
@@ -186,12 +185,6 @@ const FieldSpec kFields[] = {
      .kind    = RowKind::Number,
      .minimum = 30,
      .maximum = 360},
-    {.key     = "shader_optimization_type",
-     .label   = N_("Shader optimization"),
-     .tooltip = N_("Optimize shaders for code size or performance"),
-     .group   = Group::Graphics,
-     .kind    = RowKind::Choice,
-     .choices = kShaderOptimizations},
     {.key     = "gpu_index",
      .label   = N_("GPU"),
      .tooltip = N_("Graphics device used by the emulator"),

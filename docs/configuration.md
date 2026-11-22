@@ -56,7 +56,6 @@ or `false`, integers are decimal, and enumerated values are stored by name.
 | `console_language` | `1` (English, United States) | 0–29 | `--console-language` |
 | `vulkan_validation_enabled` | `false` | `true`, `false` | `--vulkan-validation` |
 | `shader_validation_enabled` | `false` | `true`, `false` | `--shader-validation` |
-| `shader_optimization_type` | `Performance` | `None`, `Size`, `Performance` | `--shader-optimization-type` |
 | `shader_log_direction` | `Silent` | `Silent`, `Console`, `File` | `--shader-log-direction` |
 | `shader_log_folder` | `_Shaders` | a path; not empty while `shader_log_direction` is `File` | `--shader-log-folder` |
 | `command_buffer_dump_enabled` | `false` | `true`, `false` | `--command-buffer-dump` |
@@ -72,6 +71,9 @@ or `false`, integers are decimal, and enumerated values are stored by name.
 files may contain. Relative paths in `shader_log_folder`, `command_buffer_dump_folder`, and
 `printf_output_file` are relative to the data directory. **Input mapping** in the main menu edits the
 global `host_input_mapping`; the game menu's **Edit game input mapping…** edits a game's own list.
+
+Older files can contain `shader_optimization_type`. The launcher no longer uses or passes it, and
+keeps an existing value in `Kyty.ini` unchanged.
 
 These fields exist only in the global configuration and apply to every game:
 
@@ -110,4 +112,5 @@ when the game has a cheat file there.
 **Import settings…** reads one back into a game. **Import…** and **Export…** under **Game configs**
 in **Global settings** offer the same from the settings window, and the import can update several
 games at once. An import changes only the fields that the file contains. A file with an unknown
-field or an invalid value is rejected, and nothing changes.
+field or an invalid value is rejected, and nothing changes. The one exception is
+`shader_optimization_type`, which files exported by older versions contain: the import ignores it.

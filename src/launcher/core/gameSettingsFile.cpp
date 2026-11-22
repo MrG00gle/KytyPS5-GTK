@@ -26,6 +26,12 @@ std::string Quoted(std::string_view text) {
 	return "\"" + std::string(text) + "\"";
 }
 
+// Fields that older exports contain but that are no longer Game_Configuration fields: the import
+// ignores them, whatever their value.
+bool IsRetiredField(std::string_view name) {
+	return name == "shader_optimization_type";
+}
+
 std::string FieldOf(const FieldDescriptor& field, const std::string& title) {
 	return "game setting " + Quoted(field.name) + " for " + title;
 }
@@ -167,6 +173,9 @@ ReadMember(const std::string& title, const Json& member, const std::string* repe
 	}
 	GameConfigurationPatch patch;
 	for (const auto& [name, json]: member.items()) {
+		if (IsRetiredField(name)) {
+			continue;
+		}
 		const auto* field = FindGameConfigurationField(name);
 		if (field == nullptr) {
 			return Fail(ImportErrorKind::UnknownField, title, name,
@@ -177,6 +186,10 @@ ReadMember(const std::string& title, const Json& member, const std::string* repe
 			return MakeUnexpected(std::move(value).error());
 		}
 		patch.fields.emplace(name, std::move(*value));
+	}
+	if (patch.fields.empty()) {
+		return Fail(ImportErrorKind::EmptyMember, title, {},
+		            "The game settings for " + title + " contain no setting.");
 	}
 	// Rules between fields of the member (an empty output path while its output is on) and the
 	// input mapping entries (when the member turns input_mapping_custom on).

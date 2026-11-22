@@ -104,7 +104,6 @@ constexpr ShownField kShownFields[] = {
     {"console_language", "Console language", "general"},
     {"vulkan_validation_enabled", "Vulkan validation", "debug"},
     {"shader_validation_enabled", "Shader validation", "debug"},
-    {"shader_optimization_type", "Shader optimization", "general"},
     {"shader_log_direction", "Shader logging", "debug"},
     {"shader_log_folder", "Shader log folder", "debug"},
     {"command_buffer_dump_enabled", "Command buffer dump", "debug"},
@@ -366,7 +365,7 @@ KYTY_UI_CASE(settings_global_fields) {
 		core_fields++;
 	}
 	Check(core_fields == std::size(kShownFields) + std::size(kHiddenFields),
-	      "32 shown and 3 hidden fields are the core's " + std::to_string(core_fields));
+	      "31 shown and 3 hidden fields are the core's " + std::to_string(core_fields));
 
 	const fs::path  more_games = ui.Root() / "more-games";
 	const fs::path  addons     = ui.Root() / "addons";
