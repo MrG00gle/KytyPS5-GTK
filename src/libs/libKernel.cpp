@@ -866,7 +866,7 @@ static bool EnsureHostSignalDispatchInstalled() {
 
 void KernelDispatchPendingSignalForCurrentThread() {
 	Pthread current = PthreadSelfOrNull();
-	if (current == nullptr) {
+	if (!PthreadHasAnyPendingSignal(current)) {
 		return;
 	}
 
@@ -1649,6 +1649,12 @@ int KYTY_SYSV_ABI mkdir(const char* path, uint16_t mode) {
 	PRINT_NAME();
 
 	return POSIX_CALL(LibKernel::FileSystem::KernelMkdir(path, mode));
+}
+
+int KYTY_SYSV_ABI rmdir(const char* path) {
+	PRINT_NAME();
+
+	return POSIX_CALL(LibKernel::FileSystem::KernelRmdir(path));
 }
 
 int64_t KYTY_SYSV_ABI lseek(int d, int64_t offset, int whence) {
@@ -2911,6 +2917,7 @@ LIB_DEFINE(InitLibKernel_1_Equeue) {
 	LIB_FUNC("F6e0kwo4cnk", EventQueue::KernelTriggerUserEvent);
 	LIB_FUNC("LJDwdSNTnDg", EventQueue::KernelDeleteUserEvent);
 	LIB_FUNC("57ZK+ODEXWY", EventQueue::KernelAddTimerEvent);
+	LIB_FUNC("YWQFUyXIVdU", EventQueue::KernelDeleteTimerEvent);
 	LIB_FUNC("R74tt43xP6k", EventQueue::KernelAddHRTimerEvent);
 	LIB_FUNC("J+LF6LwObXU", EventQueue::KernelDeleteHRTimerEvent);
 	LIB_FUNC("bBfz7kMF2Ho", EventQueue::KernelAddAmprEvent);
@@ -3070,6 +3077,7 @@ LIB_DEFINE(InitLibKernel_1_Pthread) {
 	LIB_FUNC("z0dtnPxYgtg", chmod);
 	LIB_FUNC("VAzswvTOCzI", FileSystem::KernelUnlink);
 	LIB_FUNC("JGMio+21L4c", Posix::mkdir);
+	LIB_FUNC("c7ZnT7V1B98", Posix::rmdir);
 	LIB_FUNC("wuCroIGjt2g", FileSystem::KernelOpen);
 	LIB_FUNC("bY-PO6JhzhQ", FileSystem::KernelClose);
 	LIB_FUNC("FN4gaPmuFV8", FileSystem::KernelWrite);

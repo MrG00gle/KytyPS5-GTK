@@ -32,6 +32,7 @@
 #include <vector>
 #include <vulkan/vk_platform.h>
 
+
 #include "stb_image.h"
 
 // IWYU pragma: no_include <intrin.h>
@@ -131,8 +132,12 @@ struct EventController {
 namespace {
 
 std::unique_ptr<WindowContext> g_window;
+Common::Mutex                  g_luminance_mutex;
+DisplayLuminance               g_luminance;
 
 } // namespace
+
+static void RefreshDisplayLuminance(SDL_Window* /*window*/) {}
 
 constexpr const char* KYTY_SDL_WINDOW_CAPTION = "Game";
 
@@ -397,6 +402,8 @@ void WindowContext::ProcessWindowEvent(const SDL_WindowEvent& event) {
 		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
 			LOGF("Window %" PRIu32 " closed\n", window_event.windowID);
 			break;
+		case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+		case SDL_EVENT_WINDOW_HDR_STATE_CHANGED: RefreshDisplayLuminance(window); break;
 		default:
 			LOGF("Window %" PRIu32 " got unknown event %" PRIu32 "\n", window_event.windowID,
 			     static_cast<uint32_t>(window_event.type));
@@ -751,6 +758,7 @@ static void WindowCreate(WindowContext& context) {
 		EXIT("%s\n", SDL_GetError());
 	}
 
+	RefreshDisplayLuminance(context.window);
 	SDL_SetWindowPosition(context.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 	HostInputInit(context.window);
 	InitializeSystemOverlayInput(context.window);
@@ -796,6 +804,11 @@ void WindowShutdown() {
 		Controller::EmergencyShutdown();
 		g_window.reset();
 	}
+}
+
+DisplayLuminance WindowGetDisplayLuminance() {
+	Common::LockGuard lock(g_luminance_mutex);
+	return g_luminance;
 }
 
 static int WindowIconRead(void* user, char* data, int size) {

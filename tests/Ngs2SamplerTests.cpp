@@ -1275,7 +1275,9 @@ void TestGeomRolloffAndFlags() {
 	Check(Ngs2GeomApply(&work, &source, &attrib, 1 | 8) == OK && attrib.a3d_attrib.volume == 0.0f,
 	      "enabled source cone did not attenuate a listener behind the source");
 	source.cone.outer_angle = 360.0f;
-	Check(Ngs2GeomApply(&work, &source, &attrib, 1 | 8) == OK && attrib.a3d_attrib.volume == 0.0f,
+	// acos and the conversion to degrees can round just below the outer cone boundary.
+	Check(Ngs2GeomApply(&work, &source, &attrib, 1 | 8) == OK &&
+	          std::abs(attrib.a3d_attrib.volume) < 1e-6f,
 	      "360-degree outer cone bypassed source directionality");
 	source.cone      = {2.0f, 360.0f, 2.0f, 360.0f};
 	source.max_level = 0.75f;

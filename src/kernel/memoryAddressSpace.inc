@@ -186,18 +186,6 @@ public:
 		                gap);
 	}
 
-	bool ProtectViews(uint64_t vaddr, uint64_t size, VirtualMemory::Mode mode) {
-		std::shared_lock lock(m_mutex);
-		bool             ok = true;
-		ForEachSparseRange(
-		    m_maps, vaddr, size,
-		    [&](const auto&, uint64_t start, uint64_t bytes) {
-			    ok = ok && VirtualMemory::Protect(start, bytes, mode);
-		    },
-		    [&](uint64_t, uint64_t) { ok = false; });
-		return ok;
-	}
-
 	bool MapFixed(uint64_t vaddr, uint64_t size, uint64_t backing_offset,
 	              VirtualMemory::Mode mode, FailureReason* failure_reason = nullptr) {
 		std::lock_guard lock(m_mutex);
@@ -221,70 +209,21 @@ public:
 					return false;
 				}
 				const auto part_size = std::min(end, entry->vaddr + entry->size) - current;
-				targets.push_back({current, part_size,
-				                   entry->backing_offset + current - entry->vaddr, entry->mode});
+				targets.push_back({current, part_size});
 				current += part_size;
 			}
 		}
 
-		size_t removed  = 0;
-		auto   rollback = [&] {
-			while (removed != 0) {
-				const auto& previous = targets[--removed];
-				EXIT_IF(!MapFixed(previous.vaddr, previous.size, previous.backing_offset,
-				                  previous.mode));
-			}
-		};
-		for (const auto& entry: targets) {
-			if (!UnmapOne(entry.vaddr, entry.size)) {
-				rollback();
-				return false;
-			}
-			++removed;
-		}
-
-
-		return true;
-	}
-
-	bool UnmapOne(uint64_t vaddr, uint64_t size) {
-#if defined(KYTY_VIRTUAL_MEMORY_ALLOCATION_TESTS)
-		if (g_test_backing_store_unmaps_before_failure == 0) {
-			g_test_backing_store_unmaps_before_failure = UINT32_MAX;
-			return false;
-		}
-		if (g_test_backing_store_unmaps_before_failure != UINT32_MAX) {
-			g_test_backing_store_unmaps_before_failure--;
-		}
-#endif
-
+		// Collecting the views validated the span; failing after it is an emulator fault.
 		// Replace only the requested range so concurrent accesses and GPU watch
 		// protections on the surviving mappings remain intact.
-		if (!UnmapViewPreservePlaceholder(reinterpret_cast<void*>(vaddr), size)) {
-			return false;
-		}
+		EXIT_IF(!UnmapViewPreservePlaceholder(reinterpret_cast<void*>(vaddr), size));
 
 		std::lock_guard lock(m_mutex);
 		RemoveMappingsUnlocked(vaddr, size);
-
 		return true;
 	}
 
-	bool Contains(uint64_t vaddr, uint64_t size) {
-		std::shared_lock lock(m_mutex);
-		const auto      end     = vaddr + size;
-		auto            current = vaddr;
-
-		while (current < end) {
-			const auto* entry = FindContainingUnlocked(current);
-			if (entry == nullptr) {
-				return false;
-			}
-			current = std::min(end, entry->vaddr + entry->size);
-		}
-
-		return true;
-	}
 
 private:
 	struct MapEntry {
@@ -474,8 +413,6 @@ public:
 		    });
 		return true;
 	}
-
-	bool BackingContains(uint64_t vaddr, uint64_t size) { return m_backing->Contains(vaddr, size); }
 
 	bool Protect(uint64_t vaddr, uint64_t size, VirtualMemory::Mode mode) {
 		std::lock_guard lock(m_mutex);
@@ -772,7 +709,12 @@ private:
 			}
 
 			AddFreeUnlocked(start, size);
-			m_owned.emplace_back(start, size);
+			// Free ranges merge across region boundaries, so owned ranges do as well.
+			if (!m_owned.empty() && m_owned.back().first + m_owned.back().second == start) {
+				m_owned.back().second += size;
+			} else {
+				m_owned.emplace_back(start, size);
+			}
 		};
 
 		for (const auto& [region_start, region_end]: regions) {

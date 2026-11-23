@@ -316,9 +316,6 @@ void CreatePipelineInternal(GraphicContext& graphics, PipelineCache::Pipeline& p
 	};
 	dynamic_states.push_back(vk::DynamicState::eDepthBoundsTestEnable);
 	dynamic_states.push_back(vk::DynamicState::eDepthBounds);
-	if (rendering.color_count != 0) {
-		dynamic_states.push_back(vk::DynamicState::eColorWriteEnableEXT);
-	}
 	if (graphics.attachment_feedback_loop_enabled) {
 		dynamic_states.push_back(vk::DynamicState::eAttachmentFeedbackLoopEnableEXT);
 	}

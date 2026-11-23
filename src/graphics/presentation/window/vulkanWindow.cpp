@@ -211,8 +211,7 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 		}
 
 		vk::PhysicalDeviceImageViewMinLodFeaturesEXT  min_lod {};
-		vk::PhysicalDeviceColorWriteEnableFeaturesEXT color_write {.pNext = &min_lod};
-		vk::PhysicalDeviceDepthClipEnableFeaturesEXT  clip_enable {.pNext = &color_write};
+		vk::PhysicalDeviceDepthClipEnableFeaturesEXT  clip_enable {.pNext = &min_lod};
 		vk::PhysicalDeviceDepthClipControlFeaturesEXT clip_control {.pNext = &clip_enable};
 		vk::PhysicalDeviceRobustness2FeaturesEXT      robustness2 {.pNext = &clip_control};
 		vk::PhysicalDeviceVulkan11Features            features11 {.pNext = &robustness2};
@@ -232,7 +231,6 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 			}
 		};
 
-		check_feature(color_write.colorWriteEnable, "colorWriteEnable");
 		check_feature(min_lod.minLod, "image view minLod");
 
 		check_feature(clip_control.depthClipControl, "depthClipControl");
@@ -455,9 +453,11 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 		    "Some games may render incorrectly or crash.\n");
 	}
 	graphics.shader_image_int64_atomics_enabled = image_atomic_int64.shaderImageInt64Atomics;
+	graphics.sampler_filter_minmax_enabled      = supported12.samplerFilterMinmax;
 
 	auto features12                     = WindowContext::RequiredVulkan12Features();
 	features12.shaderSharedInt64Atomics = supported12.shaderSharedInt64Atomics;
+	features12.samplerFilterMinmax      = supported12.samplerFilterMinmax;
 	if (!features12.shaderSharedInt64Atomics || !workgroup_layout.workgroupMemoryExplicitLayout) {
 		Log::WriteToConsoleAndLog(fmt::format(
 		    "WARNING: Native 64-bit LDS atomics are unavailable: shaderSharedInt64Atomics={}, "
@@ -600,7 +600,6 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	    vk::PhysicalDeviceDepthClipControlFeaturesEXT {.depthClipControl = VK_TRUE},
 	    vk::PhysicalDeviceImageViewMinLodFeaturesEXT {.minLod = VK_TRUE},
 	    vk::PhysicalDeviceDepthClipEnableFeaturesEXT {.depthClipEnable = VK_TRUE},
-	    vk::PhysicalDeviceColorWriteEnableFeaturesEXT {.colorWriteEnable = VK_TRUE},
 	    vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR {
 	        .workgroupMemoryExplicitLayout = workgroup_layout.workgroupMemoryExplicitLayout},
 	    barycentric,
@@ -893,7 +892,6 @@ void WindowContext::CreateVulkan() {
 	    VK_EXT_ROBUSTNESS_2_EXTENSION_NAME, "VK_KHR_maintenance1"};
 
 	device_extensions.push_back(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME);
-	device_extensions.push_back(VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
 
 	if (Config::SpirvDebugPrintfEnabled()) {
 		device_extensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);

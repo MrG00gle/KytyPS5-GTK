@@ -425,12 +425,6 @@ static void UpdateGraphicsDynamicState(const CommandBuffer& buffer, DynamicState
 		dynamic_state.SetStencilWriteMasks(front.writeMask, back.writeMask);
 		dynamic_state.SetStencilReferences(front.reference, back.reference);
 	}
-
-	vk::Bool32 enable[RENDER_COLOR_ATTACHMENTS_MAX] = {};
-	for (uint32_t slot = 0; slot < rendering.num_color_attachments; slot++) {
-		enable[slot] = rendering.color_attachments[slot].image_view != nullptr;
-	}
-	dynamic_state.SetColorWriteEnables(std::span {enable}.first(rendering.num_color_attachments));
 }
 
 static bool DrawHasValidVertexShader(const HW::Shader& sh_ctx) {
