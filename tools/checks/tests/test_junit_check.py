@@ -682,17 +682,22 @@ class CommittedLists(unittest.TestCase):
             os.path.join(CHECKS_DIR, "ci-expected-failures.txt"))
         self.assertEqual(expected, {name: FAILURE_TEXT for name in self.VULKAN_HARNESS_MODES})
 
-    def test_the_ubuntu_list_is_kernel_file_system_with_its_text(self):
+    # The tests that create a Vulkan window and stop on Ubuntu 24.04's lavapipe.
+    UBUNTU_WINDOW_TESTS = ("kernel_file_system", "pm4_flip", "video_out_flip_rate",
+                           "device_creation")
+
+    def test_the_ubuntu_list_is_the_window_tests_with_the_lavapipe_text(self):
         expected = junit_check.read_expected_failures(
             os.path.join(CHECKS_DIR, "ci-expected-failures-ubuntu.txt"))
-        self.assertEqual(expected, {"kernel_file_system": "llvmpipe (LLVM 20.1.2, 256 bits): "
-                                    "image view minLod is not supported; depthBounds is not "
-                                    "supported"})
+        text = ("llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; "
+                "depthBounds is not supported")
+        self.assertEqual(expected, {name: text for name in self.UBUNTU_WINDOW_TESTS})
         # Both lists together are valid: they share no test.
         both = junit_check.read_expected_failure_lists(
             [os.path.join(CHECKS_DIR, "ci-expected-failures.txt"),
              os.path.join(CHECKS_DIR, "ci-expected-failures-ubuntu.txt")])
-        self.assertEqual(len(both), len(self.VULKAN_HARNESS_MODES) + 1)
+        self.assertEqual(len(both), len(self.VULKAN_HARNESS_MODES) +
+                         len(self.UBUNTU_WINDOW_TESTS))
 
     def test_the_retry_list_is_the_two_search_timing_cases(self):
         names = junit_check.read_retry_list(os.path.join(CHECKS_DIR, "ci-timing-retries.txt"))

@@ -4,7 +4,7 @@
 # Two CI policies that the repository owner approved for named tests only (docs/testing.md):
 # - tools/checks/ci-expected-failures.txt: GPU tests that fail on lavapipe for a missing Vulkan
 #   feature are accepted only when they fail with exactly the listed text; the ubuntu and coverage
-#   jobs also pass tools/checks/ci-expected-failures-ubuntu.txt, the one test that fails only on
+#   jobs also pass tools/checks/ci-expected-failures-ubuntu.txt, the tests that fail only on
 #   Ubuntu 24.04's lavapipe;
 # - tools/checks/ci-timing-retries.txt: the search timing tests may pass in a rerun (the
 #   timing-rerun steps) after failing in the full run.
@@ -113,7 +113,7 @@ jobs:
       # The GPU tests run on Mesa's software Vulkan driver (lavapipe, Vulkan 1.3). Ubuntu 24.04's
       # Mesa names its manifest without the architecture.
       VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.json
-      # The one test that fails only on Ubuntu 24.04's lavapipe (owner-approved; docs/testing.md).
+      # The tests that fail only on Ubuntu 24.04's lavapipe (owner-approved; docs/testing.md).
       UBUNTU_EXPECTED_FAILURES: tools/checks/ci-expected-failures-ubuntu.txt
       KYTY_RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
       BUILD_DIR: _Build/linux
@@ -602,7 +602,7 @@ jobs:
       # The GPU tests run on Mesa's software Vulkan driver (lavapipe, Vulkan 1.3). Ubuntu 24.04's
       # Mesa names its manifest without the architecture.
       VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.json
-      # The one test that fails only on Ubuntu 24.04's lavapipe (owner-approved; docs/testing.md).
+      # The tests that fail only on Ubuntu 24.04's lavapipe (owner-approved; docs/testing.md).
       UBUNTU_EXPECTED_FAILURES: tools/checks/ci-expected-failures-ubuntu.txt
       BUILD_DIR: _Build/coverage
     steps:

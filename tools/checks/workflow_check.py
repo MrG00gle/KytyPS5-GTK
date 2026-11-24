@@ -124,11 +124,11 @@ both are accepted) and checks:
              layer whose directories the overlay file system of some runners cannot rename, so the
              action's runtime update fails there, and flatpak-builder 1.4.9 crashes on that error
              (docs/packaging.md, "The runtimes in CI").
-  lists      tools/checks/ci-expected-failures-ubuntu.txt, the expected failure that the
+  lists      tools/checks/ci-expected-failures-ubuntu.txt, the expected failures that the
              repository owner approved for Ubuntu 24.04's lavapipe only (docs/testing.md), is
              named only inside the ubuntu and coverage jobs (not in the workflow's own env, and
-             in no other job), and the file in the repository holds exactly the one approved
-             entry (UBUNTU_EXPECTED_FAILURES below).
+             in no other job), and the file in the repository holds exactly the approved
+             entries (UBUNTU_EXPECTED_FAILURES below).
 
 Usage:
     workflow_check.py --workflow FILE [--repo DIR]
@@ -182,14 +182,16 @@ VK_DRIVER_FILES = {
     "fedora": "/usr/share/vulkan/icd.d/lvp_icd.x86_64.json",
     "coverage": "/usr/share/vulkan/icd.d/lvp_icd.json",
 }
-# The expected failure that the repository owner approved for Ubuntu 24.04's lavapipe (Mesa 25.2.8)
-# only, on 2026-11-13: the jobs that may use its list, and the list's only entry.
+# The expected failures that the repository owner approved for Ubuntu 24.04's lavapipe (Mesa 25.2.8)
+# only (kernel_file_system on 2026-11-13, the three flip and device tests on 2026-11-24): the jobs
+# that may use its list, and the list's entries. Each of these tests creates a Vulkan window, and
+# the Emulator's device selection rejects that lavapipe with the same text.
 UBUNTU_LIST = "tools/checks/ci-expected-failures-ubuntu.txt"
 UBUNTU_LIST_JOBS = ("ubuntu", "coverage")
-UBUNTU_EXPECTED_FAILURES = {
-    "kernel_file_system": "llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; "
-                          "depthBounds is not supported",
-}
+UBUNTU_LAVAPIPE_TEXT = ("llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; "
+                        "depthBounds is not supported")
+UBUNTU_EXPECTED_FAILURES = {name: UBUNTU_LAVAPIPE_TEXT for name in (
+    "kernel_file_system", "pm4_flip", "video_out_flip_rate", "device_creation")}
 # The flatpak job's copy of the image's Flatpak installation on the runner's file system
 # (docs/packaging.md, "The runtimes in CI"): the copy, then FLATPAK_SYSTEM_DIR for later steps.
 FLATPAK_JOB = "flatpak"
@@ -1199,8 +1201,9 @@ class Checker:
             return
         if entries != UBUNTU_EXPECTED_FAILURES:
             listed = ", ".join(sorted(entries)) or "nothing"
-            self.report("lists", f"{UBUNTU_LIST} lists {listed}, not exactly the approved entry "
-                        "for kernel_file_system with its text")
+            approved = ", ".join(UBUNTU_EXPECTED_FAILURES)
+            self.report("lists", f"{UBUNTU_LIST} lists {listed}, not exactly the approved entries "
+                        f"({approved}) with their text")
 
     # ---- Dependabot's configuration for the pinned actions
     def check_dependabot(self):

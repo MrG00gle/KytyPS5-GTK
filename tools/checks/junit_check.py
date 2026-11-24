@@ -41,8 +41,8 @@ Two CI policies that the repository owner approved for named tests only
     or not run, and when the JUnit file has no testcase for it ("missing").
     The option may be given more than once; the lists may not share a test.
     The ubuntu and coverage jobs also pass
-    tools/checks/ci-expected-failures-ubuntu.txt, which names the one test
-    that fails only on Ubuntu 24.04's software Vulkan driver.
+    tools/checks/ci-expected-failures-ubuntu.txt, which names the tests
+    that fail only on Ubuntu 24.04's software Vulkan driver.
 --retry-list FILE (tools/checks/ci-timing-retries.txt): timing tests that a
     noisy CI machine may push over their limit. One test name per line. A
     listed test that failed in this (full, unfiltered) run is accepted only

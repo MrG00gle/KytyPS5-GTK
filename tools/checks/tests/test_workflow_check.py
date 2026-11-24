@@ -1448,9 +1448,13 @@ UBUNTU_TEXT = ("llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not suppo
                "depthBounds is not supported")
 
 
+UBUNTU_TESTS = ("kernel_file_system", "pm4_flip", "video_out_flip_rate", "device_creation")
+UBUNTU_ENTRIES = "".join(f"{name} {UBUNTU_TEXT}\n" for name in UBUNTU_TESTS)
+
+
 class UbuntuList(Workflow):
-    """The Ubuntu-only expected failure (docs/testing.md): used only by the ubuntu and coverage
-    jobs, and the list holds exactly the approved entry."""
+    """The Ubuntu-only expected failures (docs/testing.md): used only by the ubuntu and coverage
+    jobs, and the list holds exactly the approved entries."""
 
     def run_with_list(self, text):
         repo = Path(self.temp.name) / "repo"
@@ -1466,10 +1470,10 @@ class UbuntuList(Workflow):
             status = workflow_check.main(["--workflow", str(self.path), "--repo", str(repo)])
         return status, stdout.getvalue().splitlines()
 
-    def test_the_committed_list_holds_the_approved_entry(self):
-        self.assertEqual(workflow_check.UBUNTU_EXPECTED_FAILURES, {"kernel_file_system":
-                                                                   UBUNTU_TEXT})
-        status, lines = self.run_with_list(f"# header\nkernel_file_system {UBUNTU_TEXT}\n")
+    def test_the_committed_list_holds_the_approved_entries(self):
+        self.assertEqual(workflow_check.UBUNTU_EXPECTED_FAILURES,
+                         {name: UBUNTU_TEXT for name in UBUNTU_TESTS})
+        status, lines = self.run_with_list(f"# header\n{UBUNTU_ENTRIES}")
         self.assertEqual(status, 0, lines)
 
     def test_the_ubuntu_jobs_pass_the_list(self):
@@ -1501,14 +1505,16 @@ class UbuntuList(Workflow):
     def test_a_list_with_another_entry_or_text_fails(self):
         other = ("ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan "
                  "graphics+compute device")
-        for text in (f"kernel_file_system {UBUNTU_TEXT}\nlld_linked_executables x\n",
-                     "kernel_file_system image view minLod is not supported\n",
+        for text in (f"{UBUNTU_ENTRIES}lld_linked_executables x\n",
+                     UBUNTU_ENTRIES.replace(f"pm4_flip {UBUNTU_TEXT}",
+                                            "pm4_flip image view minLod is not supported"),
+                     f"kernel_file_system {UBUNTU_TEXT}\n",
                      f"gpu_tiler {other}\n"):
             with self.subTest(text=text):
                 status, lines = self.run_with_list(text)
                 self.assertEqual(status, 1, lines)
                 self.assertTrue(any(line.startswith(f"lists: {UBUNTU_LIST} lists ") and
-                                    "not exactly the approved entry" in line for line in lines),
+                                    "not exactly the approved entries" in line for line in lines),
                                 lines)
 
     def test_a_missing_or_empty_list_fails(self):
