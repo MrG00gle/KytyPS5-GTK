@@ -170,7 +170,7 @@ says otherwise. Enumerated values are case-insensitive: `mailbox` and `Mailbox` 
 | `--no-trophy-notifications` | flag | – | notifications on | Disables trophy unlock notifications and their sound. |
 | `--trophy-duration` | `<seconds>`: an integer | 5–10 (other values are clamped to that range) | 6 | How long a trophy notification stays on screen. |
 | `--perf-overlay` | flag | – | off | Shows the performance panel (toggle with F2). |
-| `--playgo-hack` | flag | – | off | Uses the supplied PlayGo stub fallback. |
+| `--playgo-hack` | flag | – | off | For a package without PlayGo chunk metadata, reports 1000 chunks instead of the one installed chunk. |
 | `--skip-notice-screen` | flag | – | off | Skips startup logos and notices in supported games. |
 | `--keymap` | `<Control=Input>` | A DualSense control and a host input, both non-empty | the built-in mapping | Maps one DualSense control; may be repeated. |
 | `--rd` | flag | – | off | Enables RenderDoc capture. |

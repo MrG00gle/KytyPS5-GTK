@@ -28,6 +28,8 @@ shader_recompiler_integer16_ternary ShaderRecompilerComputeTests: VulkanHarness 
 shader_recompiler_mad_u16 ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 shader_recompiler_mul_hi24 ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 shader_recompiler_quadmask ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
+shader_recompiler_relaxed_float ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
+shader_recompiler_tessellation_wave_sizes ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 shader_recompiler_vop3_conversions ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 srgb_texture ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics
 stream_buffer_ring ShaderRecompilerComputeTests: VulkanHarness failed at dispatch: no Vulkan graphics+compute device with fragment barycentrics and 64-bit LDS/image atomics

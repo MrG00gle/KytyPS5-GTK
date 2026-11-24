@@ -26,6 +26,8 @@ enum class LogDirection { Silent, Console, File };
 
 enum class PresentMode { Fifo, Mailbox, Immediate };
 
+enum class PssrUpscaler { Linear, DLSS, FSR };
+
 using Keymap = std::vector<std::string>;
 using ControllerColor = std::array<uint8_t, 3>;
 
@@ -66,6 +68,10 @@ struct ConfigOptions {
 	bool                   splash_enabled              = true;
 	bool                   vr_enabled                  = false;
 	bool                   pro_enabled                 = false;
+	PssrUpscaler           pssr_upscaler               = PssrUpscaler::Linear;
+	std::filesystem::path  dlss_folder;
+	uint32_t               dlss_preset                 = 0; // 0 is the model default
+	std::filesystem::path  fsr_folder;
 	bool                   amd_cpu_enabled             = false;
 	bool                   guest_tsc_enabled           = false;
 	bool                   network_connected           = false;
@@ -90,14 +96,18 @@ struct ConfigOptions {
 	bool                   readback_tiled_images       = false;
 	bool                   readback_storage_images     = false;
 	bool                   sync_raw_image_buffers      = false;
+	uint32_t               flush_draws                 = 0; // 0 is off
 	bool                   tessellation_enabled        = false;
 	bool                   occlusion_queries_enabled   = false;
+	bool                   relaxed_shader_float        = false;
+	bool                   native_rt                   = false;
 	bool                   lod_stats_enabled           = false;
 	bool                   trophy_enabled              = true;
 	uint32_t               trophy_duration_seconds     = 6;
 	bool                   perf_overlay_enabled            = false;
 	bool                   playgo_hack_enabled         = false;
 	bool                   skip_notice_screen          = false;
+	std::string            launch_activity;
 	Keymap keymap;
 	// Ordinary boots need a non-null argv[0]; --guest-exec supplies the caller's arguments.
 	std::vector<std::string> guest_arguments {""};
@@ -128,6 +138,10 @@ bool     HideCursorEnabled();
 bool     StretchEnabled();
 bool     VrEnabled();
 bool     Ps5ProEnabled();
+PssrUpscaler GetPssrUpscaler();
+const std::filesystem::path& GetDlssFolder();
+uint32_t GetDlssPreset();
+const std::filesystem::path& GetFsrFolder();
 bool     AmdCpuEnabled();
 bool     GuestTscEnabled();
 bool     IsNetworkConnected();
@@ -160,13 +174,18 @@ bool ReadbackLinearImagesEnabled();
 bool ReadbackTiledImagesEnabled();
 bool ReadbackStorageImagesEnabled();
 bool SyncRawImageBuffersEnabled();
+uint32_t GetFlushDraws();
 bool TessellationEnabled();
 bool OcclusionQueriesEnabled();
+bool RelaxedShaderFloatEnabled();
+bool NativeRtEnabled();
 bool LodStatsEnabled();
 bool TrophyEnabled();
 uint32_t GetTrophyDurationSeconds();
 bool PlayGoHackEnabled();
 bool SkipNoticeScreen();
+// Activity ID of the one-shot launchActivity game intent; empty sends none.
+const std::string& GetLaunchActivity();
 
 const Keymap& GetKeymap();
 const std::vector<std::string>& GetGuestArguments();

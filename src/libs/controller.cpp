@@ -72,10 +72,6 @@ struct PadTriggerEffectParam {
 	PadTriggerEffectCommand command[2];
 };
 
-struct PadTriggerEffectStateInformation {
-	int32_t state[2];
-};
-
 static_assert(sizeof(PadTriggerEffectCommand) == 56);
 static_assert(sizeof(PadTriggerEffectParam) == 120);
 static_assert(sizeof(PadTriggerEffectStateInformation) == 8);
@@ -126,7 +122,7 @@ public:
 	void Button(int id, uint32_t button, bool down);
 	void Axis(int id, Axis axis, int value);
 	void RightStick(int id, int x, int y);
-	void TouchPad(int id, int finger, bool down, float x, float y);
+	void TouchPad(int id, int finger, bool down, float x, float y, bool click);
 	void Motion(int id, Sensor sensor, const float* data, uint64_t time_us);
 	void SetMotionSensorState(bool enable);
 	void ResetOrientation();
@@ -626,7 +622,7 @@ void GameController::RightStick(int id, int x, int y) {
 	}
 }
 
-void GameController::TouchPad(int id, int finger, bool down, float x, float y) {
+void GameController::TouchPad(int id, int finger, bool down, float x, float y, bool click) {
 	if (finger < 0 || finger >= 2) {
 		return;
 	}
@@ -642,7 +638,7 @@ void GameController::TouchPad(int id, int finger, bool down, float x, float y) {
 		touch.down = down;
 		touch.x    = static_cast<uint16_t>(std::clamp(x, 0.0f, 1.0f) * 1920.0f);
 		touch.y    = static_cast<uint16_t>(std::clamp(y, 0.0f, 1.0f) * 943.0f);
-		if (id == HOST_INPUT_CONTROLLER_ID) {
+		if (id == HOST_INPUT_CONTROLLER_ID && click) {
 			m_state.buttons = down ? m_state.buttons | PAD_BUTTON_TOUCH_PAD
 			                       : m_state.buttons & ~PAD_BUTTON_TOUCH_PAD;
 		}
@@ -1132,10 +1128,10 @@ void SetRightStick(int id, int x, int y) {
 	}
 }
 
-void SetTouchPad(int id, int finger, bool down, float x, float y) {
+void SetTouchPad(int id, int finger, bool down, float x, float y, bool click) {
 	Common::LockGuard lock(g_router_mutex);
 	if (auto* player = PlayerForDevice(id)) {
-		player->TouchPad(id, finger, down, x, y);
+		player->TouchPad(id, finger, down, x, y, click);
 	}
 }
 
@@ -1374,8 +1370,8 @@ int KYTY_SYSV_ABI PadGetControllerInformation(int handle, PadControllerInformati
 	info->touch_pixel_density   = 44.86f;
 	info->touch_resolution_x    = 1920;
 	info->touch_resolution_y    = 943;
-	info->stick_dead_zone_left  = controller_get_axis(-32768, 32767, 8000) - 128;
-	info->stick_dead_zone_right = controller_get_axis(-32768, 32767, 8000) - 128;
+	info->stick_dead_zone_left  = PAD_STICK_DEAD_ZONE;
+	info->stick_dead_zone_right = PAD_STICK_DEAD_ZONE;
 	info->connection_type       = 0;
 	info->connected_count       = static_cast<uint8_t>(std::min(connected_count, 255));
 	info->connected             = connected;

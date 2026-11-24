@@ -242,7 +242,9 @@ ShaderRecompiler::Spirv::Profile SpirvProfile(const GraphicContext& graphics) {
 	        .device_clock_period_ps = graphics.device_clock_period_ps,
 	        .robust_buffer_access   = graphics.robust_buffer_access_enabled,
 	        .r8_srgb_views          = graphics.r8_srgb_views,
-	        .r8g8_srgb_views        = graphics.r8g8_srgb_views};
+	        .r8g8_srgb_views        = graphics.r8g8_srgb_views,
+	        .relaxed_float          = Config::RelaxedShaderFloatEnabled(),
+	        .ray_query              = graphics.ray_query_enabled};
 }
 
 std::filesystem::path ShaderStorePath() {
@@ -373,8 +375,9 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 		if (options.stage == ShaderType::Mesh ||
 		    options.stage == ShaderType::TessellationControl) {
 			options.user_data_base = 0;
-			options.wave_size =
-			    options.stage == ShaderType::Mesh ? input_info.mesh.wave_size : 64u;
+		}
+		if (options.stage == ShaderType::Mesh) {
+			options.wave_size = input_info.mesh.wave_size;
 		}
 	} else if constexpr (std::is_same_v<InputInfo, ShaderPixelInputInfo>) {
 		options.stage            = ShaderType::Pixel;
@@ -675,6 +678,15 @@ void PipelineCache::GetGraphicsPrograms(const CommandBuffer& command, DrawRender
 	const bool tess_active = user_config.GetPrimType() == Prospero::PrimitiveType::kPatch;
 	std::array<ShaderParams, 3> vertex_params;
 	if (tess_active) {
+		// Guest geometry shaders run as host mesh shaders, which cannot follow tessellation.
+		if ((context.GetShaderStages() & 0x20u) != 0) {
+			static std::atomic_bool warned = false;
+			if (!warned.exchange(true, std::memory_order_relaxed)) {
+				Log::WriteToConsoleAndLog(
+				    "Warning: dropping tessellation draws with a geometry shader.\n");
+			}
+			return;
+		}
 		vertex_params = PrepareTessellationPrograms(vertex_regs, context, vertex_info);
 		// Reflection decodes both programs; the key also covers the VGT fields in tess.
 		const uint64_t layout_key[] = {vertex_params[0].hash, vertex_params[1].hash,
@@ -749,7 +761,7 @@ void PipelineCache::GetGraphicsPrograms(const CommandBuffer& command, DrawRender
 			const auto& rt = context.GetRenderTarget(slot);
 			if ((color_output_mask & (1u << slot)) != 0 && rt.base.addr != 0) {
 				target_export_mapping[slot] =
-				    TextureGetRenderTargetFormat(rt.info.format, rt.info.channel_type,
+				    TextureGetRenderTargetFormat(m_graphics, rt.info.format, rt.info.channel_type,
 				                                 rt.info.channel_order)
 				        .export_mapping;
 			}
@@ -878,9 +890,10 @@ const ShaderModule* PipelineCache::GetComputeProgram(const HW::ComputeShaderInfo
 }
 
 PipelineCache::Pipeline& PipelineCache::GetGraphicsPipeline(const CommandBuffer&   command,
-                                                            const DrawRenderState& state) {
-	const auto* colors        = state.color_info;
-	const auto& depth         = state.depth_info;
+                                                            const DrawRenderState& state,
+                                                            const DrawTargets&     targets) {
+	const auto* colors        = targets.colors;
+	const auto& depth         = targets.depth;
 	const auto  vertex_info   = state.VertexStages();
 	const auto& ps_input_info = state.ps_input_info;
 	const auto& vs_input_info = vertex_info.front();
@@ -896,7 +909,7 @@ PipelineCache::Pipeline& PipelineCache::GetGraphicsPipeline(const CommandBuffer&
 		stages[3] = ps_input_info.stage.module;
 	}
 	const bool mesh        = stages[0]->info.stage == ShaderType::Mesh;
-	const auto color_count = state.color_count;
+	const auto color_count = targets.color_count;
 
 	auto&             ctx = command.GetRegisters();
 

@@ -210,6 +210,8 @@ file(GLOB kyty_emulator_src CONFIGURE_DEPENDS
 	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/image/*.h"
 	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/pipeline/*.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/pipeline/*.h"
+	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/upscaler/*.cpp"
+	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/upscaler/*.h"
 	"${KYTY_SOURCE_DIR}/graphics/shader/*.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/*.h"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/*.cpp"
@@ -316,6 +318,8 @@ add_gpu_blit_shader(gpu_blit_color_to_ms_depth gpu_blit_color_to_ms_depth.frag)
 add_gpu_blit_shader(gpu_video_out_overlay gpu_video_out_overlay.frag)
 add_gpu_blit_shader(gpu_imgui_hdr gpu_video_out_overlay.frag -DIMGUI_HDR=1)
 add_gpu_blit_shader(gpu_pssr_linear gpu_pssr_linear.comp)
+add_gpu_blit_shader(gpu_bvh_mirror gpu_bvh_mirror.comp)
+add_gpu_blit_shader(gpu_bvh_walk gpu_bvh_mirror.comp -DWALK=1)
 # At SPIR-V 1.6 glslang declares a task shader's workgroup size with LocalSizeId, which needs maintenance4.
 add_gpu_blit_shader(gpu_mesh_indirect gpu_mesh_indirect.task --target-env spirv1.5)
 list(APPEND kyty_emulator_src ${gpu_blit_shader_headers})
@@ -356,6 +360,7 @@ set(inc_headers
 	${KYTY_THIRD_PARTY_DIR}/cpuinfo/include
 	${KYTY_THIRD_PARTY_DIR}/renderdoc
 	${KYTY_THIRD_PARTY_DIR}/stb
+	${KYTY_THIRD_PARTY_DIR}/ffx-api
 )
 
 list(APPEND check_headers

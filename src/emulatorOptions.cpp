@@ -452,7 +452,7 @@ constexpr OptionDef OPTION_DEFS[] = {
     FlagOption("--perf-overlay", &ConfigOptions::perf_overlay_enabled,
                "Show the performance panel (F2)."),
     FlagOption("--playgo-hack", &ConfigOptions::playgo_hack_enabled,
-               "Use the supplied PlayGo stub fallback."),
+               "Report 1000 PlayGo chunks without chunk metadata."),
     FlagOption("--skip-notice-screen", &ConfigOptions::skip_notice_screen,
                "Skip startup logos and notices in supported games."),
     ValueOption("--keymap", "<Control=Input>", ApplyKeymap, "DualSense mapping; may be repeated."),

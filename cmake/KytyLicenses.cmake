@@ -273,6 +273,9 @@ function(kyty_register_third_party_licenses)
 	kyty_register_license(ZArchive SOURCE_DIR "${kyty_lic_zarchive}")
 	# The fallback font's directory holds its LICENSE (the SIL Open Font License) next to the fonts.
 	kyty_register_license(noto-sans SOURCE_DIR "${KYTY_NOTO_SANS_DIR}")
+	# The AMD FidelityFX API headers that the Emulator's FSR upscaler compiles against; LICENSE.txt
+	# holds their MIT license.
+	kyty_register_license(ffx-api SOURCE_DIR "${kyty_lic_3rdparty}/ffx-api")
 
 	# The FFmpeg libraries come from the prebuilt archive, unpacked by 3rdparty/ffmpeg-core. Its
 	# share/ffmpeg/copyright equals ffmpeg-core's copyright; its SOURCE.txt adds the LGPL statement,

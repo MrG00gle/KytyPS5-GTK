@@ -672,6 +672,7 @@ class CommittedLists(unittest.TestCase):
         "shader_recompiler_alignbyte", "shader_recompiler_compute",
         "shader_recompiler_float_min_max", "shader_recompiler_integer16_ternary",
         "shader_recompiler_mad_u16", "shader_recompiler_mul_hi24", "shader_recompiler_quadmask",
+        "shader_recompiler_relaxed_float", "shader_recompiler_tessellation_wave_sizes",
         "shader_recompiler_vop3_conversions", "srgb_texture", "stream_buffer_ring",
         "texture_cache_htile_clear", "texture_cache_image_overlap", "texture_cache_image_views",
         "texture_cache_layered_image", "texture_cache_storage_sampled", "video_out_hdr10_to_sdr")

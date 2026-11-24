@@ -46,6 +46,7 @@ public:
 		std::filesystem::path dir;
 		std::string           point;
 		std::shared_ptr<Common::ArchiveReader> archive;
+		bool                                   read_only;
 	};
 
 	MountPoints() { EXIT_NOT_IMPLEMENTED(!Common::Thread::IsMainThread()); }
@@ -53,10 +54,11 @@ public:
 
 	KYTY_CLASS_NO_COPY(MountPoints);
 
-	void Mount(const std::filesystem::path& folder, const std::string& point);
+	void Mount(const std::filesystem::path& folder, const std::string& point, bool read_only);
 	void Umount(const std::string& folder_or_point);
 
-	[[nodiscard]] std::filesystem::path ResolvePath(const std::string& mounted_name);
+	[[nodiscard]] std::filesystem::path ResolvePath(std::string_view mounted_name,
+	                                                bool*            read_only = nullptr);
 	[[nodiscard]] bool                  IsMountPoint(const std::string& point);
 
 private:
@@ -127,6 +129,13 @@ static void SetStatTimes(FileStat* stat, std::optional<Common::File::Times> time
 	stat->st_mtim     = {times->write_ns / NANOS_PER_SEC, times->write_ns % NANOS_PER_SEC};
 	stat->st_ctim     = stat->st_atim;
 	stat->st_birthtim = stat->st_mtim;
+}
+
+// Directories report a 64 KiB st_blksize; games size one whole-directory getdents from it.
+static void SetStatSize(FileStat* stat, uint64_t size, bool directory) {
+	stat->st_size    = static_cast<int64_t>(size);
+	stat->st_blksize = directory ? 0x10000 : 512;
+	stat->st_blocks  = static_cast<int64_t>((size + 511) / 512);
 }
 
 static uint64_t AlignDown(uint64_t value, uint64_t alignment) {
@@ -264,7 +273,8 @@ void FileDescriptors::CloseAll() {
 	}
 }
 
-void MountPoints::Mount(const std::filesystem::path& folder, const std::string& point) {
+void MountPoints::Mount(const std::filesystem::path& folder, const std::string& point,
+                        bool read_only) {
 	Common::LockGuard lock(m_mutex);
 
 	auto point_str  = Common::FixDirectorySlash(point);
@@ -275,6 +285,7 @@ void MountPoints::Mount(const std::filesystem::path& folder, const std::string& 
 	p.dir   = folder;
 	p.point = point_str;
 	p.archive = Common::OpenArchive(folder);
+	p.read_only = read_only || Common::IsArchivePath(folder);
 
 	m_mount_pairs.push_back(std::move(p));
 }
@@ -295,7 +306,7 @@ void MountPoints::Umount(const std::string& folder_or_point) {
 }
 
 // Guests join mount points and names with extra slashes (e.g. "/addcont0//file").
-static std::string NormalizeGuestPath(const std::string& mounted_name) {
+static std::string NormalizeGuestPath(std::string_view mounted_name) {
 	std::string normalized = Common::FixFilenameSlash(mounted_name);
 	normalized.erase(std::unique(normalized.begin(), normalized.end(),
 	                             [](char a, char b) { return a == '/' && b == '/'; }),
@@ -355,7 +366,7 @@ static std::filesystem::path ResolvePathIgnoringCase(const std::filesystem::path
 	return resolved;
 }
 
-std::filesystem::path MountPoints::ResolvePath(const std::string& mounted_name) {
+std::filesystem::path MountPoints::ResolvePath(std::string_view mounted_name, bool* read_only) {
 	Common::LockGuard lock(m_mutex);
 
 	const std::string normalized = NormalizeGuestPath(mounted_name);
@@ -367,6 +378,9 @@ std::filesystem::path MountPoints::ResolvePath(const std::string& mounted_name) 
 	    [&mounted_path](const MountPair& p) { return mounted_path.starts_with(p.point); });
 	if (it != m_mount_pairs.end()) {
 		const auto& p = *it;
+		if (read_only != nullptr) {
+			*read_only = p.read_only;
+		}
 		auto rel_path = Common::RemoveFirst(normalized, p.point.size());
 		while (rel_path.starts_with('/')) {
 			rel_path = Common::RemoveFirst(rel_path, 1);
@@ -403,9 +417,9 @@ void Shutdown() {
 	g_mount_points = nullptr;
 }
 
-void Mount(const std::filesystem::path& folder, const std::string& point) {
+void Mount(const std::filesystem::path& folder, const std::string& point, bool read_only) {
 
-	g_mount_points->Mount(folder, point);
+	g_mount_points->Mount(folder, point, read_only);
 }
 
 void Umount(const std::string& folder_or_point) {
@@ -489,20 +503,11 @@ int KYTY_SYSV_ABI KernelOpen(const char* path, int flags, uint16_t mode) {
 		return descriptor;
 	}
 
-	file->real_name = g_mount_points->ResolvePath(file->name);
+	bool read_only  = false;
+	file->real_name = g_mount_points->ResolvePath(file->name, &read_only);
 	if (file->real_name.empty()) {
 		g_files->DeleteDescriptor(descriptor);
 		return KERNEL_ERROR_ENOENT;
-	}
-	if (Common::IsArchivePath(file->real_name) &&
-	    (rw_mode != Common::File::Mode::Read || trunc || creat)) {
-		g_files->DeleteDescriptor(descriptor);
-		return KERNEL_ERROR_EROFS;
-	}
-
-	if (trunc && rw_mode == Common::File::Mode::Read) {
-		g_files->DeleteDescriptor(descriptor);
-		return KERNEL_ERROR_EACCES;
 	}
 
 	const auto info = Common::File::GetInfo(file->real_name);
@@ -515,14 +520,29 @@ int KYTY_SYSV_ABI KernelOpen(const char* path, int flags, uint16_t mode) {
 		return KERNEL_ERROR_ENOENT;
 	}
 
+	if (excl && creat && info) {
+		g_files->DeleteDescriptor(descriptor);
+		return KERNEL_ERROR_EEXIST;
+	}
+
+	// Only O_CREAT of a missing path writes.
+	if (read_only && (rw_mode != Common::File::Mode::Read || trunc || !info)) {
+		g_files->DeleteDescriptor(descriptor);
+		return KERNEL_ERROR_EROFS;
+	}
+
+	if (trunc && rw_mode == Common::File::Mode::Read) {
+		g_files->DeleteDescriptor(descriptor);
+		return KERNEL_ERROR_EACCES;
+	}
+
 	if (directory || dir_exist) {
 		if (!dir_exist) {
 			g_files->DeleteDescriptor(descriptor);
 			return KERNEL_ERROR_ENOTDIR;
 		}
 
-		EXIT_NOT_IMPLEMENTED(!directory && rw_mode != Common::File::Mode::Read);
-		EXIT_NOT_IMPLEMENTED(!directory && (trunc || creat));
+		EXIT_NOT_IMPLEMENTED(rw_mode != Common::File::Mode::Read);
 
 		const auto entries = Common::File::GetDirEntries(file->real_name);
 		file->dirents      = PackDirents(entries);
@@ -538,11 +558,6 @@ int KYTY_SYSV_ABI KernelOpen(const char* path, int flags, uint16_t mode) {
 		}
 	} else {
 		bool result = false;
-
-		if (excl && creat && file_exist) {
-			g_files->DeleteDescriptor(descriptor);
-			return KERNEL_ERROR_EEXIST;
-		}
 
 		if (creat && (!file_exist || trunc)) {
 			Common::File::CreateDirectories(file->real_name.parent_path());
@@ -1155,18 +1170,9 @@ int StatHostPath(const std::filesystem::path& real_file_name, FileStat* sb) {
 
 	FileStat stat {};
 	stat.st_mode = 0000777u | (is_dir ? 0040000u : 0100000u);
-
-	if (is_dir) {
-		stat.st_size =
-		    static_cast<int64_t>(PackDirents(Common::File::GetDirEntries(real_file_name)).size());
-		stat.st_blksize = 512;
-		stat.st_blocks  = stat.st_size / 512;
-	} else {
-		stat.st_size    = static_cast<int64_t>(info->size);
-		stat.st_blksize = 512;
-		stat.st_blocks  = (stat.st_size + 511) / 512;
-	}
-
+	const uint64_t size =
+	    is_dir ? PackDirents(Common::File::GetDirEntries(real_file_name)).size() : info->size;
+	SetStatSize(&stat, size, is_dir);
 	SetStatTimes(&stat, is_dir ? std::nullopt : Common::File::GetTimes(real_file_name));
 	*sb = stat;
 
@@ -1200,10 +1206,8 @@ int KYTY_SYSV_ABI KernelFstat(int d, FileStat* sb) {
 	std::optional<Common::File::Times> times;
 
 	if (file->special != SpecialFile::None) {
-		stat.st_mode    = 0020644u;
-		stat.st_size    = 0;
-		stat.st_blksize = 512;
-		stat.st_blocks  = 0;
+		stat.st_mode = 0020644u;
+		SetStatSize(&stat, 0, false);
 	} else if (!file->directory) {
 		file->mutex.Lock();
 
@@ -1218,13 +1222,9 @@ int KYTY_SYSV_ABI KernelFstat(int d, FileStat* sb) {
 			return KERNEL_ERROR_EIO;
 		}
 
-		stat.st_size    = static_cast<int64_t>(size);
-		stat.st_blksize = 512;
-		stat.st_blocks  = (stat.st_size + 511) / 512;
+		SetStatSize(&stat, size, false);
 	} else {
-		stat.st_size    = static_cast<int64_t>(file->dirents.size());
-		stat.st_blksize = 512;
-		stat.st_blocks  = stat.st_size / 512;
+		SetStatSize(&stat, file->dirents.size(), true);
 	}
 
 	SetStatTimes(&stat, times);
@@ -1255,12 +1255,17 @@ int KYTY_SYSV_ABI KernelTruncate(const char* path, int64_t length) {
 	if (IsRandomDevice(path)) {
 		return OK;
 	}
-	const auto real_name = g_mount_points->ResolvePath(path);
+	bool       read_only = false;
+	const auto real_name = g_mount_points->ResolvePath(path, &read_only);
 	if (real_name.empty()) {
 		return KERNEL_ERROR_ENOENT;
 	}
-	if (Common::IsArchivePath(real_name)) {
-		return KERNEL_ERROR_EROFS;
+	if (read_only) {
+		const auto info = Common::File::GetInfo(real_name);
+		if (!info) {
+			return KERNEL_ERROR_ENOENT;
+		}
+		return info->is_file ? KERNEL_ERROR_EROFS : KERNEL_ERROR_EISDIR;
 	}
 
 	std::error_code error;
@@ -1368,8 +1373,9 @@ int KYTY_SYSV_ABI KernelUnlink(const char* path) {
 		return KERNEL_ERROR_EINVAL;
 	}
 
-	auto real_file_name = g_mount_points->ResolvePath(path);
-	if (Common::IsArchivePath(real_file_name)) {
+	bool read_only      = false;
+	auto real_file_name = g_mount_points->ResolvePath(path, &read_only);
+	if (read_only) {
 		return KERNEL_ERROR_EROFS;
 	}
 
@@ -1403,11 +1409,11 @@ int KYTY_SYSV_ABI KernelRename(const char* from, const char* to) {
 		return KERNEL_ERROR_EINVAL;
 	}
 
-	auto from_path = std::string(from);
-	auto to_path   = std::string(to);
-	auto real_from = g_mount_points->ResolvePath(from_path);
-	auto real_to   = g_mount_points->ResolvePath(to_path);
-	if (Common::IsArchivePath(real_from) || Common::IsArchivePath(real_to)) {
+	bool from_read_only = false;
+	bool to_read_only   = false;
+	auto real_from      = g_mount_points->ResolvePath(from, &from_read_only);
+	auto real_to        = g_mount_points->ResolvePath(to, &to_read_only);
+	if (from_read_only || to_read_only) {
 		return KERNEL_ERROR_EROFS;
 	}
 
@@ -1490,16 +1496,17 @@ int KYTY_SYSV_ABI KernelMkdir(const char* path, uint16_t mode) {
 	     "\t mode = %04" PRIx16 "\n",
 	     path, mode);
 
-	auto real_name = g_mount_points->ResolvePath(std::string(path));
+	bool read_only = false;
+	auto real_name = g_mount_points->ResolvePath(path, &read_only);
 	if (real_name.empty()) {
 		return KERNEL_ERROR_ENOENT;
-	}
-	if (Common::IsArchivePath(real_name)) {
-		return KERNEL_ERROR_EROFS;
 	}
 
 	if (Common::File::GetInfo(real_name)) {
 		return KERNEL_ERROR_EEXIST;
+	}
+	if (read_only) {
+		return KERNEL_ERROR_EROFS;
 	}
 
 	return Common::File::CreateDirectory(real_name) ? OK : KERNEL_ERROR_EIO;
@@ -1527,8 +1534,9 @@ int KYTY_SYSV_ABI KernelRmdir(const char* path) {
 		return KERNEL_ERROR_EBUSY;
 	}
 
-	const auto real_name = g_mount_points->ResolvePath(path);
-	if (Common::IsArchivePath(real_name)) {
+	bool       read_only = false;
+	const auto real_name = g_mount_points->ResolvePath(path, &read_only);
+	if (read_only) {
 		return KERNEL_ERROR_EROFS;
 	}
 

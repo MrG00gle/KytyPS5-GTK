@@ -128,7 +128,6 @@ void RenderExecutor::ResolveRenderColorTarget(CommandBuffer& buffer, RenderColor
 	}
 
 	const bool tile         = rt.attrib3.tile_mode != Prospero::TileMode::kLinear;
-	const bool standard64   = rt.attrib3.tile_mode == Prospero::TileMode::kStandard64KB;
 	const bool depth_tile   = rt.attrib3.tile_mode == Prospero::TileMode::kDepth;
 	bool       texture_tile = false;
 	switch (rt.attrib3.tile_mode) {
@@ -153,7 +152,8 @@ void RenderExecutor::ResolveRenderColorTarget(CommandBuffer& buffer, RenderColor
 	const uint32_t width  = rt.attrib2.width + 1;
 	const uint32_t height = rt.attrib2.height + 1;
 	const auto target_format =
-	    TextureGetRenderTargetFormat(rt.info.format, rt.info.channel_type, rt.info.channel_order);
+	    TextureGetRenderTargetFormat(m_context.GetGraphics(), rt.info.format, rt.info.channel_type,
+	                                 rt.info.channel_order);
 	// A surface with one stored level starts every MIP_LEVEL at the base address, so a level with
 	// mip 0's padded pitch aliases mip 0's top-left texels.
 	uint32_t mip = rt.view.current_mip_level;
@@ -189,10 +189,8 @@ void RenderExecutor::ResolveRenderColorTarget(CommandBuffer& buffer, RenderColor
 		     rt.attrib.num_fragments, bytes_per_element, rt.cmask.addr, rt.fmask.addr,
 		     rt.dcc_addr.addr);
 	}
-	if ((standard64 || depth_tile) &&
-	    (rt.attrib3.dimension != 1 || rt.attrib3.depth != 0 ||
-	     (depth_tile && (view.base_layer != 0 || view.image_layers != 1)))) {
-		EXIT("unsupported 64KB texture-tiled render-target view: dimension=%u depth=%u"
+	if (depth_tile && (is_1d || volume || view.base_layer != 0 || view.image_layers != 1)) {
+		EXIT("unsupported depth-tiled color render-target view: dimension=%u depth=%u"
 		     " layer=%u/%u\n",
 		     rt.attrib3.dimension, rt.attrib3.depth, view.base_layer, view.image_layers);
 	}

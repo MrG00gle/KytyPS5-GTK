@@ -1,8 +1,10 @@
 #include "loader/x64InstructionEmulator.h"
 
 #include "common/common.h"
+#include "common/logging/log.h"
 
 #include <Zydis/Zydis.h>
+#include <atomic>
 #include <bit>
 #include <cstring>
 #include <emmintrin.h>
@@ -373,21 +375,21 @@ static bool ResolveShaNiMemoryAddress(const uint8_t* rip, const ShaNiInsn&    in
 	return true;
 }
 
-static bool ExecuteShaNiInsn(const ShaNiInsn& insn, const XmmWords& src2, const XmmWords& xmm0,
-                             XmmWords& dest) {
+static ZydisMnemonic ExecuteShaNiInsn(const ShaNiInsn& insn, const XmmWords& src2,
+                                      const XmmWords& xmm0, XmmWords& dest) {
 	if (insn.escape == 0x3a && insn.opcode == 0xcc) {
 		Sha1Rnds4(dest, src2, insn.imm8);
-		return true;
+		return ZYDIS_MNEMONIC_SHA1RNDS4;
 	}
 
+	// DecodeShaNiInsn accepts only opcodes 0xc8-0xcd.
 	switch (insn.opcode) {
-		case 0xc8: Sha1Nexte(dest, src2); return true;
-		case 0xc9: Sha1Msg1(dest, src2); return true;
-		case 0xca: Sha1Msg2(dest, src2); return true;
-		case 0xcb: Sha256Rnds2(dest, src2, xmm0); return true;
-		case 0xcc: Sha256Msg1(dest, src2); return true;
-		case 0xcd: Sha256Msg2(dest, src2); return true;
-		default: return false;
+		case 0xc8: Sha1Nexte(dest, src2); return ZYDIS_MNEMONIC_SHA1NEXTE;
+		case 0xc9: Sha1Msg1(dest, src2); return ZYDIS_MNEMONIC_SHA1MSG1;
+		case 0xca: Sha1Msg2(dest, src2); return ZYDIS_MNEMONIC_SHA1MSG2;
+		case 0xcb: Sha256Rnds2(dest, src2, xmm0); return ZYDIS_MNEMONIC_SHA256RNDS2;
+		case 0xcc: Sha256Msg1(dest, src2); return ZYDIS_MNEMONIC_SHA256MSG1;
+		default: Sha256Msg2(dest, src2); return ZYDIS_MNEMONIC_SHA256MSG2;
 	}
 }
 
@@ -443,6 +445,19 @@ struct Context {
 	}
 };
 
+// Names each trap-emulated instruction once, at its first guest address. Reading the flag before
+// the exchange keeps repeated traps from writing its cache line.
+static void LogFirstTrap(const Context& context, ZydisMnemonic mnemonic) {
+	static std::atomic_bool logged_traps[ZYDIS_MNEMONIC_MAX_VALUE + 1];
+	auto&                   logged = logged_traps[mnemonic];
+	if (!logged.load(std::memory_order_relaxed) &&
+	    !logged.exchange(true, std::memory_order_relaxed)) {
+		Log::WriteToConsoleAndLog(
+		    fmt::format("AMD CPU compatibility: trapping {} (first at 0x{:x})\n",
+			            ZydisMnemonicGetString(mnemonic), context.Rip()));
+	}
+}
+
 
 static bool TryEmulateShaNi(Context& context) {
 	const auto* rip = reinterpret_cast<const uint8_t*>(context.Rip());
@@ -482,11 +497,9 @@ static bool TryEmulateShaNi(Context& context) {
 		std::memcpy(&src2, source, sizeof(src2));
 	}
 
-	if (!ExecuteShaNiInsn(insn, src2, xmm0_words, dest)) {
-		return false;
-	}
-
+	const auto mnemonic = ExecuteShaNiInsn(insn, src2, xmm0_words, dest);
 	std::memcpy(dest_xmm, &dest, sizeof(dest));
+	LogFirstTrap(context, mnemonic);
 	context.Advance(insn.length);
 	return true;
 }
@@ -554,6 +567,7 @@ static bool TryEmulateSse4a(Context& context) {
 		dest[0] = InsertBitField(dest[0], source[0], length, index);
 	}
 	std::memcpy(dest_xmm, dest, sizeof(dest));
+	LogFirstTrap(context, prefix == 0x66 ? ZYDIS_MNEMONIC_EXTRQ : ZYDIS_MNEMONIC_INSERTQ);
 	context.Advance(instruction_length);
 	return true;
 }
@@ -620,6 +634,7 @@ static bool TryEmulateCpuExtensions(Context& context) {
 	} else {
 		return false;
 	}
+	LogFirstTrap(context, instruction.mnemonic);
 	context.Advance(instruction.length);
 	return true;
 }
@@ -634,6 +649,7 @@ static bool TryEmulateMonitorxMwaitx(Context& context) {
 	if (rip[2] == 0xfb) {
 		::sched_yield();
 	}
+	LogFirstTrap(context, rip[2] == 0xfb ? ZYDIS_MNEMONIC_MWAITX : ZYDIS_MNEMONIC_MONITORX);
 	context.Advance(3);
 	return true;
 }
@@ -701,6 +717,7 @@ static bool TryEmulateReciprocalSquareRoot(Context& context) {
 	_mm_setcsr(mxcsr);
 	std::memcpy(dest_xmm, &result, sizeof(result));
 	context.ClearUpperYmm(dest);
+	LogFirstTrap(context, ZYDIS_MNEMONIC_VRSQRTPS);
 	context.Advance(prefix_size + 2);
 	return true;
 }

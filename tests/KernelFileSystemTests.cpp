@@ -14,6 +14,7 @@
 #include "graphics/presentation/window/windowInternal.h"
 #include "kernel/eventQueue.h"
 #include "kernel/fileSystem.h"
+#include "kernel/memory.h"
 #include "kernel/pthread.h"
 #include "libs/errno.h"
 #include "libs/network.h"
@@ -256,6 +257,8 @@ int dispatched_signals = 0;
 
 void KYTY_SYSV_ABI CountDispatchedSignal(int, void *) { dispatched_signals++; }
 
+void *KYTY_SYSV_ABI ReturnFromGuestThread(void *) { return nullptr; }
+
 void TestPendingSignalDispatch() {
   using namespace Libs::LibKernel;
   Loader::SymbolDatabase symbols;
@@ -276,6 +279,17 @@ void TestPendingSignalDispatch() {
   Check(std::chrono::steady_clock::now() - start < std::chrono::milliseconds(50) &&
             dispatched_signals == 1,
         "a pending signal dispatches once and idle dispatches skip the signal scan");
+
+  // An exiting thread stops taking guest signals before it frees its TLS.
+  Pthread exiting = nullptr;
+  Check(PthreadCreate(&exiting, nullptr, ReturnFromGuestThread, nullptr, "Exiting") == OK,
+        "create exiting guest thread");
+  WaitForMutexTest([&] {
+    PthreadQueuePendingSignal(exiting, 30);
+    return !PthreadTakePendingSignal(exiting, 30);
+  });
+  Check(PthreadJoin(exiting, nullptr) == OK && !PthreadHasAnyPendingSignal(exiting),
+        "joining clears signals the exiting thread did not take");
   Check(remove(30) == OK, "remove signal handler");
 }
 
@@ -1217,6 +1231,60 @@ void CheckUnmappedPaths(const std::filesystem::path &root) {
   FileSystem::Umount("/app0");
 }
 
+// A folder mounted read-only at /app0 rejects mutations; /hostapp of the same folder stays writable.
+void CheckReadOnlyAppFolder(const std::filesystem::path &root) {
+  constexpr int ReadOnly = Libs::LibKernel::KERNEL_ERROR_EROFS;
+  const auto folder = root / "app0-folder";
+  std::filesystem::create_directories(folder / "dir");
+  Common::File fixture;
+  Check(fixture.Create(folder / "data.bin"), "create /app0 folder fixture");
+  fixture.Close();
+  FileSystem::Mount(folder, "/app0", true);
+  FileSystem::Mount(folder, "/hostapp");
+
+  for (const int flags : {1, 2, 0x0400}) {
+    Check(FileSystem::KernelOpen("/app0/data.bin", flags, 0777) == ReadOnly &&
+              FileSystem::KernelOpen("/app0/new.bin", flags, 0777) ==
+                  Libs::LibKernel::KERNEL_ERROR_ENOENT,
+          "/app0 rejects write and truncate opens after the existence check");
+  }
+  Check(FileSystem::KernelOpen("/app0/new.bin", 0x0200, 0777) == ReadOnly &&
+            FileSystem::KernelOpen("/app0/data.bin", 0x0601, 0777) == ReadOnly &&
+            FileSystem::KernelOpen("/app0/data.bin", 0x0a01, 0777) ==
+                Libs::LibKernel::KERNEL_ERROR_EEXIST &&
+            FileSystem::KernelOpen("/app0/dir", 0x0a00, 0777) == Libs::LibKernel::KERNEL_ERROR_EEXIST,
+        "/app0 rejects creating files after the exclusive check");
+  Check(FileSystem::KernelTruncate("/app0/data.bin", 0) == ReadOnly &&
+            FileSystem::KernelTruncate("/app0/new.bin", 0) == Libs::LibKernel::KERNEL_ERROR_ENOENT &&
+            FileSystem::KernelTruncate("/app0/dir", 0) == Libs::LibKernel::KERNEL_ERROR_EISDIR &&
+            FileSystem::KernelUnlink("/app0/data.bin") == ReadOnly &&
+            FileSystem::KernelMkdir("/app0/dir", 0777) == Libs::LibKernel::KERNEL_ERROR_EEXIST &&
+            FileSystem::KernelMkdir("/app0/new-dir", 0777) == ReadOnly &&
+            FileSystem::KernelRmdir("/app0/dir") == ReadOnly &&
+            FileSystem::KernelRename("/app0/data.bin", "/hostapp/renamed.bin") == ReadOnly &&
+            FileSystem::KernelRename("/hostapp/data.bin", "/app0/renamed.bin") == ReadOnly,
+        "/app0 rejects path mutations");
+  Check(std::filesystem::exists(folder / "data.bin") && std::filesystem::exists(folder / "dir") &&
+            !std::filesystem::exists(folder / "new.bin") &&
+            !std::filesystem::exists(folder / "new-dir") &&
+            !std::filesystem::exists(folder / "renamed.bin"),
+        "/app0 mutations leave the host folder unchanged");
+
+  const int read = FileSystem::KernelOpen("/app0/data.bin", 0, 0);
+  const int create_existing = FileSystem::KernelOpen("/app0/data.bin", 0x0200, 0777);
+  const int create_directory = FileSystem::KernelOpen("/app0/dir", 0x0200, 0777);
+  Check(read >= 3 && create_existing >= 3 && create_directory >= 3 &&
+            FileSystem::KernelClose(read) == OK && FileSystem::KernelClose(create_existing) == OK &&
+            FileSystem::KernelClose(create_directory) == OK,
+        "/app0 opens existing files and directories for reading, also with O_CREAT");
+  const int write = FileSystem::KernelOpen("/hostapp/written.bin", 0x0601, 0666);
+  Check(write >= 3 && FileSystem::KernelClose(write) == OK &&
+            std::filesystem::exists(folder / "written.bin"),
+        "the folder stays writable through another mount");
+  FileSystem::Umount("/hostapp");
+  FileSystem::Umount("/app0");
+}
+
 void CheckArchiveMount(const std::filesystem::path &root) {
   const auto archive = root / u8"game-日本語.zar";
   std::vector<uint8_t> payload(2 * 64 * 1024 + 33);
@@ -1318,11 +1386,17 @@ void CheckArchiveMount(const std::filesystem::path &root) {
   Check(entries_seen == expected_entries.size(), "guest enumerates every archive directory entry");
   Check(FileSystem::KernelClose(directory) == OK, "close archive directory");
 
-  for (const int flags : {1, 2, 0x0200, 0x0400}) {
+  for (const int flags : {1, 2, 0x0400}) {
     Check(FileSystem::KernelOpen(GuestMember, flags, 0777) ==
               Libs::LibKernel::KERNEL_ERROR_EROFS,
-          "archive rejects write, create and truncate open flags");
+          "archive rejects write and truncate open flags");
   }
+  const int existing = FileSystem::KernelOpen(GuestMember, 0x0200, 0777);
+  Check(existing >= 3 && FileSystem::KernelClose(existing) == OK &&
+            FileSystem::KernelOpen("/app0/new.bin", 0x0200, 0777) ==
+                Libs::LibKernel::KERNEL_ERROR_EROFS &&
+            FileSystem::KernelMkdir("/app0/assets", 0777) == Libs::LibKernel::KERNEL_ERROR_EEXIST,
+        "archive opens members with O_CREAT and rejects creating new ones");
   Check(FileSystem::KernelUnlink(GuestMember) == Libs::LibKernel::KERNEL_ERROR_EROFS &&
             FileSystem::KernelMkdir("/app0/new-dir", 0777) == Libs::LibKernel::KERNEL_ERROR_EROFS &&
             FileSystem::KernelRmdir("/app0/assets") == Libs::LibKernel::KERNEL_ERROR_EROFS &&
@@ -1421,11 +1495,15 @@ void CheckDirectoryStream(const std::filesystem::path &root) {
         "directory SEEK_END uses padded stream size");
   FileSystem::FileStat stat{};
   Check(FileSystem::KernelFstat(fd, &stat) == OK && stat.st_size == end &&
-            stat.st_blksize == 512,
+            stat.st_blksize == 0x10000,
         "directory stat agrees with seek and enumeration");
   Check(FileSystem::KernelStat("/app0/", &stat) == OK && stat.st_size == end &&
-            stat.st_blocks == end / 512,
+            stat.st_blocks == end / 512 && stat.st_blksize == 0x10000,
         "path and descriptor directory stat agree");
+  std::vector<char> whole(stat.st_blksize);
+  Check(FileSystem::KernelLseek(fd, 0, 0) == 0 &&
+            FileSystem::KernelGetdents(fd, whole.data(), whole.size()) == end,
+        "one getdents of st_blksize bytes reads the whole directory");
   Check(FileSystem::KernelLseek(fd, 0, 0) == 0,
         "rewind directory for asset read");
   std::vector<char> raw(static_cast<size_t>(end));
@@ -2622,6 +2700,8 @@ int main(int argc, char** argv) {
   options.printf_direction = Config::LogDirection::Silent;
   Config::Load(options);
   subsystems.Initialize<Log::Lifecycle>();
+  // Guest threads allocate their TLS in guest memory.
+  subsystems.Initialize<Libs::LibKernel::Memory::Lifecycle>();
 
   if (argc == 2 && std::string_view(argv[1]) == "--network-only") {
 #if defined(__linux__)
@@ -2664,6 +2744,7 @@ int main(int argc, char** argv) {
   CheckMountRoot(temporary.Path());
   CheckUnmappedPaths(temporary.Path());
   CheckArchiveMount(temporary.Path());
+  CheckReadOnlyAppFolder(temporary.Path());
   CheckUnicodePaths(temporary.Path());
   CheckUnicodeLogPath(temporary.Path());
   CheckDirectoryStream(temporary.Path());
