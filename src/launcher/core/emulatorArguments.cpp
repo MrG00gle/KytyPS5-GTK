@@ -12,21 +12,6 @@ namespace kyty::core {
 
 namespace {
 
-struct ScreenSize {
-	int32_t width  = 1280;
-	int32_t height = 720;
-};
-
-ScreenSize SizeOf(ScreenResolution resolution) {
-	switch (resolution) {
-		case ScreenResolution::R1280X720: return {1280, 720};
-		case ScreenResolution::R1920X1080: return {1920, 1080};
-		case ScreenResolution::R2560X1440: return {2560, 1440};
-		case ScreenResolution::R3840X2160: return {3840, 2160};
-	}
-	return {};
-}
-
 // The text form of a field (the Q_ENUM key name of an enum field), from the field table.
 std::string FieldText(const GameConfiguration& configuration, std::string_view name) {
 	const auto* field = FindGameConfigurationField(name);
@@ -57,11 +42,10 @@ std::vector<std::string> BuildEmulatorArguments(const GameEntry&              en
                                                 const EffectiveConfiguration& effective) {
 	const auto& config     = effective.configuration;
 	const auto& controller = effective.controller;
-	const auto  size       = SizeOf(config.screen_resolution);
 
 	Arguments args;
-	args.Number("--screen-width", size.width);
-	args.Number("--screen-height", size.height);
+	args.Number("--screen-width", config.screen_resolution.width);
+	args.Number("--screen-height", config.screen_resolution.height);
 	args.Value("--user-name", std::string(TrimWhitespace(config.user_name)));
 	args.Number("--user-id", config.user_id);
 	if (!config.audio_input_device.empty()) {

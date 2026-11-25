@@ -162,7 +162,7 @@ void TestDefaults() {
 void TestEveryOptionInOrder() {
 	EffectiveConfiguration effective;
 	auto&                  c      = effective.configuration;
-	c.screen_resolution           = kyty::core::ScreenResolution::R3840X2160;
+	c.screen_resolution           = kyty::core::ScreenResolution {3840, 2160};
 	c.user_name                   = " Player One ";
 	c.user_id                     = kyty::core::kMaxUserId;
 	c.audio_input_device          = "USB Mic";
@@ -301,10 +301,12 @@ void TestEveryOptionInOrder() {
 void TestScreenResolution() {
 	using kyty::core::ScreenResolution;
 	const std::vector<std::pair<ScreenResolution, std::pair<std::string, std::string>>> rows = {
-	    {ScreenResolution::R1280X720, {"1280", "720"}},
-	    {ScreenResolution::R1920X1080, {"1920", "1080"}},
-	    {ScreenResolution::R2560X1440, {"2560", "1440"}},
-	    {ScreenResolution::R3840X2160, {"3840", "2160"}}};
+	    {{1280, 720}, {"1280", "720"}},   {{1920, 1080}, {"1920", "1080"}},
+	    {{2560, 1440}, {"2560", "1440"}}, {{3840, 2160}, {"3840", "2160"}},
+	    {{2560, 1080}, {"2560", "1080"}}, {{3440, 1440}, {"3440", "1440"}},
+	    {{3840, 1600}, {"3840", "1600"}}, {{5120, 2160}, {"5120", "2160"}},
+	    {{320, 320}, {"320", "320"}},     {{16384, 16384}, {"16384", "16384"}},
+	    {{1366, 768}, {"1366", "768"}}};
 	for (const auto& [resolution, size]: rows) {
 		GameConfiguration c;
 		c.screen_resolution = resolution;
@@ -785,6 +787,15 @@ void CheckEmulator(const std::string& emulator) {
 			CheckEmulatorAccepts(emulator, value, entry,
 			                     std::string(field.name) + " " + std::string(field.enum_keys[i]));
 		}
+	}
+	// Custom resolutions: the smallest, the largest, and an ultrawide preset.
+	for (const auto& resolution:
+	     {kyty::core::ScreenResolution {320, 320}, kyty::core::ScreenResolution {16384, 16384},
+	      kyty::core::ScreenResolution {3440, 1440}}) {
+		auto sized                            = every;
+		sized.configuration.screen_resolution = resolution;
+		CheckEmulatorAccepts(emulator, sized, entry,
+		                     "the resolution " + kyty::core::FormatScreenResolution(resolution));
 	}
 	// The other --game form: an executable inside the game directory.
 	auto elf              = every;

@@ -89,6 +89,7 @@ enum class RowKind {
 	Folder,     // String: AdwEntryRow with a button that opens the folder chooser
 	Gpu,        // gpu_index: AdwComboRow with "Automatic" and the Vulkan devices
 	Microphone, // audio_input_device: AdwComboRow with "None" and the recording devices
+	Resolution, // screen_resolution: AdwComboRow of the presets and "Custom", then width and height
 };
 
 struct FieldSpec {
@@ -109,9 +110,6 @@ struct FieldSpec {
 	const char*      chooser_title = nullptr; // Folder: the folder chooser's title (N_())
 };
 
-// TRANSLATORS: screen resolutions, width × height in pixels.
-constexpr const char* kResolutions[] = {N_("1280 × 720"), N_("1920 × 1080"), N_("2560 × 1440"),
-                                        N_("3840 × 2160")};
 // TRANSLATORS: Vulkan presentation modes.
 constexpr const char* kPresentModes[] = {N_("Fifo"), N_("Mailbox"), N_("Immediate")};
 // TRANSLATORS: where shader logs and printf output go.
@@ -184,10 +182,11 @@ const FieldSpec kFields[] = {
      .choices = kConsoleLanguages},
     {.key     = "screen_resolution",
      .label   = N_("Screen resolution"),
-     .tooltip = N_("Window resolution"),
+     .tooltip = N_("Window resolution: pick a preset or set a custom width and height. Non-16:9 "
+                   "sizes such as 21:9 show the game with black bars unless Stretch to window is "
+                   "on."),
      .group   = Group::Graphics,
-     .kind    = RowKind::Choice,
-     .choices = kResolutions},
+     .kind    = RowKind::Resolution},
     {.key     = "present_mode",
      .label   = N_("Present mode"),
      .tooltip = N_("Vulkan swapchain presentation mode"),
@@ -425,6 +424,9 @@ struct FieldRow {
 	// Gpu: the gpu_index of each item; Microphone: the device name of each item ("" = none).
 	std::vector<int64_t>     gpu_values;
 	std::vector<std::string> device_values;
+	// Resolution: the width and the height rows (row is the preset choice).
+	GtkWidget* width_row  = nullptr;
+	GtkWidget* height_row = nullptr;
 };
 
 } // namespace
@@ -458,6 +460,8 @@ struct SettingsWindowState {
 	bool previewed = false; // the lightbar shows a color chosen here
 	bool loading   = false; // widgets are being set from values
 	bool disposed  = false;
+	// The resolution rows are being set from each other (the preset choice and the sizes).
+	bool resolution_syncing = false;
 	// Cancelled when the window goes away: no chooser, alert, or launcher callback runs after it.
 	GObjectPtr<GCancellable> cancellable = GObjectPtr<GCancellable>::Adopt(g_cancellable_new());
 	GObjectPtr<GSimpleActionGroup> actions;
@@ -724,7 +728,8 @@ GtkWidget* MakeFieldWidget(const FieldSpec& spec) {
 		case RowKind::Switch: row = adw_switch_row_new(); break;
 		case RowKind::Choice:
 		case RowKind::Gpu:
-		case RowKind::Microphone: row = adw_combo_row_new(); break;
+		case RowKind::Microphone:
+		case RowKind::Resolution: row = adw_combo_row_new(); break;
 		case RowKind::Number:
 			row = adw_spin_row_new_with_range(static_cast<double>(spec.minimum),
 			                                  static_cast<double>(spec.maximum), 1);
@@ -745,7 +750,46 @@ GtkWidget* MakeFieldWidget(const FieldSpec& spec) {
 		}
 		SetComboItems(row, items);
 	}
+	if (spec.kind == RowKind::Resolution) {
+		std::vector<std::string> items;
+		for (const auto& preset: core::ScreenResolutionPresets()) {
+			// TRANSLATORS: a screen resolution, width × height in pixels.
+			items.push_back(Format(_("%d × %d"), static_cast<int>(preset.width),
+			                       static_cast<int>(preset.height)));
+		}
+		// TRANSLATORS: a screen resolution that is none of the presets.
+		items.emplace_back(C_("screen resolution", "Custom"));
+		SetComboItems(row, items);
+	}
 	return row;
+}
+
+// ---- The screen resolution rows
+
+core::ScreenResolution ShownResolution(const FieldRow& row) {
+	const auto side = [](GtkWidget* spin) {
+		adw_spin_row_update(ADW_SPIN_ROW(spin));
+		return static_cast<int32_t>(std::lround(adw_spin_row_get_value(ADW_SPIN_ROW(spin))));
+	};
+	return {side(row.width_row), side(row.height_row)};
+}
+
+// The preset choice shows the preset that the width and height rows hold, or Custom.
+void SelectResolutionPreset(SettingsWindowState& state, const FieldRow& row) {
+	const auto presets = core::ScreenResolutionPresets();
+	const auto found   = std::find(presets.begin(), presets.end(), ShownResolution(row));
+	const bool syncing = std::exchange(state.resolution_syncing, true);
+	adw_combo_row_set_selected(ADW_COMBO_ROW(row.row), static_cast<guint>(found - presets.begin()));
+	state.resolution_syncing = syncing;
+}
+
+void ShowResolution(SettingsWindowState& state, const FieldRow& row,
+                    const core::ScreenResolution& resolution) {
+	const bool syncing = std::exchange(state.resolution_syncing, true);
+	adw_spin_row_set_value(ADW_SPIN_ROW(row.width_row), resolution.width);
+	adw_spin_row_set_value(ADW_SPIN_ROW(row.height_row), resolution.height);
+	state.resolution_syncing = syncing;
+	SelectResolutionPreset(state, row);
 }
 
 void LoadGpuRow(FieldRow& row, int64_t gpu_index, const kyty::gtk::DeviceList& gpus) {
@@ -807,7 +851,7 @@ void LoadMicrophoneRow(FieldRow& row, const std::string& device,
 }
 
 void LoadRow(FieldRow& row, const core::GameConfiguration& configuration,
-             const SettingsWindowState& state) {
+             SettingsWindowState& state) {
 	const core::FieldValue value = row.field->get(configuration);
 	const auto*            flag  = std::get_if<bool>(&value);
 	const auto*            text  = std::get_if<std::string>(&value);
@@ -838,6 +882,12 @@ void LoadRow(FieldRow& row, const core::GameConfiguration& configuration,
 		case RowKind::Microphone:
 			LoadMicrophoneRow(row, text != nullptr ? *text : std::string(), state.microphones);
 			break;
+		case RowKind::Resolution: {
+			const auto resolution =
+			    text != nullptr ? core::ParseScreenResolution(*text) : std::nullopt;
+			ShowResolution(state, row, resolution.value_or(core::ScreenResolution {}));
+			break;
+		}
 	}
 }
 
@@ -867,6 +917,7 @@ core::FieldValue ReadRow(const FieldRow& row) {
 			return selected < row.device_values.size() ? row.device_values[selected]
 			                                           : std::string();
 		}
+		case RowKind::Resolution: return core::FormatScreenResolution(ShownResolution(row));
 	}
 	return false;
 }
@@ -948,6 +999,67 @@ void OnChooseFieldFolder(GtkButton* button, gpointer data) {
 	    state.cancellable.get());
 }
 
+FieldRow* ResolutionRow(SettingsWindowState& state) {
+	for (auto& row: state.rows) {
+		if (row.spec->kind == RowKind::Resolution) {
+			return &row;
+		}
+	}
+	return nullptr;
+}
+
+// A preset chosen: the width and height rows take its size (Custom keeps them).
+void OnResolutionPreset(GObject* /*combo*/, GParamSpec* /*pspec*/, gpointer data) {
+	auto* self = KYTY_SETTINGS_WINDOW(data);
+	if (self->state == nullptr || self->state->disposed || self->state->loading ||
+	    self->state->resolution_syncing) {
+		return;
+	}
+	auto&      state    = *self->state;
+	FieldRow*  row      = ResolutionRow(state);
+	const auto presets  = core::ScreenResolutionPresets();
+	const auto selected = row != nullptr ? Selected(row->row) : GTK_INVALID_LIST_POSITION;
+	if (selected < presets.size()) {
+		ShowResolution(state, *row, presets[selected]);
+	}
+}
+
+// A width or height typed: the preset choice shows the matching preset, or Custom.
+void OnResolutionSize(GObject* /*spin*/, GParamSpec* /*pspec*/, gpointer data) {
+	auto* self = KYTY_SETTINGS_WINDOW(data);
+	if (self->state == nullptr || self->state->disposed || self->state->loading ||
+	    self->state->resolution_syncing) {
+		return;
+	}
+	if (FieldRow* row = ResolutionRow(*self->state); row != nullptr) {
+		SelectResolutionPreset(*self->state, *row);
+	}
+}
+
+GtkWidget* ResolutionSizeRow(AdwPreferencesGroup* group, const char* title, const char* tooltip) {
+	GtkWidget* spin = adw_spin_row_new_with_range(core::kMinScreenSize, core::kMaxScreenSize, 1);
+	adw_spin_row_set_numeric(ADW_SPIN_ROW(spin), TRUE);
+	adw_spin_row_set_digits(ADW_SPIN_ROW(spin), 0);
+	SetPlainTitle(spin, title);
+	gtk_widget_set_tooltip_text(spin, tooltip);
+	adw_preferences_group_add(group, spin);
+	return spin;
+}
+
+void AddResolutionRows(KytySettingsWindow* self, FieldRow& row, AdwPreferencesGroup* group) {
+	row.width_row  = ResolutionSizeRow(group, _("Screen width"),
+	                                   _("The window width in pixels, from 320 to 16384."));
+	row.height_row = ResolutionSizeRow(group, _("Screen height"),
+	                                   _("The window height in pixels, from 320 to 16384."));
+	auto& signals  = self->state->signals;
+	signals.push_back(
+	    SignalScope::Connect(row.row, "notify::selected", G_CALLBACK(OnResolutionPreset), self));
+	for (GtkWidget* spin: {row.width_row, row.height_row}) {
+		signals.push_back(
+		    SignalScope::Connect(spin, "notify::value", G_CALLBACK(OnResolutionSize), self));
+	}
+}
+
 void AddFolderButton(KytySettingsWindow* self, const FieldRow& row) {
 	const char* title  = _(row.spec->chooser_title);
 	GtkWidget*  choose = gtk_button_new_from_icon_name("folder-open-symbolic");
@@ -978,6 +1090,9 @@ void BuildFieldRows(KytySettingsWindow* self) {
 		adw_preferences_group_add(GroupWidget(self, spec.group), row.row);
 		if (spec.kind == RowKind::Folder) {
 			AddFolderButton(self, row);
+		}
+		if (spec.kind == RowKind::Resolution) {
+			AddResolutionRows(self, row, GroupWidget(self, spec.group));
 		}
 		state.rows.push_back(std::move(row));
 	}

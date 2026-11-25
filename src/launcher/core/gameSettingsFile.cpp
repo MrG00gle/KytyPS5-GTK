@@ -53,7 +53,9 @@ std::string ParseFailure(const FieldDescriptor& field) {
 		case FieldKind::Bool: return "The value must be true or false.";
 		case FieldKind::Int: return "The value must be a decimal integer.";
 		case FieldKind::Enum: return field.check(FieldValue(int64_t {-1})).value_or(std::string());
+		// Only screen_resolution has String text that does not parse: its own rule says why.
 		case FieldKind::String:
+			return field.check(FieldValue(std::string())).value_or("The value is not valid.");
 		case FieldKind::StringList: break;
 	}
 	return "The value is not valid.";

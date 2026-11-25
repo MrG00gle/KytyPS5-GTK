@@ -3,7 +3,8 @@
 // Validates Requirement 9.4. A valid configuration (configurationGenerators.h) gets, in two thirds
 // of the cases, each rule broken with probability 1/4; a field whose rule is not broken is set to
 // a valid value at its boundary half of the time: the user name (empty, whitespace only, or 17+
-// UTF-8 bytes after trimming, against 1 and 16 bytes with surrounding whitespace), the user ID (-1,
+// UTF-8 bytes after trimming, against 1 and 16 bytes with surrounding whitespace), the screen
+// resolution (a side outside 320-16384, against both sides at the limits), the user ID (-1,
 // 254, 255, 2,147,482,880, the int32 limits, against 0, 253, 256, 2,147,482,879), vblank 29/361
 // against 30/360, trophy 4/11 against 5/10, an empty output path while shader logs or printf output
 // go to a File or dumps are enabled (against an empty path while the output is off), and the
@@ -64,7 +65,15 @@ std::set<std::string> Mutate(GameConfiguration& c) {
 	const auto edge = [] { return OneIn(2); };
 
 	if (decide("screen_resolution")) {
-		c.screen_resolution = static_cast<kyty::core::ScreenResolution>(OneIn(2) ? 4 : -1);
+		// A side below 320 or above 16384 (and the other side anywhere from 0).
+		const int32_t bad   = OneIn(2) ? Choose<int32_t>(0, kyty::core::kMinScreenSize)
+		                               : Choose<int32_t>(kyty::core::kMaxScreenSize + 1, kInt32Max);
+		const int32_t other = Choose<int32_t>(0, kInt32Max);
+		c.screen_resolution = OneIn(2) ? kyty::core::ScreenResolution {bad, other}
+		                               : kyty::core::ScreenResolution {other, bad};
+	} else if (edge()) {
+		c.screen_resolution = {OneIn(2) ? kyty::core::kMinScreenSize : kyty::core::kMaxScreenSize,
+		                       OneIn(2) ? kyty::core::kMinScreenSize : kyty::core::kMaxScreenSize};
 	}
 	if (decide("user_name")) {
 		c.user_name = PickOf(std::vector<std::string> {"", " ", "\t\xE3\x80\x80", LongUserName()});

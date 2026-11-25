@@ -18,21 +18,15 @@ using CS = ControllerSettings;
 
 using CheckFn = std::optional<std::string> (*)(const FieldValue&);
 
-constexpr std::array<std::string_view, 4> kScreenResolutionKeys = {"R1280X720", "R1920X1080",
-                                                                   "R2560X1440", "R3840X2160"};
-constexpr std::array<std::string_view, 3> kPresentModeKeys      = {"Fifo", "Mailbox", "Immediate"};
-constexpr std::array<std::string_view, 3> kLogDirectionKeys     = {"Silent", "Console", "File"};
-constexpr std::array<std::string_view, 3>  kPssrUpscalerKeys     = {"Linear", "DLSS", "FSR"};
-constexpr std::array<std::string_view, 16> kDlssPresetKeys       = {
+constexpr std::array<std::string_view, 3>  kPresentModeKeys  = {"Fifo", "Mailbox", "Immediate"};
+constexpr std::array<std::string_view, 3>  kLogDirectionKeys = {"Silent", "Console", "File"};
+constexpr std::array<std::string_view, 3>  kPssrUpscalerKeys = {"Linear", "DLSS", "FSR"};
+constexpr std::array<std::string_view, 16> kDlssPresetKeys   = {
     "Default", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"};
 
 template <typename Enum>
 std::span<const std::string_view> KeysOf();
 
-template <>
-std::span<const std::string_view> KeysOf<ScreenResolution>() {
-	return kScreenResolutionKeys;
-}
 template <>
 std::span<const std::string_view> KeysOf<PresentMode>() {
 	return kPresentModeKeys;
@@ -52,10 +46,6 @@ std::span<const std::string_view> KeysOf<DlssPreset>() {
 
 bool IsDigit(char c) {
 	return c >= '0' && c <= '9';
-}
-
-char AsciiUpper(char c) {
-	return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
 }
 
 // ---- Text forms
@@ -82,8 +72,7 @@ std::optional<FieldValue> ParseNothing(std::string_view /*text*/) {
 	return std::nullopt;
 }
 
-// The key name; else the legacy integer index; else, for a text of 2+ characters that starts with a
-// digit, "R" + the upper-case text (Qt's TextToEnum, which reads "1280x720" as R1280X720).
+// The key name; else the legacy integer index.
 template <typename Enum>
 std::optional<FieldValue> ParseEnum(std::string_view text) {
 	const auto keys = KeysOf<Enum>();
@@ -104,14 +93,15 @@ std::optional<FieldValue> ParseEnum(std::string_view text) {
 		if (err == std::errc {} && end == text.data() + text.size() && index < keys.size()) {
 			return FieldValue(static_cast<int64_t>(index));
 		}
-		return std::nullopt;
 	}
-	if (text.size() > 1 && IsDigit(text.front())) {
-		std::string key = "R";
-		for (const char c: text) {
-			key += AsciiUpper(c);
-		}
-		return find(key);
+	return std::nullopt;
+}
+
+// The screen resolution: a String field whose value is the "<width>x<height>" text
+// (FormatScreenResolution). Its text forms are ParseScreenResolution's.
+std::optional<FieldValue> ParseResolution(std::string_view text) {
+	if (const auto resolution = ParseScreenResolution(text)) {
+		return FieldValue(FormatScreenResolution(*resolution));
 	}
 	return std::nullopt;
 }
@@ -219,6 +209,22 @@ bool SetString(Target& target, const FieldValue& value) {
 	return true;
 }
 
+FieldValue GetResolution(const GameConfiguration& target) {
+	return FormatScreenResolution(target.screen_resolution);
+}
+
+// Any size of a text form; check() has the range.
+bool SetResolution(GameConfiguration& target, const FieldValue& value) {
+	const auto* text = std::get_if<std::string>(&value);
+	const auto  resolution =
+	    text != nullptr ? ParseScreenResolution(*text) : std::optional<ScreenResolution>();
+	if (!resolution) {
+		return false;
+	}
+	target.screen_resolution = *resolution;
+	return true;
+}
+
 template <typename Target, std::vector<std::string> Target::* Member>
 FieldValue GetList(const Target& target) {
 	return target.*Member;
@@ -308,6 +314,16 @@ std::optional<std::string> CheckGpuIndex(const FieldValue& value) {
 		return std::nullopt;
 	}
 	return "The GPU index must be -1 (automatic) or a device index from 0 to 2147483647.";
+}
+
+std::optional<std::string> CheckResolution(const FieldValue& value) {
+	const auto* text = std::get_if<std::string>(&value);
+	const auto  resolution =
+	    text != nullptr ? ParseScreenResolution(*text) : std::optional<ScreenResolution>();
+	if (resolution && IsValidScreenResolution(*resolution)) {
+		return std::nullopt;
+	}
+	return "The screen resolution must be WIDTHxHEIGHT, each side between 320 and 16384.";
 }
 
 std::optional<std::string> CheckFlushDraws(const FieldValue& value) {
@@ -444,7 +460,14 @@ ControllerFieldDescriptor ClampedField(std::string_view name) {
 
 std::span<const FieldDescriptor> GameConfigurationFields() {
 	static const std::array<FieldDescriptor, 48> fields = {
-	    EnumField<ScreenResolution, &GC::screen_resolution>("screen_resolution"),
+	    FieldDescriptor {"screen_resolution",
+	                     FieldKind::String,
+	                     {},
+	                     ParseResolution,
+	                     FormatString,
+	                     GetResolution,
+	                     SetResolution,
+	                     CheckResolution},
 	    StringField<&GC::user_name>("user_name", CheckUserName),
 	    IntField<&GC::user_id>("user_id", CheckUserId),
 	    StringField<&GC::audio_input_device>("audio_input_device"),

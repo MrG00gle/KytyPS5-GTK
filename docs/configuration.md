@@ -34,7 +34,7 @@ or `false`, integers are decimal, and enumerated values are stored by name.
 
 | Field | Default | Accepted values or range | Emulator option |
 |---|---|---|---|
-| `screen_resolution` | `R1280X720` | `R1280X720`, `R1920X1080`, `R2560X1440`, `R3840X2160` | `--screen-width` and `--screen-height` with that size |
+| `screen_resolution` | `1280x720` | `<width>x<height>`, each side 320–16384 | `--screen-width` and `--screen-height` with that size |
 | `user_name` | `Kyty` | 1–16 UTF-8 bytes after leading and trailing whitespace is removed | `--user-name` |
 | `user_id` | `1000` | 0–2,147,482,879, except 254 and 255 | `--user-id` |
 | `audio_input_device` | empty (no audio input) | any device name | `--mic`, left out when empty |
@@ -81,16 +81,23 @@ or `false`, integers are decimal, and enumerated values are stored by name.
 | `guest_tsc_enabled` | `false` | `true`, `false` | `--guest-tsc` |
 | `host_input_mapping` | empty (the built-in mapping) | a list of `Control=Input` entries, both sides non-empty | one `--keymap` per entry |
 
-`screen_resolution` also reads the forms `1280x720` and the integer index of the value, which older
-files may contain. Relative paths in `shader_log_folder`, `command_buffer_dump_folder`, and
+`screen_resolution` is written as the upstream launcher writes it, for example `1920x1080`. It also
+reads the forms that older files contain: the old values `R1280X720`, `R1920X1080`, `R2560X1440`,
+and `R3840X2160`, an upper-case `X`, spaces around the numbers, and the integer index (`0`–`3`) of
+the four old values. **Global settings** offers the presets 1280 × 720, 1920 × 1080, 2560 × 1440,
+3840 × 2160, and the ultrawide 2560 × 1080, 3440 × 1440, 3840 × 1600, and 5120 × 2160, or any width
+and height. Relative paths in `shader_log_folder`, `command_buffer_dump_folder`, and
 `printf_output_file` are relative to the data directory. **Input mapping** in the main menu edits the
 global `host_input_mapping`; the game menu's **Edit game input mapping…** edits a game's own list.
 
 Older files can contain `shader_optimization_type`. The launcher no longer uses or passes it, and
 keeps an existing value in `Kyty.ini` unchanged.
 
-Files from older versions do not have the fields that came later, from `stretch_enabled` to
-`guest_tsc_enabled`; those fields get their defaults. `shader_cache_enabled` is on by default, as in
+Files from older versions do not have the newer fields `stretch_enabled`,
+`readback_storage_images`, `flush_draws`, `occlusion_queries_enabled`,
+`relaxed_shader_float`, `native_rt`, `shader_cache_enabled`, `psn_emulation_enabled`,
+`pro_enabled`, `pssr_upscaler`, `dlss_folder`, `dlss_preset`, `fsr_folder`, and
+`guest_tsc_enabled`. Those fields get their defaults. `shader_cache_enabled` is on by default, as in
 the upstream launcher, and the emulator keeps the caches in `_PipelineCache` in the
 [data directory](architecture.md#data-directory).
 

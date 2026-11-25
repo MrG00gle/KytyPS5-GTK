@@ -102,6 +102,10 @@ std::string Upper(std::string_view text) {
 // The rule texts of the fields with their own rule (FieldDescriptor::check), and of the output
 // paths and the input mapping, by key; nullptr for another key.
 const char* FieldRuleMsgid(std::string_view key) {
+	if (key == "screen_resolution") {
+		// TRANSLATORS: WIDTHxHEIGHT is the form of the value, for example 1920x1080.
+		return N_("The screen resolution must be WIDTHxHEIGHT, each between 320 and 16384.");
+	}
 	if (key == "user_name") {
 		return N_("The user name must contain 1 to 16 UTF-8 bytes after leading and trailing "
 		          "spaces are removed.");

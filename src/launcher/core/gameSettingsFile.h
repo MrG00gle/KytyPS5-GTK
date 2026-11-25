@@ -5,7 +5,7 @@
 // members hold the Game_Configuration fields as their text form (configurationFields.h), extended
 // with input_mapping_custom and with host_input_mapping as an array of strings:
 //
-//   { "PPSA01234": { "screen_resolution": "R1920X1080", "user_id": "1000", ...,
+//   { "PPSA01234": { "screen_resolution": "1920x1080", "user_id": "1000", ...,
 //                    "host_input_mapping": ["Cross=J", "Pad:Cross=South"] } }
 //
 // Import accepts, per field, the text form as a JSON string, a JSON boolean for a Bool field, a

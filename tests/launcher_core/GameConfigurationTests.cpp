@@ -1,9 +1,10 @@
 // Example tests of the Game_Configuration fields, their table, and their rules
 // (src/launcher/core/gameConfiguration.h, configurationFields.h; task 13.2, Requirements 3.4, 9.1,
-// 9.4, 9.12): the design defaults, every enum spelling including the legacy forms, the text forms
-// of booleans and integers, every Requirement 9.4 boundary, the gpu_index, console_language, elf,
-// and input mapping rules, the mapping rule in each ValidationScope, FindInvalidMappingEntries and
-// DropInvalidMappingEntries on mixed lists and the message that lists every invalid entry (plan
+// 9.4, 9.12): the design defaults, every enum spelling including the legacy forms, the screen
+// resolution's text forms (upstream's "<width>x<height>" and the old ones) and range, the text
+// forms of booleans and integers, every Requirement 9.4 boundary, the gpu_index, console_language,
+// elf, and input mapping rules, the mapping rule in each ValidationScope, FindInvalidMappingEntries
+// and DropInvalidMappingEntries on mixed lists and the message that lists every invalid entry (plan
 // D26), the order Validate() reports in, and ClampControllerSettings at and beyond its limits.
 
 #include "launcher/core/configurationFields.h"
@@ -87,7 +88,7 @@ void CheckText(const std::string& actual, const std::string& expected, const std
 
 void TestDefaults() {
 	const GameConfiguration c;
-	Check(c.screen_resolution == ScreenResolution::R1280X720, "screen_resolution default");
+	Check((c.screen_resolution == ScreenResolution {1280, 720}), "screen_resolution default");
 	Check(c.user_name == "Kyty", "user_name default");
 	Check(c.user_id == 1000, "user_id default");
 	Check(c.audio_input_device.empty(), "audio_input_device default");
@@ -214,12 +215,14 @@ void TestTable() {
 	          FindGameConfigurationField("") == nullptr,
 	      "entry keys and global-only fields are not Game_Configuration fields");
 
-	Check(Field("screen_resolution").kind == FieldKind::Enum, "enum kind");
+	Check(Field("present_mode").kind == FieldKind::Enum, "enum kind");
+	Check(Field("screen_resolution").kind == FieldKind::String,
+	      "the screen resolution is its \"<width>x<height>\" text");
 	Check(Field("user_name").kind == FieldKind::String, "string kind");
 	Check(Field("user_id").kind == FieldKind::Int, "int kind");
 	Check(Field("hdr_enabled").kind == FieldKind::Bool, "bool kind");
 	Check(Field("host_input_mapping").kind == FieldKind::StringList, "list kind");
-	Check(Field("screen_resolution").enum_keys.size() == 4 &&
+	Check(Field("screen_resolution").enum_keys.empty() &&
 	          Field("present_mode").enum_keys.size() == 3 &&
 	          Field("pssr_upscaler").enum_keys.size() == 3 &&
 	          Field("dlss_preset").enum_keys.size() == 16 && Field("user_id").enum_keys.empty(),
@@ -245,7 +248,7 @@ void TestTable() {
 // Every field: format(get) parses back to the same value and set() stores it.
 void TestFieldRoundTrip() {
 	GameConfiguration c;
-	c.screen_resolution           = ScreenResolution::R3840X2160;
+	c.screen_resolution           = ScreenResolution {3440, 1440};
 	c.user_name                   = "Player, \"two\"";
 	c.user_id                     = 0;
 	c.audio_input_device          = "USB Audio";
@@ -323,27 +326,6 @@ void TestEnumSpellings() {
 		std::optional<int64_t> index;
 	};
 	const std::vector<Case> cases = {
-	    {"screen_resolution", "R1280X720", 0},
-	    {"screen_resolution", "R1920X1080", 1},
-	    {"screen_resolution", "R2560X1440", 2},
-	    {"screen_resolution", "R3840X2160", 3},
-	    // Legacy text (Qt's TextToEnum) and integer indexes.
-	    {"screen_resolution", "1280x720", 0},
-	    {"screen_resolution", "1920x1080", 1},
-	    {"screen_resolution", "2560x1440", 2},
-	    {"screen_resolution", "3840x2160", 3},
-	    {"screen_resolution", "1920X1080", 1},
-	    {"screen_resolution", "0", 0},
-	    {"screen_resolution", "3", 3},
-	    {"screen_resolution", "003", 3},
-	    {"screen_resolution", "4", std::nullopt},
-	    {"screen_resolution", "-1", std::nullopt},
-	    {"screen_resolution", "R1280x720", std::nullopt},
-	    {"screen_resolution", "r1280x720", std::nullopt},
-	    {"screen_resolution", "1280x721", std::nullopt},
-	    {"screen_resolution", "1280", std::nullopt},
-	    {"screen_resolution", "R1280X720 ", std::nullopt},
-	    {"screen_resolution", "", std::nullopt},
 	    {"present_mode", "Fifo", 0},
 	    {"present_mode", "Mailbox", 1},
 	    {"present_mode", "Immediate", 2},
@@ -385,11 +367,123 @@ void TestEnumSpellings() {
 			Check(!parsed.has_value(), what + " is rejected");
 		}
 	}
-	Check(Field("screen_resolution").format(FieldValue(int64_t {1})) == "R1920X1080" &&
-	          Field("present_mode").format(FieldValue(int64_t {0})) == "Fifo" &&
+	Check(Field("present_mode").format(FieldValue(int64_t {0})) == "Fifo" &&
 	          Field("shader_log_direction").format(FieldValue(int64_t {1})) == "Console" &&
 	          Field("printf_direction").format(FieldValue(int64_t {2})) == "File",
 	      "enums are written as their key names");
+}
+
+// The upstream launcher's free-form "<width>x<height>" resolution and the old forms it still reads.
+void TestScreenResolution() {
+	using Size = std::optional<ScreenResolution>;
+
+	const std::vector<std::pair<std::string_view, Size>> cases = {
+	    // The upstream launcher's form, as it writes it.
+	    {"1280x720", ScreenResolution {1280, 720}},
+	    {"3440x1440", ScreenResolution {3440, 1440}},
+	    {"320x320", ScreenResolution {320, 320}},
+	    {"16384x16384", ScreenResolution {16384, 16384}},
+	    // What its expression ^\s*R?(\d+)\s*[xX]\s*(\d+)\s*$ also reads: the old keys, an
+	    // upper-case X, ASCII spaces around the numbers, leading zeros.
+	    {"R1280X720", ScreenResolution {1280, 720}},
+	    {"R1920X1080", ScreenResolution {1920, 1080}},
+	    {"R2560X1440", ScreenResolution {2560, 1440}},
+	    {"R3840X2160", ScreenResolution {3840, 2160}},
+	    {"R1280x720", ScreenResolution {1280, 720}},
+	    {"1920X1080", ScreenResolution {1920, 1080}},
+	    {" 3440 x 1440 ", ScreenResolution {3440, 1440}},
+	    {"\t5120X2160\r\n", ScreenResolution {5120, 2160}},
+	    {"  R2560x1080", ScreenResolution {2560, 1080}},
+	    {"01280x0720", ScreenResolution {1280, 720}},
+	    // Sizes outside the range still parse; IsValidScreenResolution and the field rule reject
+	    // them.
+	    {"100x100", ScreenResolution {100, 100}},
+	    {"20000x720", ScreenResolution {20000, 720}},
+	    {"0x0", ScreenResolution {0, 0}},
+	    // The old enum's integer index.
+	    {"0", ScreenResolution {1280, 720}},
+	    {"1", ScreenResolution {1920, 1080}},
+	    {"2", ScreenResolution {2560, 1440}},
+	    {"3", ScreenResolution {3840, 2160}},
+	    {"003", ScreenResolution {3840, 2160}},
+	    // Not a resolution.
+	    {"4", std::nullopt},
+	    {"-1", std::nullopt},
+	    {"1280", std::nullopt},
+	    {"", std::nullopt},
+	    {"   ", std::nullopt},
+	    {"r1280x720", std::nullopt},
+	    {"R 1280x720", std::nullopt},
+	    {"RR1280x720", std::nullopt},
+	    {"1280x", std::nullopt},
+	    {"x720", std::nullopt},
+	    {"1280x720x2", std::nullopt},
+	    {"1280*720", std::nullopt},
+	    {"-1280x720", std::nullopt},
+	    {"+1280x720", std::nullopt},
+	    {"1280.5x720", std::nullopt},
+	    {"2147483648x720", std::nullopt},
+	    {"1280x99999999999999999999", std::nullopt},
+	    {"1280\xC2\xA0x720", std::nullopt}, // U+00A0 is not an ASCII space
+	};
+	const auto& field = Field("screen_resolution");
+	for (const auto& [text, expected]: cases) {
+		const auto what   = "screen resolution '" + std::string(text) + "'";
+		const auto parsed = kyty::core::ParseScreenResolution(text);
+		Check(parsed == expected, what + ": ParseScreenResolution");
+		// The field's text form is upstream's form of the parsed size; the rule has the range.
+		const auto value = field.parse(text);
+		Check(value.has_value() == expected.has_value(), what + ": the field parses it");
+		if (!expected) {
+			continue;
+		}
+		Check(*value == FieldValue(kyty::core::FormatScreenResolution(*expected)),
+		      what + ": the field's value is " + kyty::core::FormatScreenResolution(*expected));
+		Check(field.check(*value).has_value() != kyty::core::IsValidScreenResolution(*expected),
+		      what + ": the field rule is the range");
+		GameConfiguration c;
+		Check(field.set(c, *value) && c.screen_resolution == *expected, what + ": set()");
+	}
+
+	for (const auto& [resolution, valid]:
+	     std::vector<std::pair<ScreenResolution, bool>> {{{320, 320}, true},
+	                                                     {{16384, 16384}, true},
+	                                                     {{319, 720}, false},
+	                                                     {{1280, 319}, false},
+	                                                     {{16385, 720}, false},
+	                                                     {{1280, 16385}, false},
+	                                                     {{0, 0}, false},
+	                                                     {{-1280, 720}, false}}) {
+		const auto what = kyty::core::FormatScreenResolution(resolution);
+		Check(kyty::core::IsValidScreenResolution(resolution) == valid,
+		      what + ": IsValidScreenResolution");
+		GameConfiguration c;
+		c.screen_resolution = resolution;
+		if (valid) {
+			CheckValid(c, "the resolution " + what);
+		} else {
+			CheckInvalid(c, "screen_resolution", "the resolution " + what);
+		}
+	}
+	Check(field.check(FieldValue(std::string("abc"))).has_value() &&
+	          field.check(FieldValue(int64_t {1})).has_value(),
+	      "the rule rejects other text and other kinds");
+	GameConfiguration unchanged;
+	Check(!field.set(unchanged, FieldValue(std::string("abc"))) &&
+	          !field.set(unchanged, FieldValue(int64_t {1})) &&
+	          unchanged.screen_resolution == ScreenResolution {},
+	      "set() refuses other text and other kinds");
+	Check(field.get(GameConfiguration {}) == FieldValue(std::string("1280x720")) &&
+	          field.format(field.get(GameConfiguration {})) == "1280x720",
+	      "the default is written as 1280x720");
+
+	const auto shown = kyty::core::ScreenResolutionPresets();
+
+	const std::vector<ScreenResolution> presets = {{1280, 720},  {1920, 1080}, {2560, 1440},
+	                                               {3840, 2160}, {2560, 1080}, {3440, 1440},
+	                                               {3840, 1600}, {5120, 2160}};
+	Check(std::vector<ScreenResolution>(shown.begin(), shown.end()) == presets,
+	      "the upstream launcher's presets, ultrawide included");
 }
 
 void TestBoolAndIntText() {
@@ -732,9 +826,6 @@ void TestEnumsOutOfRange() {
 	CheckInvalid(c, "present_mode", "a present mode without a key");
 	Check(Validate(c)->message.find("Fifo, Mailbox, or Immediate") != std::string::npos,
 	      "the message lists the keys");
-	c                   = {};
-	c.screen_resolution = static_cast<ScreenResolution>(-1);
-	CheckInvalid(c, "screen_resolution", "a resolution without a key");
 	c               = {};
 	c.pssr_upscaler = static_cast<kyty::core::PssrUpscaler>(3);
 	CheckInvalid(c, "pssr_upscaler", "an upscaler without a key");
@@ -836,6 +927,7 @@ int main() {
 	TestTable();
 	TestFieldRoundTrip();
 	TestEnumSpellings();
+	TestScreenResolution();
 	TestBoolAndIntText();
 	TestUserName();
 	TestIntegerBoundaries();

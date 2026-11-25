@@ -6,10 +6,11 @@
 //
 // Text forms are what the Qt launcher writes (QVariant::toString()): "true"/"false" for booleans,
 // decimal integers, the Q_ENUM key name for enums, and the text itself for strings. Reading also
-// accepts the legacy enum forms: the integer index ("1" is the second key) and, for screen
-// resolutions, the "1280x720" spelling (Qt's TextToEnum: a text of 2+ characters that starts with
-// a digit is read as "R" + its upper-case form). A string list (host_input_mapping) has no text
-// form: it is a list in Kyty.ini and an array of strings in a Game_Settings_File.
+// accepts the legacy enum form, the integer index ("1" is the second key). screen_resolution is a
+// String field whose value is upstream's "<width>x<height>" text; it reads every form that
+// ParseScreenResolution reads (the old "R1280X720" keys too) and is written as
+// FormatScreenResolution writes it. A string list (host_input_mapping) has no text form: it is a
+// list in Kyty.ini and an array of strings in a Game_Settings_File.
 
 #include "launcher/core/gameConfiguration.h"
 

@@ -135,14 +135,8 @@ struct Size {
 	uint32_t height = 0;
 };
 
-Size SizeOf(kyty::core::ScreenResolution resolution) {
-	switch (resolution) {
-		case kyty::core::ScreenResolution::R1280X720: return {1280, 720};
-		case kyty::core::ScreenResolution::R1920X1080: return {1920, 1080};
-		case kyty::core::ScreenResolution::R2560X1440: return {2560, 1440};
-		case kyty::core::ScreenResolution::R3840X2160: return {3840, 2160};
-	}
-	return {};
+Size SizeOf(const kyty::core::ScreenResolution& resolution) {
+	return {static_cast<uint32_t>(resolution.width), static_cast<uint32_t>(resolution.height)};
 }
 
 std::optional<Config::ControllerColor> ColorOf(const std::string& text) {

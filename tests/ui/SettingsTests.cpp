@@ -14,7 +14,8 @@
 //   every recording device, as read when it opened.
 // - settings_validation (9.4): each invalid value names its field as "<Label> (<key>): <rule>",
 //   keeps the editor open on the field's page with the field marked, and leaves Kyty.ini
-//   byte-identical; the spin rows keep the ranged fields inside their ranges.
+//   byte-identical; the spin rows keep the ranged fields inside their ranges; the screen
+//   resolution's preset choice and its width and height rows follow each other.
 // - settings_dependent_fields (LFI-19): the output path rows follow their direction or switch, the
 //   PS5 Pro mode rows follow Pro mode and the upscaler, a stored FSR shows as Linear, and the DLSS
 //   model folder's button fills the row from the folder chooser.
@@ -220,10 +221,50 @@ void CheckDeviceRows(KytyUi::UiContext& ui, GtkWidget* root, std::pair<int, int>
 	}
 }
 
+// The screen resolution: its preset choice (row) and, in the same group, its width and height rows.
+struct ResolutionRows {
+	GtkWidget* preset = nullptr;
+	GtkWidget* width  = nullptr;
+	GtkWidget* height = nullptr;
+};
+
+ResolutionRows ResolutionRowsOf(GtkWidget* preset) {
+	GtkWidget* group =
+	    preset != nullptr ? gtk_widget_get_ancestor(preset, ADW_TYPE_PREFERENCES_GROUP) : nullptr;
+	if (group == nullptr) {
+		return {};
+	}
+	return {preset, KytyUi::RowTitled(group, "Screen width"),
+	        KytyUi::RowTitled(group, "Screen height")};
+}
+
+int32_t SpinValue(GtkWidget* spin) {
+	adw_spin_row_update(ADW_SPIN_ROW(spin));
+	return static_cast<int32_t>(std::llround(adw_spin_row_get_value(ADW_SPIN_ROW(spin))));
+}
+
+// The size the width and height rows show, as the field's "<width>x<height>" value.
+std::string ShownResolution(const ResolutionRows& rows) {
+	if (rows.width == nullptr || rows.height == nullptr || !ADW_IS_SPIN_ROW(rows.width) ||
+	    !ADW_IS_SPIN_ROW(rows.height)) {
+		return "(no width and height rows)";
+	}
+	return core::FormatScreenResolution({SpinValue(rows.width), SpinValue(rows.height)});
+}
+
+void SetResolution(const ResolutionRows& rows, const core::ScreenResolution& resolution) {
+	adw_spin_row_set_value(ADW_SPIN_ROW(rows.width), resolution.width);
+	adw_spin_row_set_value(ADW_SPIN_ROW(rows.height), resolution.height);
+}
+
 // The value a row shows, as the field's value: a switch's state, a spin row's number, an entry's
 // text, and a choice's index; the GPU row's device index (-1 for Automatic; the fake devices are
-// listed in their index order) and the microphone row's device name ("" for None).
+// listed in their index order), the microphone row's device name ("" for None), and the screen
+// resolution's width and height rows as "<width>x<height>".
 core::FieldValue RowValue(GtkWidget* row, std::string_view key) {
+	if (key == "screen_resolution") {
+		return ShownResolution(ResolutionRowsOf(row));
+	}
 	if (ADW_IS_SWITCH_ROW(row)) {
 		return adw_switch_row_get_active(ADW_SWITCH_ROW(row)) != FALSE;
 	}
@@ -248,9 +289,18 @@ core::FieldValue RowValue(GtkWidget* row, std::string_view key) {
 }
 
 // Changes what the row shows to another valid value (a switch flips, a spin row takes its lowest
-// value plus 1 or 2, a choice its last item or its first, an entry a new text) and returns the new
-// value.
+// value plus 1 or 2, a choice its last item or its first, an entry a new text, the screen
+// resolution a custom size typed into its width and height rows) and returns the new value.
 core::FieldValue ChangeRow(GtkWidget* row, std::string_view key) {
+	if (key == "screen_resolution") {
+		const auto rows = ResolutionRowsOf(row);
+		if (rows.width != nullptr && rows.height != nullptr) {
+			SetResolution(rows, ShownResolution(rows) == "1600x900"
+			                        ? core::ScreenResolution {1366, 768}
+			                        : core::ScreenResolution {1600, 900});
+		}
+		return RowValue(row, key);
+	}
 	if (ADW_IS_SWITCH_ROW(row)) {
 		adw_switch_row_set_active(ADW_SWITCH_ROW(row),
 		                          adw_switch_row_get_active(ADW_SWITCH_ROW(row)) != FALSE ? FALSE
@@ -659,7 +709,9 @@ KYTY_UI_CASE(settings_validation) {
 		                                               10},
 		      std::tuple<const char*, double, double> {"User ID", 0, core::kMaxUserId},
 		      std::tuple<const char*, double, double> {"Submit GPU work every N draws (0 = off)", 0,
-		                                               2147483647}}) {
+		                                               2147483647},
+		      std::tuple<const char*, double, double> {"Screen width", 320, 16384},
+		      std::tuple<const char*, double, double> {"Screen height", 320, 16384}}) {
 			GtkWidget* row = KytyUi::RowTitled(root, label);
 			if (!Check(row != nullptr && ADW_IS_SPIN_ROW(row), std::string("the row ") + label)) {
 				continue;
@@ -670,6 +722,33 @@ KYTY_UI_CASE(settings_validation) {
 			adw_spin_row_set_value(ADW_SPIN_ROW(row), high + 1);
 			Check(adw_spin_row_get_value(ADW_SPIN_ROW(row)) == high,
 			      std::string(label) + " stops at " + std::to_string(high));
+		}
+		// The screen resolution: the upstream launcher's presets (ultrawide included) and Custom.
+		// A preset sets the width and the height; a typed size selects its preset, or Custom.
+		const auto resolution = ResolutionRowsOf(KytyUi::RowTitled(root, "Screen resolution"));
+		if (Check(resolution.preset != nullptr && ADW_IS_COMBO_ROW(resolution.preset) &&
+		              resolution.width != nullptr && resolution.height != nullptr,
+		          "the screen resolution, width, and height rows")) {
+			const std::vector<std::string> presets = {"1280 × 720",  "1920 × 1080", "2560 × 1440",
+			                                          "3840 × 2160", "2560 × 1080", "3440 × 1440",
+			                                          "3840 × 1600", "5120 × 2160", "Custom"};
+			Check(ComboTexts(resolution.preset) == presets,
+			      "the resolution presets: " + Joined(ComboTexts(resolution.preset)));
+			auto* preset = ADW_COMBO_ROW(resolution.preset);
+			adw_combo_row_set_selected(preset, 5);
+			Check(ShownResolution(resolution) == "3440x1440",
+			      "the preset 3440 × 1440 sets the width and the height (" +
+			          ShownResolution(resolution) + ")");
+			SetResolution(resolution, {1600, 900});
+			Check(adw_combo_row_get_selected(preset) == 8 &&
+			          ShownResolution(resolution) == "1600x900",
+			      "a typed size that is no preset selects Custom");
+			SetResolution(resolution, {2560, 1080});
+			Check(adw_combo_row_get_selected(preset) == 4,
+			      "a typed preset size selects its preset (2560 × 1080)");
+			adw_combo_row_set_selected(preset, 8);
+			Check(ShownResolution(resolution) == "2560x1080",
+			      "Custom keeps the width and the height");
 		}
 		CancelAndClose(settings, "the global settings");
 

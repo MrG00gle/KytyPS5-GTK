@@ -189,7 +189,7 @@ void TestUserStore() {
 	          game.unknown.at("shader_optimization_type") == IniValue::FromString("Performance"),
 	      "user-store game: shader_optimization_type is its only unknown key");
 	GameConfiguration custom;
-	custom.screen_resolution  = ScreenResolution::R1920X1080;
+	custom.screen_resolution  = ScreenResolution {1920, 1080};
 	custom.vblank_frequency   = 120;
 	custom.host_input_mapping = kMapping;
 	Check(game.configuration == custom, "user-store game configuration");
@@ -220,7 +220,7 @@ void TestGlobalAllFields() {
 	g.readback_linear_images      = true;
 	g.readback_tiled_images       = true;
 	g.renderdoc_enabled           = true;
-	g.screen_resolution           = ScreenResolution::R3840X2160;
+	g.screen_resolution           = ScreenResolution {3840, 2160};
 	g.shader_log_direction        = LogDirection::File;
 	g.shader_log_folder           = "logs/shaders";
 	g.shader_validation_enabled   = true;
@@ -260,7 +260,7 @@ void TestGameEntries() {
 	zar.console_language     = 0;
 	zar.printf_direction     = LogDirection::File;
 	zar.printf_output_file   = "demons-souls.log";
-	zar.screen_resolution    = ScreenResolution::R2560X1440;
+	zar.screen_resolution    = ScreenResolution {2560, 1440};
 	zar.shader_log_direction = LogDirection::Console;
 	Check(s.games[0].name == "Demon's Souls" &&
 	          s.games[0].game_path == "/home/user/Games/PS5/Demons Souls.zar" &&
@@ -272,7 +272,7 @@ void TestGameEntries() {
 	astro.gpu_index                = 0;
 	astro.hdr_enabled              = true;
 	astro.present_mode             = PresentMode::Fifo;
-	astro.screen_resolution        = ScreenResolution::R1920X1080;
+	astro.screen_resolution        = ScreenResolution {1920, 1080};
 	astro.trophy_duration_seconds  = 7;
 	astro.vblank_frequency         = 120;
 	astro.host_input_mapping       = kMapping;
@@ -430,6 +430,12 @@ void TestResaveKeepsKeys() {
 			if (key.starts_with("GameConfigurations/") && key.ends_with("/custom_settings")) {
 				Check(file.GetString(key) == std::optional<std::string>("true"),
 				      name + ": " + key + " is written as true");
+			} else if (key.ends_with("/screen_resolution")) {
+				// Written in the upstream launcher's form: "R1280X720" becomes "1280x720".
+				const auto text = original.GetString(key);
+				const auto size = text ? kyty::core::ParseScreenResolution(*text) : std::nullopt;
+				Check(size && file.GetString(key) == kyty::core::FormatScreenResolution(*size),
+				      name + ": the re-save writes " + key + " in the upstream form");
 			} else {
 				Check(*saved == value, name + ": the re-save keeps the value of " + key);
 			}
@@ -461,7 +467,8 @@ void TestResaveKeepsKeys() {
 	}
 
 	// The portable store re-saves byte for byte, plus the new [LauncherWindow] and [SettingsWindow]
-	// groups and the newer fields at their defaults (in Qt's key order, as IniFile writes it).
+	// groups and the newer fields at their defaults (in Qt's key order, as IniFile writes it), with
+	// the resolution in the upstream launcher's form.
 	const std::string portable = ReadBytes(FixturePath("qt6-portable.ini"));
 	std::string       expected = portable;
 	const auto        at       = expected.find("[MainDialog]");
@@ -476,6 +483,10 @@ void TestResaveKeepsKeys() {
 			      "add the newer field " + std::string(field.name));
 		}
 	}
+	Check(with_newer.GetString("GlobalConfiguration/screen_resolution") ==
+	              std::optional<std::string>("R1280X720") &&
+	          with_newer.SetString("GlobalConfiguration/screen_resolution", "1280x720"),
+	      "portable holds the old resolution key R1280X720");
 	Check(kyty::core::SerializeSettings(kyty::core::ParseSettings(portable).settings) ==
 	          with_newer.Serialize(),
 	      "portable re-save bytes");
@@ -637,17 +648,47 @@ void TestInvalidValuesDefaulted() {
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/elf", "/bin/sh"); },
 	     {"GlobalConfiguration/elf"},
 	     [](const LauncherSettings& s) { return s.global.elf == "eboot.bin"; }},
-	    {"legacy resolution",
+	    {"upstream resolution",
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "1920x1080"); },
 	     {},
 	     [](const LauncherSettings& s) {
-		     return s.global.screen_resolution == ScreenResolution::R1920X1080;
+		     return s.global.screen_resolution == ScreenResolution {1920, 1080};
+	     }},
+	    {"custom resolution",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "3440x1440"); },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {3440, 1440};
+	     }},
+	    {"old resolution key",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "R2560X1440"); },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {2560, 1440};
 	     }},
 	    {"resolution index",
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "3"); },
 	     {},
 	     [](const LauncherSettings& s) {
-		     return s.global.screen_resolution == ScreenResolution::R3840X2160;
+		     return s.global.screen_resolution == ScreenResolution {3840, 2160};
+	     }},
+	    {"resolution below the range",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "319x720"); },
+	     {"GlobalConfiguration/screen_resolution"},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {1280, 720};
+	     }},
+	    {"resolution above the range",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "1280x16385"); },
+	     {"GlobalConfiguration/screen_resolution"},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {1280, 720};
+	     }},
+	    {"not a resolution",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "wide"); },
+	     {"GlobalConfiguration/screen_resolution"},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {1280, 720};
 	     }},
 	    {"unknown present mode",
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/present_mode", "Vsync"); },

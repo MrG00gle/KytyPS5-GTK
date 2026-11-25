@@ -122,7 +122,7 @@ GameEntry Entry(const std::string& path, const std::string& title_id) {
 
 GameConfiguration Sample() {
 	GameConfiguration c;
-	c.screen_resolution           = ScreenResolution::R2560X1440;
+	c.screen_resolution           = ScreenResolution {3440, 1440};
 	c.user_name                   = "@Kyty, \"=;\\\xC3\xA9";
 	c.user_id                     = 256;
 	c.audio_input_device          = "Mic \"1\"";
@@ -169,14 +169,14 @@ void TestQtFixture() {
 	astro.gpu_index                = 0;
 	astro.hdr_enabled              = true;
 	astro.present_mode             = PresentMode::Fifo;
-	astro.screen_resolution        = ScreenResolution::R1920X1080;
+	astro.screen_resolution        = ScreenResolution {1920, 1080};
 	astro.trophy_duration_seconds  = 7;
 	astro.vblank_frequency         = 120;
 	GameConfiguration souls;
 	souls.console_language     = 0;
 	souls.printf_direction     = LogDirection::File;
 	souls.printf_output_file   = "demons-souls.log";
-	souls.screen_resolution    = ScreenResolution::R2560X1440;
+	souls.screen_resolution    = ScreenResolution {2560, 1440};
 	souls.shader_log_direction = LogDirection::Console;
 	GameConfiguration special;
 	special.audio_input_device                                            = "@Mic";
@@ -219,7 +219,7 @@ void TestExport() {
 	                 "            \"L3=Left Shift\"\n        ],\n") != std::string::npos,
 	      "host_input_mapping is an array");
 	for (const auto* line: {"\"input_mapping_custom\": \"true\"", "\"user_id\": \"256\"",
-	                        "\"screen_resolution\": \"R2560X1440\"", "\"present_mode\": \"Fifo\"",
+	                        "\"screen_resolution\": \"3440x1440\"", "\"present_mode\": \"Fifo\"",
 	                        "\"printf_output_file\": \"\"", "\"elf\": \"bin/eboot_alt.bin\"",
 	                        "\"user_name\": \"@Kyty, \\\"=;\\\\\xC3\xA9\"",
 	                        "\"shader_log_folder\": \"logs\\\\shaders;v=1\""}) {
@@ -513,7 +513,10 @@ void TestInvalidValues() {
 	    {"\"elf\": \"../eboot.bin\"", "elf"},
 	    {"\"present_mode\": \"Vsync\"", "present_mode"},
 	    {"\"present_mode\": \"3\"", "present_mode"},
-	    {"\"screen_resolution\": \"R1280x720\"", "screen_resolution"},
+	    {"\"screen_resolution\": \"r1280x720\"", "screen_resolution"},
+	    {"\"screen_resolution\": \"1280x16385\"", "screen_resolution"},
+	    {"\"screen_resolution\": \"319x720\"", "screen_resolution"},
+	    {"\"screen_resolution\": \"4\"", "screen_resolution"},
 	    // The mapping entries are checked when the member turns the per-game mapping on.
 	    {"\"input_mapping_custom\": true, \"host_input_mapping\": [\"Cross\"]",
 	     "host_input_mapping"},
@@ -574,7 +577,7 @@ void TestAcceptedForms() {
 	const auto applied = kyty::core::ApplyPatch({}, result.by_title.at("PPSA01234"));
 	Check(applied.hdr_enabled && !applied.trophy_enabled && applied.vblank_frequency == 144 &&
 	          applied.user_id == 0 && applied.gpu_index == -1 && applied.console_language == 29 &&
-	          applied.screen_resolution == ScreenResolution::R1920X1080 &&
+	          applied.screen_resolution == ScreenResolution {1920, 1080} &&
 	          applied.present_mode == PresentMode::Fifo &&
 	          applied.printf_direction == LogDirection::File &&
 	          applied.printf_output_file == "_kyty.txt" && applied.input_mapping_custom,

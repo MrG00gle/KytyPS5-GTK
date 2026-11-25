@@ -214,6 +214,22 @@ inline std::vector<std::string> ValidMapping() {
 	return mapping;
 }
 
+// A preset, a size at the limits, or any size inside them.
+inline kyty::core::ScreenResolution ValidResolution() {
+	using kyty::core::kMaxScreenSize;
+	using kyty::core::kMinScreenSize;
+	const auto presets = kyty::core::ScreenResolutionPresets();
+	switch (Choose(0, 3)) {
+		case 0: return presets[Choose<size_t>(0, presets.size())];
+		case 1:
+			return {OneIn(2) ? kMinScreenSize : kMaxScreenSize,
+			        OneIn(2) ? kMinScreenSize : kMaxScreenSize};
+		default:
+			return {Choose(kMinScreenSize, kMaxScreenSize + 1),
+			        Choose(kMinScreenSize, kMaxScreenSize + 1)};
+	}
+}
+
 inline std::string ValidPath(bool required) {
 	return required || OneIn(2) ? VisibleText(10) : AnyText(10);
 }
@@ -223,7 +239,7 @@ inline std::string ValidPath(bool required) {
 inline kyty::core::GameConfiguration ValidConfiguration(bool paths_required = false) {
 	using kyty::core::LogDirection;
 	kyty::core::GameConfiguration c;
-	c.screen_resolution  = static_cast<kyty::core::ScreenResolution>(Choose(0, 4));
+	c.screen_resolution  = ValidResolution();
 	c.user_name          = ValidUserName();
 	c.user_id            = ValidUserId();
 	c.audio_input_device = AnyText();
@@ -464,8 +480,8 @@ inline std::string TitleId() {
 }
 
 // The JSON text of a field value in one of the forms an import accepts: the text form as a string
-// (an enum also as its legacy integer index, a resolution as "1280x720"), a native boolean or
-// integer for those kinds, and an array of strings for a string list.
+// (an enum also as its legacy integer index, a resolution also as "R1280X720", "1280X720", or with
+// spaces), a native boolean or integer for those kinds, and an array of strings for a string list.
 inline std::string EncodeField(const kyty::core::FieldDescriptor& field,
                                const kyty::core::FieldValue&      value) {
 	using kyty::core::FieldKind;
@@ -478,18 +494,24 @@ inline std::string EncodeField(const kyty::core::FieldDescriptor& field,
 			if (OneIn(3)) {
 				return JsonQuote(std::to_string(index));
 			}
-			if (field.name == "screen_resolution" && OneIn(2)) {
-				std::string legacy = field.format(value).substr(1);
-				for (auto& c: legacy) {
-					if (c == 'X') {
-						c = 'x';
-					}
-				}
-				return JsonQuote(legacy);
-			}
 			return JsonQuote(field.format(value));
 		}
-		case FieldKind::String: return JsonQuote(std::get<std::string>(value));
+		case FieldKind::String: {
+			const auto& text = std::get<std::string>(value);
+			// The other forms of a resolution "<width>x<height>": the old key's "R<W>X<H>", an
+			// upper-case X, and spaces around.
+			if (field.name == "screen_resolution" && OneIn(2)) {
+				const auto x      = text.find('x');
+				const auto width  = text.substr(0, x);
+				const auto height = text.substr(x + 1);
+				switch (Choose(0, 3)) {
+					case 0: return JsonQuote("R" + width + "X" + height);
+					case 1: return JsonQuote(width + "X" + height);
+					default: return JsonQuote(" " + width + " x " + height + "\t");
+				}
+			}
+			return JsonQuote(text);
+		}
 		case FieldKind::StringList: {
 			std::string out = "[";
 			for (const auto& element: std::get<std::vector<std::string>>(value)) {
@@ -535,6 +557,10 @@ inline kyty::core::IniValue InvalidStoredValue(std::string_view field, kyty::cor
 	}
 	if (field == "flush_draws" && OneIn(2)) {
 		return pick({"-1", "2147483648"});
+	}
+	if (field == "screen_resolution" && OneIn(2)) {
+		return pick(
+		    {"", "1280", "319x720", "1280x16385", "0x0", "4", "r1280x720", "1280x720x2", "wide"});
 	}
 	if (field == "console_language" && OneIn(2)) {
 		return pick({"-1", "30"});

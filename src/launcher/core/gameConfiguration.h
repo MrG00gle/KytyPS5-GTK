@@ -28,8 +28,37 @@
 
 namespace kyty::core {
 
+// The screen size the emulator's window gets, in pixels (the upstream launcher's free-form
+// resolution). Kyty.ini and Game_Settings_File store it as "<width>x<height>".
+struct ScreenResolution {
+	int32_t width  = 1280;
+	int32_t height = 720;
+
+	friend bool operator==(const ScreenResolution&, const ScreenResolution&) = default;
+};
+
+// The upstream launcher's limits for each side.
+inline constexpr int32_t kMinScreenSize = 320;
+inline constexpr int32_t kMaxScreenSize = 16384;
+
+// The upstream launcher's presets, in its order: 1280x720, 1920x1080, 2560x1440, 3840x2160, then
+// the ultrawide 2560x1080, 3440x1440, 3840x1600, and 5120x2160.
+std::span<const ScreenResolution> ScreenResolutionPresets();
+
+// Each side kMinScreenSize-kMaxScreenSize.
+bool IsValidScreenResolution(const ScreenResolution& resolution);
+
+// "<width>x<height>" in decimal, as the upstream launcher writes it ("1280x720").
+std::string FormatScreenResolution(const ScreenResolution& resolution);
+
+// The sizes the text forms give, without the range check: the upstream launcher's form (optional
+// ASCII spaces around, an optional "R", the width, "x" or "X", the height: "1920x1080",
+// " 3440 X 1440 "), which also reads the old keys "R1280X720", "R1920X1080", "R2560X1440", and
+// "R3840X2160"; and the integer index 0-3 of those four (the old enum's legacy form). Nothing for
+// other text or a side that does not fit int32_t.
+std::optional<ScreenResolution> ParseScreenResolution(std::string_view text);
+
 // The Qt launcher's Q_ENUM types. Kyty.ini and Game_Settings_File store their key names.
-enum class ScreenResolution { R1280X720, R1920X1080, R2560X1440, R3840X2160 };
 enum class PresentMode { Fifo, Mailbox, Immediate };
 enum class LogDirection { Silent, Console, File };
 enum class PssrUpscaler { Linear, DLSS, FSR };
@@ -50,7 +79,7 @@ inline constexpr int32_t kMaxKeyboardPlayer      = 4; // the emulator's player c
 // fields; input_mapping_custom is meaningful only per game. An empty audio_input_device means no
 // audio input, and gpu_index -1 means automatic.
 struct GameConfiguration {
-	ScreenResolution screen_resolution           = ScreenResolution::R1280X720;
+	ScreenResolution screen_resolution           = {};
 	std::string      user_name                   = "Kyty";
 	int32_t          user_id                     = kDefaultUserId;
 	std::string      audio_input_device          = {};
@@ -152,8 +181,8 @@ enum class ValidationScope { Global, Game };
 // (user name 1-16 UTF-8 bytes after TrimWhitespace; user ID 0-2,147,482,879 except 254 and 255;
 // vblank frequency 30-360; trophy duration 5-10; shader_log_folder, printf_output_file, and
 // command_buffer_dump_folder not empty while shader logs or printf output go to a File or command
-// buffer dumps are enabled); gpu_index >= -1; flush_draws >= 0; console_language 0-29; enum values
-// that name a key;
+// buffer dumps are enabled); IsValidScreenResolution; gpu_index >= -1; flush_draws >= 0;
+// console_language 0-29; enum values that name a key;
 // elf a non-empty relative path without a ".." component; and each host_input_mapping entry
 // IsValidMappingEntry (in Game scope only while input_mapping_custom is true). The
 // host_input_mapping message lists every invalid entry, numbered from 1, with its quoted text.
