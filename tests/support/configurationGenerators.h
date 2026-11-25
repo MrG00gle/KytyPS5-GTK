@@ -232,15 +232,23 @@ inline kyty::core::GameConfiguration ValidConfiguration(bool paths_required = fa
 	c.fullscreen_enabled = OneIn(2);
 	c.hdr_enabled        = OneIn(2);
 	c.hide_cursor_enabled         = OneIn(2);
+	c.stretch_enabled             = OneIn(2);
 	c.readback_linear_images      = OneIn(2);
 	c.readback_tiled_images       = OneIn(2);
+	c.readback_storage_images     = OneIn(2);
 	c.sync_raw_image_buffers      = OneIn(2);
+	c.flush_draws = OneIn(3) ? 0 : Choose<int32_t>(0, std::numeric_limits<int32_t>::max());
 	c.tessellation_enabled        = OneIn(2);
+	c.occlusion_queries_enabled   = OneIn(2);
+	c.relaxed_shader_float        = OneIn(2);
+	c.native_rt                   = OneIn(2);
+	c.shader_cache_enabled        = OneIn(2);
 	c.trophy_enabled              = OneIn(2);
 	c.trophy_duration_seconds     = Choose(5, 11);
 	c.perf_overlay_enabled        = OneIn(2);
 	c.skip_notice_screen          = OneIn(2);
 	c.network_connected           = OneIn(2);
+	c.psn_emulation_enabled       = OneIn(2);
 	c.vblank_frequency            = Choose(30, 361);
 	c.console_language            = Choose(0, kyty::core::kMaxConsoleLanguage + 1);
 	c.vulkan_validation_enabled   = OneIn(2);
@@ -253,7 +261,13 @@ inline kyty::core::GameConfiguration ValidConfiguration(bool paths_required = fa
 	c.printf_output_file   = ValidPath(paths_required || c.printf_direction == LogDirection::File);
 	c.profiler_enabled     = OneIn(2);
 	c.renderdoc_enabled    = OneIn(2);
+	c.pro_enabled                = OneIn(2);
+	c.pssr_upscaler              = static_cast<kyty::core::PssrUpscaler>(Choose(0, 3));
+	c.dlss_folder                = AnyText();
+	c.dlss_preset                = static_cast<kyty::core::DlssPreset>(Choose(0, 16));
+	c.fsr_folder                 = AnyText();
 	c.amd_cpu_enabled      = OneIn(2);
+	c.guest_tsc_enabled          = OneIn(2);
 	c.elf                  = ValidElf();
 	c.input_mapping_custom = OneIn(2);
 	c.host_input_mapping   = ValidMapping();
@@ -519,6 +533,9 @@ inline kyty::core::IniValue InvalidStoredValue(std::string_view field, kyty::cor
 	if (field == "gpu_index" && OneIn(2)) {
 		return pick({"-2", "2147483648"});
 	}
+	if (field == "flush_draws" && OneIn(2)) {
+		return pick({"-1", "2147483648"});
+	}
 	if (field == "console_language" && OneIn(2)) {
 		return pick({"-1", "30"});
 	}
@@ -537,7 +554,7 @@ inline kyty::core::IniValue InvalidStoredValue(std::string_view field, kyty::cor
 	switch (kind) {
 		case FieldKind::Bool: return pick({"maybe", "TRUE", "1", "", "yes"});
 		case FieldKind::Int: return pick({"abc", "1.5", "", "+5", "0x10", "99999999999999999999"});
-		case FieldKind::Enum: return pick({"Foo", "", "-1", "9", "r1280x720", "mailbox"});
+		case FieldKind::Enum: return pick({"Foo", "", "-1", "16", "r1280x720", "mailbox"});
 		case FieldKind::String:
 		case FieldKind::StringList: break;
 	}

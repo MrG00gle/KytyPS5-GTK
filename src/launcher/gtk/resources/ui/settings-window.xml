@@ -129,6 +129,12 @@
                         <property name="description" translatable="yes">These settings may help with rendering bugs at a slight performance cost.</property>
                       </object>
                     </child>
+                    <child>
+                      <object class="AdwPreferencesGroup" id="performance_group">
+                        <property name="title" translatable="yes">Performance tweaks</property>
+                        <property name="description" translatable="yes">Game-specific tweaks: they may or may not improve performance. Use with caution and prefer setting them per game rather than globally.</property>
+                      </object>
+                    </child>
                   </object>
                 </property>
               </object>

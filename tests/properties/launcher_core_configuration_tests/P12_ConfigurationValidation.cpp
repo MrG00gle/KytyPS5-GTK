@@ -7,7 +7,8 @@
 // 254, 255, 2,147,482,880, the int32 limits, against 0, 253, 256, 2,147,482,879), vblank 29/361
 // against 30/360, trophy 4/11 against 5/10, an empty output path while shader logs or printf output
 // go to a File or dumps are enabled (against an empty path while the output is off), and the
-// further Validate() rules: gpu_index below -1, console_language outside 0-29, an enum value
+// further Validate() rules: gpu_index below -1, flush_draws below 0 (against 0 and the int32
+// maximum), console_language outside 0-29, an enum value
 // without a key, an elf that is empty, absolute, or has a ".." component, and an input mapping
 // entry without both sides. Validate() must return an error exactly when a rule is broken, naming
 // the first broken field in table order; each field's own check (or the output path rule) must fail
@@ -84,6 +85,17 @@ std::set<std::string> Mutate(GameConfiguration& c) {
 		c.gpu_index = OneIn(2) ? -2 : Choose<int32_t>(kInt32Min, -1);
 	} else if (edge()) {
 		c.gpu_index = PickOf(std::vector<int32_t> {-1, 0, kInt32Max});
+	}
+	if (decide("flush_draws")) {
+		c.flush_draws = OneIn(2) ? -1 : Choose<int32_t>(kInt32Min, 0);
+	} else if (edge()) {
+		c.flush_draws = OneIn(2) ? 0 : kInt32Max;
+	}
+	if (decide("pssr_upscaler")) {
+		c.pssr_upscaler = static_cast<kyty::core::PssrUpscaler>(OneIn(2) ? 3 : -1);
+	}
+	if (decide("dlss_preset")) {
+		c.dlss_preset = static_cast<kyty::core::DlssPreset>(OneIn(2) ? 16 : -1);
 	}
 	if (decide("trophy_duration_seconds")) {
 		c.trophy_duration_seconds = PickOf(std::vector<int32_t> {4, 4, 11, 11, 0, kInt32Max});

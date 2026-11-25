@@ -22,6 +22,9 @@ constexpr std::array<std::string_view, 4> kScreenResolutionKeys = {"R1280X720", 
                                                                    "R2560X1440", "R3840X2160"};
 constexpr std::array<std::string_view, 3> kPresentModeKeys      = {"Fifo", "Mailbox", "Immediate"};
 constexpr std::array<std::string_view, 3> kLogDirectionKeys     = {"Silent", "Console", "File"};
+constexpr std::array<std::string_view, 3>  kPssrUpscalerKeys     = {"Linear", "DLSS", "FSR"};
+constexpr std::array<std::string_view, 16> kDlssPresetKeys       = {
+    "Default", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"};
 
 template <typename Enum>
 std::span<const std::string_view> KeysOf();
@@ -37,6 +40,14 @@ std::span<const std::string_view> KeysOf<PresentMode>() {
 template <>
 std::span<const std::string_view> KeysOf<LogDirection>() {
 	return kLogDirectionKeys;
+}
+template <>
+std::span<const std::string_view> KeysOf<PssrUpscaler>() {
+	return kPssrUpscalerKeys;
+}
+template <>
+std::span<const std::string_view> KeysOf<DlssPreset>() {
+	return kDlssPresetKeys;
 }
 
 bool IsDigit(char c) {
@@ -299,6 +310,13 @@ std::optional<std::string> CheckGpuIndex(const FieldValue& value) {
 	return "The GPU index must be -1 (automatic) or a device index from 0 to 2147483647.";
 }
 
+std::optional<std::string> CheckFlushDraws(const FieldValue& value) {
+	if (IntIn(value, 0, std::numeric_limits<int32_t>::max())) {
+		return std::nullopt;
+	}
+	return "The draws per GPU submit must be 0 (off) or more, up to 2147483647.";
+}
+
 std::optional<std::string> CheckTrophyDuration(const FieldValue& value) {
 	if (IntIn(value, 5, 10)) {
 		return std::nullopt;
@@ -404,6 +422,12 @@ FieldDescriptor ListField(std::string_view name) {
 	        CheckList};
 }
 
+// A field that older launchers did not write (FieldDescriptor::optional).
+FieldDescriptor Optional(FieldDescriptor field) {
+	field.optional = true;
+	return field;
+}
+
 template <int32_t CS::* Member, int32_t Max>
 ControllerFieldDescriptor ClampedField(std::string_view name) {
 	return {name,
@@ -419,7 +443,7 @@ ControllerFieldDescriptor ClampedField(std::string_view name) {
 } // namespace
 
 std::span<const FieldDescriptor> GameConfigurationFields() {
-	static const std::array<FieldDescriptor, 34> fields = {
+	static const std::array<FieldDescriptor, 48> fields = {
 	    EnumField<ScreenResolution, &GC::screen_resolution>("screen_resolution"),
 	    StringField<&GC::user_name>("user_name", CheckUserName),
 	    IntField<&GC::user_id>("user_id", CheckUserId),
@@ -429,15 +453,23 @@ std::span<const FieldDescriptor> GameConfigurationFields() {
 	    BoolField<&GC::fullscreen_enabled>("fullscreen_enabled"),
 	    BoolField<&GC::hdr_enabled>("hdr_enabled"),
 	    BoolField<&GC::hide_cursor_enabled>("hide_cursor_enabled"),
+	    Optional(BoolField<&GC::stretch_enabled>("stretch_enabled")),
 	    BoolField<&GC::readback_linear_images>("readback_linear_images"),
 	    BoolField<&GC::readback_tiled_images>("readback_tiled_images"),
+	    Optional(BoolField<&GC::readback_storage_images>("readback_storage_images")),
 	    BoolField<&GC::sync_raw_image_buffers>("sync_raw_image_buffers"),
+	    Optional(IntField<&GC::flush_draws>("flush_draws", CheckFlushDraws)),
 	    BoolField<&GC::tessellation_enabled>("tessellation_enabled"),
+	    Optional(BoolField<&GC::occlusion_queries_enabled>("occlusion_queries_enabled")),
+	    Optional(BoolField<&GC::relaxed_shader_float>("relaxed_shader_float")),
+	    Optional(BoolField<&GC::native_rt>("native_rt")),
+	    Optional(BoolField<&GC::shader_cache_enabled>("shader_cache_enabled")),
 	    BoolField<&GC::trophy_enabled>("trophy_enabled"),
 	    IntField<&GC::trophy_duration_seconds>("trophy_duration_seconds", CheckTrophyDuration),
 	    BoolField<&GC::perf_overlay_enabled>("perf_overlay_enabled"),
 	    BoolField<&GC::skip_notice_screen>("skip_notice_screen"),
 	    BoolField<&GC::network_connected>("network_connected"),
+	    Optional(BoolField<&GC::psn_emulation_enabled>("psn_emulation_enabled")),
 	    IntField<&GC::vblank_frequency>("vblank_frequency", CheckVblankFrequency),
 	    IntField<&GC::console_language>("console_language", CheckConsoleLanguage),
 	    BoolField<&GC::vulkan_validation_enabled>("vulkan_validation_enabled"),
@@ -450,7 +482,13 @@ std::span<const FieldDescriptor> GameConfigurationFields() {
 	    StringField<&GC::printf_output_file>("printf_output_file"),
 	    BoolField<&GC::profiler_enabled>("profiler_enabled"),
 	    BoolField<&GC::renderdoc_enabled>("renderdoc_enabled"),
+	    Optional(BoolField<&GC::pro_enabled>("pro_enabled")),
+	    Optional(EnumField<PssrUpscaler, &GC::pssr_upscaler>("pssr_upscaler")),
+	    Optional(StringField<&GC::dlss_folder>("dlss_folder")),
+	    Optional(EnumField<DlssPreset, &GC::dlss_preset>("dlss_preset")),
+	    Optional(StringField<&GC::fsr_folder>("fsr_folder")),
 	    BoolField<&GC::amd_cpu_enabled>("amd_cpu_enabled"),
+	    Optional(BoolField<&GC::guest_tsc_enabled>("guest_tsc_enabled")),
 	    StringField<&GC::elf>("elf", CheckElf),
 	    BoolField<&GC::input_mapping_custom>(kInputMappingCustomField),
 	    ListField<&GC::host_input_mapping>("host_input_mapping"),

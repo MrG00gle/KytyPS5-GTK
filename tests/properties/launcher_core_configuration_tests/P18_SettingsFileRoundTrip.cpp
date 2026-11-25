@@ -3,7 +3,7 @@
 // Validates Requirements 9.8 and 9.11. For a valid configuration (configurationGenerators.h) and a
 // title ID that is not empty after trimming (PPSA codes and other text, mixed letter case,
 // whitespace around): ParseGameSettingsFile(ExportGameSettings(id, config)) gives exactly one
-// member, keyed by the trimmed upper-case ID, with every one of the 34 fields at its exported
+// member, keyed by the trimmed upper-case ID, with every one of the 48 fields at its exported
 // value, and applying it to any base configuration (the default or another valid one) gives
 // config. Now and then the file goes through WriteGameSettingsFile and ReadGameSettingsFile.
 

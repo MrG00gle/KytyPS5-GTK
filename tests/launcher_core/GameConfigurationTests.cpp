@@ -93,14 +93,21 @@ void TestDefaults() {
 	Check(c.audio_input_device.empty(), "audio_input_device default");
 	Check(c.present_mode == PresentMode::Mailbox, "present_mode default");
 	Check(c.gpu_index == -1, "gpu_index default");
-	Check(!c.fullscreen_enabled && !c.hdr_enabled && !c.hide_cursor_enabled &&
-	          !c.readback_linear_images && !c.readback_tiled_images && !c.sync_raw_image_buffers &&
-	          !c.tessellation_enabled && !c.perf_overlay_enabled && !c.skip_notice_screen &&
-	          !c.network_connected && !c.vulkan_validation_enabled &&
+	Check(!c.fullscreen_enabled && !c.hdr_enabled && !c.hide_cursor_enabled && !c.stretch_enabled &&
+	          !c.readback_linear_images && !c.readback_tiled_images && !c.readback_storage_images &&
+	          !c.sync_raw_image_buffers && !c.tessellation_enabled &&
+	          !c.occlusion_queries_enabled && !c.relaxed_shader_float && !c.native_rt &&
+	          !c.perf_overlay_enabled && !c.skip_notice_screen && !c.network_connected &&
+	          !c.psn_emulation_enabled && !c.vulkan_validation_enabled &&
 	          !c.shader_validation_enabled && !c.command_buffer_dump_enabled &&
-	          !c.profiler_enabled && !c.renderdoc_enabled && !c.amd_cpu_enabled &&
-	          !c.input_mapping_custom,
+	          !c.profiler_enabled && !c.renderdoc_enabled && !c.pro_enabled && !c.amd_cpu_enabled &&
+	          !c.guest_tsc_enabled && !c.input_mapping_custom,
 	      "boolean defaults are false");
+	Check(c.shader_cache_enabled, "shader_cache_enabled default (on, as upstream)");
+	Check(c.flush_draws == 0, "flush_draws default (off)");
+	Check(c.pssr_upscaler == kyty::core::PssrUpscaler::Linear, "pssr_upscaler default");
+	Check(c.dlss_folder.empty() && c.fsr_folder.empty(), "upscaler folder defaults");
+	Check(c.dlss_preset == kyty::core::DlssPreset::Default, "dlss_preset default");
 	Check(c.trophy_enabled, "trophy_enabled default");
 	Check(c.trophy_duration_seconds == 6, "trophy_duration_seconds default");
 	Check(c.vblank_frequency == 60, "vblank_frequency default");
@@ -121,42 +128,72 @@ void TestDefaults() {
 }
 
 void TestTable() {
-	const std::vector<std::string_view> names  = {"screen_resolution",
-	                                              "user_name",
-	                                              "user_id",
-	                                              "audio_input_device",
-	                                              "present_mode",
-	                                              "gpu_index",
-	                                              "fullscreen_enabled",
-	                                              "hdr_enabled",
-	                                              "hide_cursor_enabled",
-	                                              "readback_linear_images",
-	                                              "readback_tiled_images",
-	                                              "sync_raw_image_buffers",
-	                                              "tessellation_enabled",
-	                                              "trophy_enabled",
-	                                              "trophy_duration_seconds",
-	                                              "perf_overlay_enabled",
-	                                              "skip_notice_screen",
-	                                              "network_connected",
-	                                              "vblank_frequency",
-	                                              "console_language",
-	                                              "vulkan_validation_enabled",
-	                                              "shader_validation_enabled",
-	                                              "shader_log_direction",
-	                                              "shader_log_folder",
-	                                              "command_buffer_dump_enabled",
-	                                              "command_buffer_dump_folder",
-	                                              "printf_direction",
-	                                              "printf_output_file",
-	                                              "profiler_enabled",
-	                                              "renderdoc_enabled",
-	                                              "amd_cpu_enabled",
-	                                              "elf",
-	                                              "input_mapping_custom",
-	                                              "host_input_mapping"};
-	const auto                          fields = GameConfigurationFields();
-	Check(fields.size() == names.size(), "34 Game_Configuration fields");
+	const std::vector<std::string_view> names = {"screen_resolution",
+	                                             "user_name",
+	                                             "user_id",
+	                                             "audio_input_device",
+	                                             "present_mode",
+	                                             "gpu_index",
+	                                             "fullscreen_enabled",
+	                                             "hdr_enabled",
+	                                             "hide_cursor_enabled",
+	                                             "stretch_enabled",
+	                                             "readback_linear_images",
+	                                             "readback_tiled_images",
+	                                             "readback_storage_images",
+	                                             "sync_raw_image_buffers",
+	                                             "flush_draws",
+	                                             "tessellation_enabled",
+	                                             "occlusion_queries_enabled",
+	                                             "relaxed_shader_float",
+	                                             "native_rt",
+	                                             "shader_cache_enabled",
+	                                             "trophy_enabled",
+	                                             "trophy_duration_seconds",
+	                                             "perf_overlay_enabled",
+	                                             "skip_notice_screen",
+	                                             "network_connected",
+	                                             "psn_emulation_enabled",
+	                                             "vblank_frequency",
+	                                             "console_language",
+	                                             "vulkan_validation_enabled",
+	                                             "shader_validation_enabled",
+	                                             "shader_log_direction",
+	                                             "shader_log_folder",
+	                                             "command_buffer_dump_enabled",
+	                                             "command_buffer_dump_folder",
+	                                             "printf_direction",
+	                                             "printf_output_file",
+	                                             "profiler_enabled",
+	                                             "renderdoc_enabled",
+	                                             "pro_enabled",
+	                                             "pssr_upscaler",
+	                                             "dlss_folder",
+	                                             "dlss_preset",
+	                                             "fsr_folder",
+	                                             "amd_cpu_enabled",
+	                                             "guest_tsc_enabled",
+	                                             "elf",
+	                                             "input_mapping_custom",
+	                                             "host_input_mapping"};
+	// The fields that came with the upstream launcher's later settings: a missing Kyty.ini key
+	// gets the default without a report.
+	const std::vector<std::string_view> optional = {
+	    "stretch_enabled",      "readback_storage_images",
+	    "flush_draws",          "occlusion_queries_enabled",
+	    "relaxed_shader_float", "native_rt",
+	    "shader_cache_enabled", "psn_emulation_enabled",
+	    "pro_enabled",          "pssr_upscaler",
+	    "dlss_folder",          "dlss_preset",
+	    "fsr_folder",           "guest_tsc_enabled"};
+	const auto fields = GameConfigurationFields();
+	Check(fields.size() == names.size(), "48 Game_Configuration fields");
+	for (const auto& field: fields) {
+		const bool expected =
+		    std::find(optional.begin(), optional.end(), field.name) != optional.end();
+		Check(field.optional == expected,
+		      std::string(field.name) + (expected ? " is optional" : " is not optional"));
+	}
 	for (size_t i = 0; i < names.size(); i++) {
 		Check(fields[i].name == names[i], "field " + std::to_string(i) + " is " +
 		                                      std::string(names[i]) + ", got " +
@@ -183,8 +220,17 @@ void TestTable() {
 	Check(Field("hdr_enabled").kind == FieldKind::Bool, "bool kind");
 	Check(Field("host_input_mapping").kind == FieldKind::StringList, "list kind");
 	Check(Field("screen_resolution").enum_keys.size() == 4 &&
-	          Field("present_mode").enum_keys.size() == 3 && Field("user_id").enum_keys.empty(),
+	          Field("present_mode").enum_keys.size() == 3 &&
+	          Field("pssr_upscaler").enum_keys.size() == 3 &&
+	          Field("dlss_preset").enum_keys.size() == 16 && Field("user_id").enum_keys.empty(),
 	      "enum keys");
+	Check(Field("flush_draws").kind == FieldKind::Int &&
+	          Field("dlss_folder").kind == FieldKind::String &&
+	          Field("fsr_folder").kind == FieldKind::String &&
+	          Field("pssr_upscaler").kind == FieldKind::Enum &&
+	          Field("dlss_preset").kind == FieldKind::Enum &&
+	          Field("shader_cache_enabled").kind == FieldKind::Bool,
+	      "the kinds of the new fields");
 
 	const auto global = GlobalOnlyFields();
 	Check(global.size() == 4 && global[0].name == "controller_color" &&
@@ -217,6 +263,14 @@ void TestFieldRoundTrip() {
 	c.elf                         = "bin/eboot_alt.bin";
 	c.input_mapping_custom        = true;
 	c.host_input_mapping          = {"Cross=J", "L3=Left Shift"};
+	c.flush_draws                 = kInt32Max;
+	c.shader_cache_enabled        = false;
+	c.pro_enabled                 = true;
+	c.pssr_upscaler               = kyty::core::PssrUpscaler::DLSS;
+	c.dlss_folder                 = "/models/dlss, \"v3\"";
+	c.dlss_preset                 = kyty::core::DlssPreset::O;
+	c.fsr_folder                  = "ffx";
+	c.guest_tsc_enabled           = true;
 	CheckValid(c, "the round-trip configuration");
 
 	GameConfiguration copy;
@@ -304,6 +358,23 @@ void TestEnumSpellings() {
 	    {"shader_log_direction", "file", std::nullopt},
 	    {"printf_direction", "File", 2},
 	    {"printf_direction", "Off", std::nullopt},
+	    // The upstream launcher's PssrUpscaler keys.
+	    {"pssr_upscaler", "Linear", 0},
+	    {"pssr_upscaler", "DLSS", 1},
+	    {"pssr_upscaler", "FSR", 2},
+	    {"pssr_upscaler", "2", 2},
+	    {"pssr_upscaler", "3", std::nullopt},
+	    {"pssr_upscaler", "dlss", std::nullopt},
+	    {"pssr_upscaler", "Bilinear", std::nullopt},
+	    {"dlss_preset", "Default", 0},
+	    {"dlss_preset", "A", 1},
+	    {"dlss_preset", "K", 11},
+	    {"dlss_preset", "O", 15},
+	    {"dlss_preset", "15", 15},
+	    {"dlss_preset", "16", std::nullopt},
+	    {"dlss_preset", "P", std::nullopt},
+	    {"dlss_preset", "a", std::nullopt},
+	    {"dlss_preset", "", std::nullopt},
 	};
 	for (const auto& c: cases) {
 		const auto parsed = Field(c.field).parse(c.text);
@@ -439,6 +510,11 @@ void TestIntegerBoundaries() {
 	    {"console_language", 0, true},
 	    {"console_language", 29, true},
 	    {"console_language", 30, false},
+	    {"flush_draws", -1, false},
+	    {"flush_draws", 0, true},
+	    {"flush_draws", 1, true},
+	    {"flush_draws", kInt32Max, true},
+	    {"flush_draws", kInt32Min, false},
 	};
 	for (const auto& c: cases) {
 		GameConfiguration configuration;
@@ -659,6 +735,18 @@ void TestEnumsOutOfRange() {
 	c                   = {};
 	c.screen_resolution = static_cast<ScreenResolution>(-1);
 	CheckInvalid(c, "screen_resolution", "a resolution without a key");
+	c               = {};
+	c.pssr_upscaler = static_cast<kyty::core::PssrUpscaler>(3);
+	CheckInvalid(c, "pssr_upscaler", "an upscaler without a key");
+	c             = {};
+	c.dlss_preset = static_cast<kyty::core::DlssPreset>(16);
+	CheckInvalid(c, "dlss_preset", "a DLSS preset without a key");
+	// An empty DLSS folder is valid, also with Pro mode and DLSS (the emulator then does not use
+	// DLSS); only the settings editor asks for one.
+	c               = {};
+	c.pro_enabled   = true;
+	c.pssr_upscaler = kyty::core::PssrUpscaler::DLSS;
+	CheckValid(c, "Pro mode with DLSS and no model folder");
 }
 
 // Validate() names the first invalid field in table order.

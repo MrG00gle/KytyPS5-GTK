@@ -80,15 +80,23 @@ std::vector<std::string> BuildEmulatorArguments(const GameEntry&              en
 	args.Flag(config.fullscreen_enabled, "--fullscreen");
 	args.Flag(config.hdr_enabled, "--hdr");
 	args.Flag(config.hide_cursor_enabled, "--hide-cursor");
+	args.Flag(config.stretch_enabled, "--stretch");
 	args.Flag(config.readback_linear_images, "--readback-linear-images");
 	args.Flag(config.readback_tiled_images, "--readback-tiled-images");
+	args.Flag(config.readback_storage_images, "--readback-storage-images");
 	args.Flag(config.sync_raw_image_buffers, "--sync-raw-image-buffers");
+	args.Number("--flush-draws", config.flush_draws);
 	args.Flag(!config.trophy_enabled, "--no-trophy-notifications");
 	args.Number("--trophy-duration", config.trophy_duration_seconds);
 	args.Flag(config.perf_overlay_enabled, "--perf-overlay");
 	args.Flag(config.skip_notice_screen, "--skip-notice-screen");
 	args.Flag(config.network_connected, "--network-connected");
+	args.Flag(config.psn_emulation_enabled, "--emulate-psn");
 	args.Flag(config.tessellation_enabled, "--tessellation");
+	args.Flag(config.occlusion_queries_enabled, "--occlusion-queries");
+	args.Flag(config.relaxed_shader_float, "--relaxed-shader-float");
+	args.Flag(config.native_rt, "--native-rt");
+	args.Flag(config.shader_cache_enabled, "--shader-cache");
 	args.Number("--vblank-frequency", config.vblank_frequency);
 	args.Number("--console-language", config.console_language);
 	args.Flag(config.vulkan_validation_enabled, "--vulkan-validation");
@@ -100,7 +108,20 @@ std::vector<std::string> BuildEmulatorArguments(const GameEntry&              en
 	args.Value("--printf-direction", FieldText(config, "printf_direction"));
 	args.Value("--printf-output-file", config.printf_output_file);
 	args.Flag(config.profiler_enabled, "--profile");
+	args.Flag(config.pro_enabled, "--trinity");
+	if (config.pro_enabled) {
+		args.Value("--pssr-upscaler", FieldText(config, "pssr_upscaler"));
+		if (config.pssr_upscaler == PssrUpscaler::DLSS) {
+			args.Value("--dlss-folder", config.dlss_folder);
+			if (config.dlss_preset != DlssPreset::Default) {
+				args.Value("--dlss-preset", FieldText(config, "dlss_preset"));
+			}
+		} else if (config.pssr_upscaler == PssrUpscaler::FSR) {
+			args.Value("--fsr-folder", config.fsr_folder);
+		}
+	}
 	args.Flag(config.amd_cpu_enabled, "--amd-cpu");
+	args.Flag(config.guest_tsc_enabled, "--guest-tsc");
 	for (const auto& mapping: config.host_input_mapping) {
 		if (IsValidMappingEntry(mapping)) {
 			args.Value("--keymap", mapping);

@@ -43,15 +43,23 @@ or `false`, integers are decimal, and enumerated values are stored by name.
 | `fullscreen_enabled` | `false` | `true`, `false` | `--fullscreen` |
 | `hdr_enabled` | `false` | `true`, `false` | `--hdr` |
 | `hide_cursor_enabled` | `false` | `true`, `false` | `--hide-cursor` |
+| `stretch_enabled` | `false` | `true`, `false` | `--stretch` |
 | `readback_linear_images` | `false` | `true`, `false` | `--readback-linear-images` |
 | `readback_tiled_images` | `false` | `true`, `false` | `--readback-tiled-images` |
+| `readback_storage_images` | `false` | `true`, `false` | `--readback-storage-images` |
 | `sync_raw_image_buffers` | `false` | `true`, `false` | `--sync-raw-image-buffers` |
+| `flush_draws` | `0` (off) | 0–2,147,483,647 | `--flush-draws` |
 | `tessellation_enabled` | `false` | `true`, `false` | `--tessellation` |
+| `occlusion_queries_enabled` | `false` | `true`, `false` | `--occlusion-queries` |
+| `relaxed_shader_float` | `false` | `true`, `false` | `--relaxed-shader-float` |
+| `native_rt` | `false` | `true`, `false` | `--native-rt` |
+| `shader_cache_enabled` | `true` | `true`, `false` | `--shader-cache` |
 | `trophy_enabled` | `true` | `true`, `false` | `--no-trophy-notifications` when `false` |
 | `trophy_duration_seconds` | `6` | 5–10 | `--trophy-duration` |
 | `perf_overlay_enabled` | `false` | `true`, `false` | `--perf-overlay` |
 | `skip_notice_screen` | `false` | `true`, `false` | `--skip-notice-screen` |
 | `network_connected` | `false` | `true`, `false` | `--network-connected` |
+| `psn_emulation_enabled` | `false` | `true`, `false` | `--emulate-psn` |
 | `vblank_frequency` | `60` | 30–360 | `--vblank-frequency` |
 | `console_language` | `1` (English, United States) | 0–29 | `--console-language` |
 | `vulkan_validation_enabled` | `false` | `true`, `false` | `--vulkan-validation` |
@@ -64,7 +72,13 @@ or `false`, integers are decimal, and enumerated values are stored by name.
 | `printf_output_file` | `_kyty.txt` | a path; not empty while `printf_direction` is `File` | `--printf-output-file` |
 | `profiler_enabled` | `false` | `true`, `false` | `--profile` |
 | `renderdoc_enabled` | `false` | `true`, `false` | `--rd` |
+| `pro_enabled` | `false` | `true`, `false` | `--trinity` |
+| `pssr_upscaler` | `Linear` | `Linear`, `DLSS`, `FSR` | `--pssr-upscaler`, only with `pro_enabled` |
+| `dlss_folder` | empty | a folder | `--dlss-folder`, only with `pro_enabled` and `DLSS` |
+| `dlss_preset` | `Default` (the model's own) | `Default`, or a letter from `A` to `O` | `--dlss-preset` with the letter, only with `pro_enabled` and `DLSS`, left out for `Default` |
+| `fsr_folder` | empty | a folder | `--fsr-folder`, only with `pro_enabled` and `FSR` |
 | `amd_cpu_enabled` | `false` | `true`, `false` | `--amd-cpu` |
+| `guest_tsc_enabled` | `false` | `true`, `false` | `--guest-tsc` |
 | `host_input_mapping` | empty (the built-in mapping) | a list of `Control=Input` entries, both sides non-empty | one `--keymap` per entry |
 
 `screen_resolution` also reads the forms `1280x720` and the integer index of the value, which older
@@ -74,6 +88,18 @@ global `host_input_mapping`; the game menu's **Edit game input mapping…** edit
 
 Older files can contain `shader_optimization_type`. The launcher no longer uses or passes it, and
 keeps an existing value in `Kyty.ini` unchanged.
+
+Files from older versions do not have the fields that came later, from `stretch_enabled` to
+`guest_tsc_enabled`; those fields get their defaults. `shader_cache_enabled` is on by default, as in
+the upstream launcher, and the emulator keeps the caches in `_PipelineCache` in the
+[data directory](architecture.md#data-directory).
+
+**Global settings** offers `Linear` and `DLSS` as the PSSR upscaler. `FSR` and `fsr_folder` are
+read and kept so that the upstream launcher's files load, but FSR has no effect on Linux: the
+settings window shows `FSR` as `Linear` and does not show `fsr_folder`. DLSS, its model folder, and
+`dlss_preset` are not tested by this project's CI. With DLSS selected, the settings window needs a
+model folder; with no folder, the emulator does not use DLSS. `dlss_preset` is this launcher's own
+field: the upstream launcher does not have it.
 
 These fields exist only in the global configuration and apply to every game:
 

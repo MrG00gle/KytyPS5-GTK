@@ -121,6 +121,15 @@ Config::LogDirection EmulatorDirection(kyty::core::LogDirection direction) {
 	return Config::LogDirection::Silent;
 }
 
+Config::PssrUpscaler EmulatorUpscaler(kyty::core::PssrUpscaler upscaler) {
+	switch (upscaler) {
+		case kyty::core::PssrUpscaler::Linear: return Config::PssrUpscaler::Linear;
+		case kyty::core::PssrUpscaler::DLSS: return Config::PssrUpscaler::DLSS;
+		case kyty::core::PssrUpscaler::FSR: return Config::PssrUpscaler::FSR;
+	}
+	return Config::PssrUpscaler::Linear;
+}
+
 struct Size {
 	uint32_t width  = 0;
 	uint32_t height = 0;
@@ -269,6 +278,26 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		RC_ASSERT(c.profiler_enabled == config.profiler_enabled);
 		RC_ASSERT(c.renderdoc_enabled == config.renderdoc_enabled);
 		RC_ASSERT(c.amd_cpu_enabled == config.amd_cpu_enabled);
+		RC_ASSERT(c.stretch_enabled == config.stretch_enabled);
+		RC_ASSERT(c.readback_storage_images == config.readback_storage_images);
+		RC_ASSERT(c.flush_draws == static_cast<uint32_t>(config.flush_draws));
+		RC_ASSERT(c.occlusion_queries_enabled == config.occlusion_queries_enabled);
+		RC_ASSERT(c.relaxed_shader_float == config.relaxed_shader_float);
+		RC_ASSERT(c.native_rt == config.native_rt);
+		RC_ASSERT(c.shader_cache_enabled == config.shader_cache_enabled);
+		RC_ASSERT(c.psn_emulation_enabled == config.psn_emulation_enabled);
+		RC_ASSERT(c.guest_tsc_enabled == config.guest_tsc_enabled);
+		// PS5 Pro mode: the upscaler, and its folder and preset, only with it (else the defaults).
+		RC_ASSERT(c.pro_enabled == config.pro_enabled);
+		const bool dlss =
+		    config.pro_enabled && config.pssr_upscaler == kyty::core::PssrUpscaler::DLSS;
+		const bool fsr =
+		    config.pro_enabled && config.pssr_upscaler == kyty::core::PssrUpscaler::FSR;
+		RC_ASSERT(c.pssr_upscaler == (config.pro_enabled ? EmulatorUpscaler(config.pssr_upscaler)
+		                                                 : Config::ConfigOptions {}.pssr_upscaler));
+		RC_ASSERT(c.dlss_folder.native() == (dlss ? config.dlss_folder : std::string()));
+		RC_ASSERT(c.dlss_preset == (dlss ? static_cast<uint32_t>(config.dlss_preset) : 0U));
+		RC_ASSERT(c.fsr_folder.native() == (fsr ? config.fsr_folder : std::string()));
 		// One --keymap per valid entry, in order and as stored.
 		RC_ASSERT(c.keymap == valid_mapping);
 		RC_ASSERT(c.keymap == kyty::core::DropInvalidMappingEntries(config.host_input_mapping));

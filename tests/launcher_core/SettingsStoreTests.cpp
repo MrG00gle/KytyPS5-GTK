@@ -10,6 +10,7 @@
 // ResolveEffectiveConfiguration.
 
 #include "launcher/core/atomicFile.h"
+#include "launcher/core/configurationFields.h"
 #include "launcher/core/gameConfiguration.h"
 #include "launcher/core/gameMetadata.h"
 #include "launcher/core/iniFile.h"
@@ -442,7 +443,13 @@ void TestResaveKeepsKeys() {
 			const bool mapping_custom =
 			    key.starts_with("GameConfigurations/") && key.ends_with("/input_mapping_custom");
 			const bool migrated = legacy && key.starts_with("Launcher/");
-			Check(window || mapping_custom || migrated,
+			// The fields that came with the upstream launcher's later settings, at their defaults.
+			const auto* field =
+			    kyty::core::FindGameConfigurationField(key.substr(key.rfind('/') + 1));
+			const bool newer = field != nullptr && field->optional &&
+			                   value == IniValue::FromString(field->format(
+			                                field->get(kyty::core::GameConfiguration {})));
+			Check(window || mapping_custom || migrated || newer,
 			      name + ": the re-save adds only new keys, " + "not " + key);
 		}
 		const auto again = kyty::core::ParseSettings(resaved);
@@ -454,14 +461,23 @@ void TestResaveKeepsKeys() {
 	}
 
 	// The portable store re-saves byte for byte, plus the new [LauncherWindow] and [SettingsWindow]
-	// groups.
+	// groups and the newer fields at their defaults (in Qt's key order, as IniFile writes it).
 	const std::string portable = ReadBytes(FixturePath("qt6-portable.ini"));
 	std::string       expected = portable;
 	const auto        at       = expected.find("[MainDialog]");
 	Check(at != std::string::npos, "portable has [MainDialog]");
 	expected.insert(at, "[LauncherWindow]\nheight=720\nmaximized=false\nwidth=1100\n\n");
 	expected += "\n[SettingsWindow]\nheight=700\nmaximized=false\nwidth=900\n";
-	Check(kyty::core::SerializeSettings(kyty::core::ParseSettings(portable).settings) == expected,
+	auto with_newer = IniFile::Parse(expected);
+	for (const auto& field: kyty::core::GameConfigurationFields()) {
+		if (field.optional) {
+			Check(with_newer.SetString("GlobalConfiguration/" + std::string(field.name),
+			                           field.format(field.get(GameConfiguration {}))),
+			      "add the newer field " + std::string(field.name));
+		}
+	}
+	Check(kyty::core::SerializeSettings(kyty::core::ParseSettings(portable).settings) ==
+	          with_newer.Serialize(),
 	      "portable re-save bytes");
 }
 
@@ -637,6 +653,48 @@ void TestInvalidValuesDefaulted() {
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/present_mode", "Vsync"); },
 	     {"GlobalConfiguration/present_mode"},
 	     [](const LauncherSettings& s) { return s.global.present_mode == PresentMode::Mailbox; }},
+	    // The upstream launcher's later keys, as it writes them.
+	    {"upstream keys",
+	     [](IniFile& f) {
+		     f.SetString("GlobalConfiguration/shader_cache_enabled", "false");
+		     f.SetString("GlobalConfiguration/stretch_enabled", "true");
+		     f.SetString("GlobalConfiguration/flush_draws", "64");
+		     f.SetString("GlobalConfiguration/pro_enabled", "true");
+		     f.SetString("GlobalConfiguration/pssr_upscaler", "FSR");
+		     f.SetString("GlobalConfiguration/dlss_folder", "/models/dlss");
+		     f.SetString("GlobalConfiguration/fsr_folder", "/ffx");
+		     f.SetString("GlobalConfiguration/guest_tsc_enabled", "true");
+		     f.SetString("GlobalConfiguration/psn_emulation_enabled", "true");
+	     },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return !s.global.shader_cache_enabled && s.global.stretch_enabled &&
+		            s.global.flush_draws == 64 && s.global.pro_enabled &&
+		            s.global.pssr_upscaler == kyty::core::PssrUpscaler::FSR &&
+		            s.global.dlss_folder == "/models/dlss" && s.global.fsr_folder == "/ffx" &&
+		            s.global.guest_tsc_enabled && s.global.psn_emulation_enabled &&
+		            s.global.dlss_preset == kyty::core::DlssPreset::Default;
+	     }},
+	    {"this launcher's dlss_preset",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/dlss_preset", "K"); },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return s.global.dlss_preset == kyty::core::DlssPreset::K;
+	     }},
+	    {"negative flush_draws",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/flush_draws", "-1"); },
+	     {"GlobalConfiguration/flush_draws"},
+	     [](const LauncherSettings& s) { return s.global.flush_draws == 0; }},
+	    {"unknown upscaler",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/pssr_upscaler", "XeSS"); },
+	     {"GlobalConfiguration/pssr_upscaler"},
+	     [](const LauncherSettings& s) {
+		     return s.global.pssr_upscaler == kyty::core::PssrUpscaler::Linear;
+	     }},
+	    {"invalid shader cache text",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/shader_cache_enabled", "1"); },
+	     {"GlobalConfiguration/shader_cache_enabled"},
+	     [](const LauncherSettings& s) { return s.global.shader_cache_enabled; }},
 	    {"bool text",
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/hdr_enabled", "yes"); },
 	     {"GlobalConfiguration/hdr_enabled"},
@@ -895,7 +953,8 @@ void TestGameElements() {
 	});
 	Check(r.settings.games.size() == 2 && r.settings.games[1].game_path == "/other",
 	      "a second element with only game_path");
-	// name, basedir, custom_settings, and 33 fields (input_mapping_custom is optional).
+	// name, basedir, custom_settings, and 33 fields (input_mapping_custom and the 14 fields that
+	// came with the upstream launcher's later settings are optional).
 	Check(r.defaulted_keys.size() == 36 &&
 	          std::all_of(
 	              r.defaulted_keys.begin(), r.defaulted_keys.end(),

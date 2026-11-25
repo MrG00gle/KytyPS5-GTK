@@ -10,6 +10,11 @@
 // shader_optimization_type is not modeled either: the emulator drops its option. In Kyty.ini it is
 // an unknown key, kept on rewrite; a Game_Settings_File import ignores it.
 //
+// The fields from stretch_enabled to guest_tsc_enabled came with the upstream launcher's later
+// settings, under its key names. dlss_preset is this launcher's own (the upstream launcher has no
+// such setting). fsr_folder and the FSR upscaler are kept so that upstream's files load, but the
+// settings editor does not offer them: FSR has no effect on Linux.
+//
 // configurationFields.h has the field table: the Kyty.ini and JSON key of each field, its text
 // form, and its rules.
 
@@ -27,6 +32,9 @@ namespace kyty::core {
 enum class ScreenResolution { R1280X720, R1920X1080, R2560X1440, R3840X2160 };
 enum class PresentMode { Fifo, Mailbox, Immediate };
 enum class LogDirection { Silent, Console, File };
+enum class PssrUpscaler { Linear, DLSS, FSR };
+// Default is the DLSS model's own preset; A-O are passed as --dlss-preset <letter>.
+enum class DlssPreset { Default, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O };
 
 // The emulator's limits (src/common/emulatorConfig.h).
 inline constexpr int32_t kDefaultUserId = 1000;
@@ -51,15 +59,23 @@ struct GameConfiguration {
 	bool             fullscreen_enabled          = false;
 	bool             hdr_enabled                 = false;
 	bool             hide_cursor_enabled         = false;
+	bool             stretch_enabled             = false;
 	bool             readback_linear_images      = false;
 	bool             readback_tiled_images       = false;
+	bool             readback_storage_images     = false;
 	bool             sync_raw_image_buffers      = false;
+	int32_t          flush_draws                 = 0; // 0 is off
 	bool             tessellation_enabled        = false;
+	bool             occlusion_queries_enabled   = false;
+	bool             relaxed_shader_float        = false;
+	bool             native_rt                   = false;
+	bool             shader_cache_enabled        = true;
 	bool             trophy_enabled              = true;
 	int32_t          trophy_duration_seconds     = 6;
 	bool             perf_overlay_enabled        = false;
 	bool             skip_notice_screen          = false;
 	bool             network_connected           = false;
+	bool             psn_emulation_enabled       = false;
 	int32_t          vblank_frequency            = 60;
 	int32_t          console_language            = kDefaultConsoleLanguage;
 	bool             vulkan_validation_enabled   = false;
@@ -72,7 +88,13 @@ struct GameConfiguration {
 	std::string      printf_output_file          = "_kyty.txt";
 	bool             profiler_enabled            = false;
 	bool             renderdoc_enabled           = false;
+	bool             pro_enabled                 = false;
+	PssrUpscaler     pssr_upscaler               = PssrUpscaler::Linear;
+	std::string      dlss_folder                 = {};
+	DlssPreset       dlss_preset                 = DlssPreset::Default;
+	std::string      fsr_folder                  = {};
 	bool             amd_cpu_enabled             = false;
+	bool             guest_tsc_enabled           = false;
 	std::string      elf                         = "eboot.bin";
 	// Per game: true when host_input_mapping replaces the global mapping (Requirement 11.14).
 	bool input_mapping_custom = false;
@@ -130,7 +152,8 @@ enum class ValidationScope { Global, Game };
 // (user name 1-16 UTF-8 bytes after TrimWhitespace; user ID 0-2,147,482,879 except 254 and 255;
 // vblank frequency 30-360; trophy duration 5-10; shader_log_folder, printf_output_file, and
 // command_buffer_dump_folder not empty while shader logs or printf output go to a File or command
-// buffer dumps are enabled); gpu_index >= -1; console_language 0-29; enum values that name a key;
+// buffer dumps are enabled); gpu_index >= -1; flush_draws >= 0; console_language 0-29; enum values
+// that name a key;
 // elf a non-empty relative path without a ".." component; and each host_input_mapping entry
 // IsValidMappingEntry (in Game scope only while input_mapping_custom is true). The
 // host_input_mapping message lists every invalid entry, numbered from 1, with its quoted text.

@@ -25,8 +25,11 @@ namespace kyty::core {
 //   --controller-volume, --controller-vibration, --keyboard-player always;
 // - --gpu only for a gpu_index of 0 or more (-1 is automatic);
 // - each boolean field as its flag when true, except trophy_enabled, which gives
-//   --no-trophy-notifications when false;
-// - the enum fields as their key names, and every number in decimal;
+//   --no-trophy-notifications when false, and pro_enabled, which gives --trinity;
+// - --flush-draws always (0 is off);
+// - with pro_enabled only: --pssr-upscaler; for DLSS also --dlss-folder (also when empty) and
+//   --dlss-preset unless dlss_preset is Default; for FSR also --fsr-folder;
+// - the enum fields as their key names (dlss_preset as its letter), and every number in decimal;
 // - one --keymap per entry of the effective input mapping that is IsValidMappingEntry, in order,
 //   as stored; an invalid entry, which a Qt-written store may hold, is never passed (the
 //   settings editor lists them with FindInvalidMappingEntries);

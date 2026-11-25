@@ -22,8 +22,10 @@
 // color that is not #RRGGBB) the default value and lists it in LoadReport::defaulted_keys, except:
 // - optional keys, which Qt never wrote, give the default without a report when they are missing
 //   (and are reported when present but invalid): LauncherWindow/*, SettingsWindow/*,
-//   GameConfigurations/N/input_mapping_custom, and, in a legacy store (game_dirs missing,
-//   game_dir present), Launcher/addons_dir, grid_view, and grid_icon_width;
+//   GameConfigurations/N/input_mapping_custom, the optional fields (FieldDescriptor::optional:
+//   the settings that came with the upstream launcher's later versions) in both groups, and, in a
+//   legacy store (game_dirs missing, game_dir present), Launcher/addons_dir, grid_view, and
+//   grid_icon_width;
 // - MainDialog/theme and MainDialog/geometry are kept as they are, or stay absent;
 // - controller integers are clamped (Requirement 9.12), not defaulted; only an unparsable one is
 //   reported;

@@ -133,8 +133,11 @@ void TestDefaults() {
 	                       "0",
 	                       "--present-mode",
 	                       "Mailbox",
+	                       "--flush-draws",
+	                       "0",
 	                       "--trophy-duration",
 	                       "6",
+	                       "--shader-cache",
 	                       "--vblank-frequency",
 	                       "60",
 	                       "--console-language",
@@ -168,15 +171,23 @@ void TestEveryOptionInOrder() {
 	c.fullscreen_enabled          = true;
 	c.hdr_enabled                 = true;
 	c.hide_cursor_enabled         = true;
+	c.stretch_enabled             = true;
 	c.readback_linear_images      = true;
 	c.readback_tiled_images       = true;
+	c.readback_storage_images     = true;
 	c.sync_raw_image_buffers      = true;
+	c.flush_draws                 = 2147483647;
 	c.tessellation_enabled        = true;
+	c.occlusion_queries_enabled   = true;
+	c.relaxed_shader_float        = true;
+	c.native_rt                   = true;
+	c.shader_cache_enabled        = true;
 	c.trophy_enabled              = false;
 	c.trophy_duration_seconds     = 10;
 	c.perf_overlay_enabled        = true;
 	c.skip_notice_screen          = true;
 	c.network_connected           = true;
+	c.psn_emulation_enabled       = true;
 	c.vblank_frequency            = 360;
 	c.console_language            = 29;
 	c.vulkan_validation_enabled   = true;
@@ -189,7 +200,13 @@ void TestEveryOptionInOrder() {
 	c.printf_output_file          = "out.txt";
 	c.profiler_enabled            = true;
 	c.renderdoc_enabled           = true;
+	c.pro_enabled                 = true;
+	c.pssr_upscaler               = kyty::core::PssrUpscaler::DLSS;
+	c.dlss_folder                 = "/models/dlss";
+	c.dlss_preset                 = kyty::core::DlssPreset::K;
+	c.fsr_folder                  = "/ffx";
 	c.amd_cpu_enabled             = true;
+	c.guest_tsc_enabled           = true;
 	c.elf                         = "bin/game.elf";
 	c.host_input_mapping          = {"Cross=J", "Pad:Cross=South"};
 	effective.controller          = {"#0070D1", 0, 100, 4};
@@ -220,16 +237,25 @@ void TestEveryOptionInOrder() {
 	                                 "--fullscreen",
 	                                 "--hdr",
 	                                 "--hide-cursor",
+	                                 "--stretch",
 	                                 "--readback-linear-images",
 	                                 "--readback-tiled-images",
+	                                 "--readback-storage-images",
 	                                 "--sync-raw-image-buffers",
+	                                 "--flush-draws",
+	                                 "2147483647",
 	                                 "--no-trophy-notifications",
 	                                 "--trophy-duration",
 	                                 "10",
 	                                 "--perf-overlay",
 	                                 "--skip-notice-screen",
 	                                 "--network-connected",
+	                                 "--emulate-psn",
 	                                 "--tessellation",
+	                                 "--occlusion-queries",
+	                                 "--relaxed-shader-float",
+	                                 "--native-rt",
+	                                 "--shader-cache",
 	                                 "--vblank-frequency",
 	                                 "360",
 	                                 "--console-language",
@@ -248,7 +274,15 @@ void TestEveryOptionInOrder() {
 	                                 "--printf-output-file",
 	                                 "out.txt",
 	                                 "--profile",
+	                                 "--trinity",
+	                                 "--pssr-upscaler",
+	                                 "DLSS",
+	                                 "--dlss-folder",
+	                                 "/models/dlss",
+	                                 "--dlss-preset",
+	                                 "K",
 	                                 "--amd-cpu",
+	                                 "--guest-tsc",
 	                                 "--keymap",
 	                                 "Cross=J",
 	                                 "--keymap",
@@ -347,19 +381,27 @@ void TestFlags() {
 	    {&GameConfiguration::fullscreen_enabled, "--fullscreen"},
 	    {&GameConfiguration::hdr_enabled, "--hdr"},
 	    {&GameConfiguration::hide_cursor_enabled, "--hide-cursor"},
+	    {&GameConfiguration::stretch_enabled, "--stretch"},
 	    {&GameConfiguration::readback_linear_images, "--readback-linear-images"},
 	    {&GameConfiguration::readback_tiled_images, "--readback-tiled-images"},
+	    {&GameConfiguration::readback_storage_images, "--readback-storage-images"},
 	    {&GameConfiguration::sync_raw_image_buffers, "--sync-raw-image-buffers"},
 	    {&GameConfiguration::tessellation_enabled, "--tessellation"},
+	    {&GameConfiguration::occlusion_queries_enabled, "--occlusion-queries"},
+	    {&GameConfiguration::relaxed_shader_float, "--relaxed-shader-float"},
+	    {&GameConfiguration::native_rt, "--native-rt"},
+	    {&GameConfiguration::shader_cache_enabled, "--shader-cache"},
 	    {&GameConfiguration::perf_overlay_enabled, "--perf-overlay"},
 	    {&GameConfiguration::skip_notice_screen, "--skip-notice-screen"},
 	    {&GameConfiguration::network_connected, "--network-connected"},
+	    {&GameConfiguration::psn_emulation_enabled, "--emulate-psn"},
 	    {&GameConfiguration::vulkan_validation_enabled, "--vulkan-validation"},
 	    {&GameConfiguration::shader_validation_enabled, "--shader-validation"},
 	    {&GameConfiguration::command_buffer_dump_enabled, "--command-buffer-dump"},
 	    {&GameConfiguration::profiler_enabled, "--profile"},
 	    {&GameConfiguration::renderdoc_enabled, "--rd"},
-	    {&GameConfiguration::amd_cpu_enabled, "--amd-cpu"}};
+	    {&GameConfiguration::amd_cpu_enabled, "--amd-cpu"},
+	    {&GameConfiguration::guest_tsc_enabled, "--guest-tsc"}};
 	for (const auto& row: rows) {
 		GameConfiguration off;
 		off.*row.field = false;
@@ -396,6 +438,69 @@ void TestNumbers() {
 		c.console_language = language;
 		CheckValue(Build(c), "--console-language", std::to_string(language));
 	}
+	// --flush-draws is always passed; 0 is off.
+	for (const int32_t draws: {0, 1, 500, 2147483647}) {
+		c.flush_draws = draws;
+		CheckValue(Build(c), "--flush-draws", std::to_string(draws));
+	}
+}
+
+// PS5 Pro mode: --trinity, and only with it the upscaler and the upscaler's folder (and preset).
+void TestProMode() {
+	using kyty::core::DlssPreset;
+	using kyty::core::PssrUpscaler;
+	GameConfiguration c;
+	c.dlss_folder = "/models/dlss";
+	c.fsr_folder  = "/ffx";
+	c.dlss_preset = DlssPreset::A;
+	for (const auto upscaler: {PssrUpscaler::Linear, PssrUpscaler::DLSS, PssrUpscaler::FSR}) {
+		c.pro_enabled   = false;
+		c.pssr_upscaler = upscaler;
+		const auto off  = Build(c);
+		for (const char* name:
+		     {"--trinity", "--pssr-upscaler", "--dlss-folder", "--dlss-preset", "--fsr-folder"}) {
+			CheckAbsent(off, name);
+		}
+	}
+	c.pro_enabled   = true;
+	c.pssr_upscaler = PssrUpscaler::Linear;
+	auto args       = Build(c);
+	Check(Count(args, "--trinity") == 1, "--trinity with Pro mode: " + Show(args));
+	CheckValue(args, "--pssr-upscaler", "Linear");
+	CheckAbsent(args, "--dlss-folder");
+	CheckAbsent(args, "--dlss-preset");
+	CheckAbsent(args, "--fsr-folder");
+
+	c.pssr_upscaler = PssrUpscaler::DLSS;
+	args            = Build(c);
+	CheckValue(args, "--pssr-upscaler", "DLSS");
+	CheckValue(args, "--dlss-folder", "/models/dlss");
+	CheckValue(args, "--dlss-preset", "A");
+	CheckAbsent(args, "--fsr-folder");
+	const auto trinity = std::find(args.begin(), args.end(), "--trinity");
+	Check(args.end() - trinity >= 7 &&
+	          Args(trinity, trinity + 7) == Args {"--trinity", "--pssr-upscaler", "DLSS",
+	                                              "--dlss-folder", "/models/dlss", "--dlss-preset",
+	                                              "A"},
+	      "the upscaler options follow --trinity: " + Show(args));
+	for (const auto& [preset, letter]: std::vector<std::pair<DlssPreset, std::string>> {
+	         {DlssPreset::B, "B"}, {DlssPreset::K, "K"}, {DlssPreset::O, "O"}}) {
+		c.dlss_preset = preset;
+		CheckValue(Build(c), "--dlss-preset", letter);
+	}
+	c.dlss_preset = DlssPreset::Default;
+	CheckAbsent(Build(c), "--dlss-preset");
+	// An empty folder is passed as it is: the emulator then does not use DLSS.
+	c.dlss_folder = "";
+	CheckValue(Build(c), "--dlss-folder", "");
+
+	// FSR, read from an upstream Kyty.ini: passed as stored (it has no effect on Linux).
+	c.pssr_upscaler = PssrUpscaler::FSR;
+	args            = Build(c);
+	CheckValue(args, "--pssr-upscaler", "FSR");
+	CheckValue(args, "--fsr-folder", "/ffx");
+	CheckAbsent(args, "--dlss-folder");
+	CheckAbsent(args, "--dlss-preset");
 }
 
 void TestEnums() {
@@ -651,6 +756,9 @@ void CheckEmulator(const std::string& emulator) {
 	c.trophy_duration_seconds = 10;
 	c.vblank_frequency        = 360;
 	c.console_language        = kyty::core::kMaxConsoleLanguage;
+	c.flush_draws             = 2147483647;
+	c.dlss_folder             = "models";
+	c.fsr_folder              = "ffx";
 	c.host_input_mapping      = {"Cross=J", "Pad:Cross=South"};
 	every.controller          = {"#0070D1", 100, 100, kyty::core::kMaxKeyboardPlayer};
 	for (const bool on: {false, true}) {
@@ -668,6 +776,10 @@ void CheckEmulator(const std::string& emulator) {
 		}
 		for (std::size_t i = 0; i < field.enum_keys.size(); i++) {
 			auto value = every;
+			// Pro mode is on (every boolean field is); the preset is passed only with DLSS.
+			if (field.name == "dlss_preset") {
+				value.configuration.pssr_upscaler = kyty::core::PssrUpscaler::DLSS;
+			}
 			Check(field.set(value.configuration, FieldValue(static_cast<int64_t>(i))),
 			      "set " + std::string(field.name));
 			CheckEmulatorAccepts(emulator, value, entry,
@@ -707,6 +819,7 @@ int main(int argc, char* argv[]) {
 	TestController();
 	TestFlags();
 	TestNumbers();
+	TestProMode();
 	TestEnums();
 	TestPaths();
 	TestGamePath();

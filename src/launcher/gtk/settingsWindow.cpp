@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <set>
 #include <span>
@@ -62,9 +63,10 @@ constexpr const char* kDefaultPreviewColor = "#0070d1";
 // same way and finds it among its custom colors again.
 constexpr float kStartColorAlpha = 0.999F;
 
-// ---- The field table (plan D36): every Global_Configuration field that the Qt launcher's editor
-// shows, in Qt's groups. elf, input_mapping_custom, and host_input_mapping are not shown; the
-// editor keeps their values.
+// ---- The field table (plan D36): every Global_Configuration field that the upstream launcher's
+// editor shows on Linux, in its groups, and this launcher's dlss_preset. elf, input_mapping_custom,
+// and host_input_mapping are not shown, nor fsr_folder (FSR has no effect on Linux); the editor
+// keeps their values.
 
 enum class Group {
 	UserProfile,
@@ -76,6 +78,7 @@ enum class Group {
 	Network,
 	Debugging,
 	Rendering,
+	Performance,
 };
 
 enum class RowKind {
@@ -83,23 +86,27 @@ enum class RowKind {
 	Choice,     // Enum, or an Int with named values: AdwComboRow over choices
 	Number,     // Int: AdwSpinRow from minimum to maximum
 	Text,       // String: AdwEntryRow
+	Folder,     // String: AdwEntryRow with a button that opens the folder chooser
 	Gpu,        // gpu_index: AdwComboRow with "Automatic" and the Vulkan devices
 	Microphone, // audio_input_device: AdwComboRow with "None" and the recording devices
 };
 
 struct FieldSpec {
-	std::string_view             key;               // the GameConfigurationFields() name
-	const char*                  label   = nullptr; // N_()
-	const char*                  tooltip = nullptr; // N_(), the Qt launcher's tooltip
-	Group                        group   = Group::General;
-	RowKind                      kind    = RowKind::Switch;
-	int64_t                      minimum = 0;
-	int64_t                      maximum = 0;
-	std::span<const char* const> choices = {}; // Choice: the labels in value order (N_())
-	// The row is enabled only while the row of enabled_by has the value enabled_when (a switch
-	// counts as 1 when on; a choice is its index), LFI-19.
+	std::string_view key;               // the GameConfigurationFields() name
+	const char*      label   = nullptr; // N_()
+	const char*      tooltip = nullptr; // N_(), the upstream launcher's tooltip
+	Group            group   = Group::General;
+	RowKind          kind    = RowKind::Switch;
+	int64_t          minimum = 0;
+	int64_t          maximum = 0;
+	// Choice: the labels in value order (N_()). A Choice may offer fewer values than the enum has;
+	// a stored value it does not offer shows as the first choice.
+	std::span<const char* const> choices = {};
+	// The row is enabled only while the row of enabled_by is enabled and has the value enabled_when
+	// (a switch counts as 1 when on; a choice is its index), LFI-19.
 	std::string_view enabled_by   = {};
 	int64_t          enabled_when = 0;
+	const char*      chooser_title = nullptr; // Folder: the folder chooser's title (N_())
 };
 
 // TRANSLATORS: screen resolutions, width × height in pixels.
@@ -109,6 +116,13 @@ constexpr const char* kResolutions[] = {N_("1280 × 720"), N_("1920 × 1080"), N
 constexpr const char* kPresentModes[] = {N_("Fifo"), N_("Mailbox"), N_("Immediate")};
 // TRANSLATORS: where shader logs and printf output go.
 constexpr const char* kLogDirections[] = {N_("Silent"), N_("Console"), N_("File")};
+// TRANSLATORS: the PS5 Pro mode upscalers (PSSR); DLSS is NVIDIA's. FSR is not offered (it has no
+// effect on Linux).
+constexpr const char* kPssrUpscalers[] = {N_("Linear"), N_("DLSS")};
+// The DLSS presets: the model's own, then the preset letters, which are not translated.
+constexpr const char* kDlssPresets[] = {
+    // TRANSLATORS: the DLSS preset that the DLSS model chooses itself.
+    N_("Model default"), "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"};
 // The console languages in the order of their values (0-29), as the Qt launcher named them.
 constexpr const char* kConsoleLanguages[] = {
     N_("Japanese"),
@@ -146,6 +160,8 @@ static_assert(std::size(kConsoleLanguages) ==
               static_cast<std::size_t>(core::kMaxConsoleLanguage) + 1);
 
 constexpr int64_t kFileDirection = static_cast<int64_t>(core::LogDirection::File);
+constexpr int64_t kDlssUpscaler  = static_cast<int64_t>(core::PssrUpscaler::DLSS);
+static_assert(std::size(kDlssPresets) == static_cast<std::size_t>(core::DlssPreset::O) + 1);
 
 const FieldSpec kFields[] = {
     {.key     = "user_name",
@@ -198,15 +214,38 @@ const FieldSpec kFields[] = {
      .label   = N_("Enable tiled readback"),
      .tooltip = N_("Read back small writable tiled images"),
      .group   = Group::Graphics},
+    {.key     = "readback_storage_images",
+     .label   = N_("Enable storage readback"),
+     .tooltip = N_("Read back shader-written images when the game flushes the GPU cache for the "
+                   "CPU. Images from linear and tiled readback are read back then too."),
+     .group   = Group::Graphics},
     {.key     = "tessellation_enabled",
      .label   = N_("Enable tessellation support (experimental)"),
      .tooltip = N_("Draw tessellated geometry. Disabled by default; unsupported tessellation may "
                    "cause crashes."),
      .group   = Group::Graphics},
+    {.key     = "occlusion_queries_enabled",
+     .label   = N_("Enable occlusion queries"),
+     .tooltip = N_("Count the samples of occlusion queries on the GPU, so hidden lights and "
+                   "objects stay hidden. Costs some performance."),
+     .group   = Group::Graphics},
     {.key     = "hdr_enabled",
      .label   = N_("Enable HDR display support"),
      .tooltip = N_("Enable HDR10 output for supported games. Requires HDR enabled on the host "
                    "display."),
+     .group   = Group::Graphics},
+    {.key     = "shader_cache_enabled",
+     .label   = N_("Cache shaders"),
+     .tooltip = N_("Save compiled shaders and pipelines per game and load them at startup."),
+     .group   = Group::Graphics},
+    {.key     = "relaxed_shader_float",
+     .label   = N_("Relaxed shader float math"),
+     .tooltip = N_("Use the host GPU's native float operations in shaders. Faster, but can be "
+                   "inaccurate."),
+     .group   = Group::Graphics},
+    {.key     = "native_rt",
+     .label   = N_("Native ray tracing (experimental)"),
+     .tooltip = N_("Use native RT on the GPU."),
      .group   = Group::Graphics},
     {.key     = "audio_input_device",
      .label   = N_("Microphone"),
@@ -224,6 +263,34 @@ const FieldSpec kFields[] = {
      .kind    = RowKind::Number,
      .minimum = 5,
      .maximum = 10},
+    {.key     = "pro_enabled",
+     .label   = N_("PS5 Pro mode (experimental)"),
+     .tooltip = N_("Enable PS5 Pro mode for supported games. Disabled by default."),
+     .group   = Group::General},
+    {.key          = "pssr_upscaler",
+     .label        = N_("PSSR upscaler"),
+     .tooltip      = N_("DLSS needs an NVIDIA RTX GPU. DLSS is not tested by this project's CI."),
+     .group        = Group::General,
+     .kind         = RowKind::Choice,
+     .choices      = kPssrUpscalers,
+     .enabled_by   = "pro_enabled",
+     .enabled_when = 1},
+    {.key           = "dlss_folder",
+     .label         = N_("DLSS model folder"),
+     .tooltip       = N_("Folder with libnvidia-ngx-dlss.so.*. Not tested by this project's CI."),
+     .group         = Group::General,
+     .kind          = RowKind::Folder,
+     .enabled_by    = "pssr_upscaler",
+     .enabled_when  = kDlssUpscaler,
+     .chooser_title = N_("Select DLSS model folder")},
+    {.key          = "dlss_preset",
+     .label        = N_("DLSS preset"),
+     .tooltip      = N_("The render preset of the DLSS model. Not tested by this project's CI."),
+     .group        = Group::General,
+     .kind         = RowKind::Choice,
+     .choices      = kDlssPresets,
+     .enabled_by   = "pssr_upscaler",
+     .enabled_when = kDlssUpscaler},
     {.key     = "fullscreen_enabled",
      .label   = N_("Run in fullscreen"),
      .tooltip = N_("Run in borderless desktop fullscreen"),
@@ -231,6 +298,11 @@ const FieldSpec kFields[] = {
     {.key     = "hide_cursor_enabled",
      .label   = N_("Auto-hide cursor"),
      .tooltip = N_("Hide the host cursor after 2 seconds without mouse activity"),
+     .group   = Group::General},
+    {.key     = "stretch_enabled",
+     .label   = N_("Stretch to window"),
+     .tooltip = N_("Stretch the game image to fill the window instead of keeping its aspect ratio "
+                   "with black bars"),
      .group   = Group::General},
     {.key     = "perf_overlay_enabled",
      .label   = N_("Show performance panel"),
@@ -245,10 +317,18 @@ const FieldSpec kFields[] = {
      .label   = N_("Intel CPU compatibility (experimental)"),
      .tooltip = N_("Patch CPU instructions that differ between AMD and the host CPU."),
      .group   = Group::Compatibility},
+    {.key     = "guest_tsc_enabled",
+     .label   = N_("PS5 TSC rate (experimental)"),
+     .tooltip = N_("Run the CPU time stamp counter (TSC) at the PS5's 1.6 GHz instead of the host "
+                   "rate. Fixes games that run too fast."),
+     .group   = Group::Compatibility},
     {.key     = "network_connected",
      .label   = N_("Enable network connection"),
      .tooltip = N_("Let games use your computer's local network connection."),
      .group   = Group::Network},
+    {.key   = "psn_emulation_enabled",
+     .label = N_("Emulate PSN (compatibility)"),
+     .group = Group::Network},
     {.key     = "vulkan_validation_enabled",
      .label   = N_("Vulkan validation"),
      .tooltip = N_("Enable Vulkan validation layers"),
@@ -308,6 +388,14 @@ const FieldSpec kFields[] = {
      .label   = N_("Accurate texture synchronization"),
      .tooltip = N_("Can fix missing textures and incorrect transparency (Resident Evil 2)."),
      .group   = Group::Rendering},
+    {.key     = "flush_draws",
+     .label   = N_("Submit GPU work every N draws (0 = off)"),
+     .tooltip = N_("Can lower frame time in games that send a whole frame as one command buffer, "
+                   "at some submit overhead."),
+     .group   = Group::Performance,
+     .kind    = RowKind::Number,
+     .minimum = 0,
+     .maximum = std::numeric_limits<int32_t>::max()},
 };
 
 const FieldSpec* FindSpec(std::string_view key) {
@@ -323,7 +411,8 @@ const char* PageOf(Group group) {
 	switch (group) {
 		case Group::Network: return "network";
 		case Group::Debugging:
-		case Group::Rendering: return "debug";
+		case Group::Rendering:
+		case Group::Performance: return "debug";
 		default: return "general";
 	}
 }
@@ -396,6 +485,7 @@ struct _KytySettingsWindow {
 	AdwPreferencesGroup* network_group;
 	AdwPreferencesGroup* debugging_group;
 	AdwPreferencesGroup* rendering_group;
+	AdwPreferencesGroup* performance_group;
 	AdwPreferencesGroup* game_folders_group;
 	AdwPreferencesGroup* addons_group;
 	AdwPreferencesGroup* controller_group;
@@ -453,6 +543,9 @@ const char* HiddenFieldLabel(std::string_view key) {
 	}
 	if (key == "host_input_mapping") {
 		return _("Input mapping");
+	}
+	if (key == "fsr_folder") {
+		return _("FSR folder");
 	}
 	return nullptr;
 }
@@ -609,6 +702,7 @@ AdwPreferencesGroup* GroupWidget(KytySettingsWindow* self, Group group) {
 		case Group::Network: return self->network_group;
 		case Group::Debugging: return self->debugging_group;
 		case Group::Rendering: return self->rendering_group;
+		case Group::Performance: return self->performance_group;
 	}
 	return self->general_group;
 }
@@ -637,7 +731,8 @@ GtkWidget* MakeFieldWidget(const FieldSpec& spec) {
 			adw_spin_row_set_numeric(ADW_SPIN_ROW(row), TRUE);
 			adw_spin_row_set_digits(ADW_SPIN_ROW(row), 0);
 			break;
-		case RowKind::Text: row = adw_entry_row_new(); break;
+		case RowKind::Text:
+		case RowKind::Folder: row = adw_entry_row_new(); break;
 	}
 	SetPlainTitle(row, _(spec.label));
 	if (spec.tooltip != nullptr) {
@@ -722,16 +817,21 @@ void LoadRow(FieldRow& row, const core::GameConfiguration& configuration,
 			adw_switch_row_set_active(ADW_SWITCH_ROW(row.row),
 			                          flag != nullptr && *flag ? TRUE : FALSE);
 			break;
-		case RowKind::Choice:
-			adw_combo_row_set_selected(ADW_COMBO_ROW(row.row), index != nullptr && *index >= 0
-			                                                       ? static_cast<guint>(*index)
-			                                                       : 0);
+		case RowKind::Choice: {
+			// A value that the row does not offer (FSR) shows as the first choice, as in the
+			// upstream launcher.
+			const bool offered = index != nullptr && *index >= 0 &&
+			                     static_cast<uint64_t>(*index) < row.spec->choices.size();
+			adw_combo_row_set_selected(ADW_COMBO_ROW(row.row),
+			                           offered ? static_cast<guint>(*index) : 0);
 			break;
+		}
 		case RowKind::Number:
 			adw_spin_row_set_value(ADW_SPIN_ROW(row.row),
 			                       index != nullptr ? static_cast<double>(*index) : 0.0);
 			break;
 		case RowKind::Text:
+		case RowKind::Folder:
 			gtk_editable_set_text(GTK_EDITABLE(row.row), text != nullptr ? text->c_str() : "");
 			break;
 		case RowKind::Gpu: LoadGpuRow(row, index != nullptr ? *index : -1, state.gpus); break;
@@ -749,7 +849,8 @@ core::FieldValue ReadRow(const FieldRow& row) {
 			adw_spin_row_update(ADW_SPIN_ROW(row.row));
 			return static_cast<int64_t>(
 			    std::llround(adw_spin_row_get_value(ADW_SPIN_ROW(row.row))));
-		case RowKind::Text: {
+		case RowKind::Text:
+		case RowKind::Folder: {
 			std::string text = gtk_editable_get_text(GTK_EDITABLE(row.row));
 			// As the Qt launcher, the user name is stored without surrounding whitespace.
 			if (row.spec->key == "user_name") {
@@ -783,9 +884,10 @@ void UpdateDependents(SettingsWindowState& state) {
 		if (row.spec->enabled_by.empty()) {
 			continue;
 		}
+		// A row comes after the row it depends on (kFields order), so that row is up to date.
 		const FieldRow* controller = FindRow(state, row.spec->enabled_by);
-		const bool      enabled =
-		    controller != nullptr && ReadIndex(*controller) == row.spec->enabled_when;
+		const bool enabled = controller != nullptr && gtk_widget_get_sensitive(controller->row) &&
+		                     ReadIndex(*controller) == row.spec->enabled_when;
 		gtk_widget_set_sensitive(row.row, enabled ? TRUE : FALSE);
 	}
 }
@@ -818,6 +920,48 @@ void OnDependencyChanged(GObject* /*row*/, GParamSpec* /*pspec*/, gpointer data)
 	}
 }
 
+constexpr const char* kFolderRowKey = "kyty-folder-row";
+
+// A Folder row's button: the folder chooser (the portal), and the chosen folder into the row.
+void OnChooseFieldFolder(GtkButton* button, gpointer data) {
+	auto*      self  = KYTY_SETTINGS_WINDOW(data);
+	auto&      state = *self->state;
+	auto*      entry = static_cast<GtkWidget*>(g_object_get_data(G_OBJECT(button), kFolderRowKey));
+	const auto row   = std::find_if(state.rows.begin(), state.rows.end(),
+	                                [entry](const FieldRow& r) { return r.row == entry; });
+	if (row == state.rows.end()) {
+		return;
+	}
+	state.context->services.file_chooser.SelectFolders(
+	    GTK_WINDOW(self), _(row->spec->chooser_title),
+	    [self, entry](std::vector<fs::path> folders, const std::string& error) {
+		    auto& chosen_state = *self->state;
+		    if (!error.empty()) {
+			    kyty::gtk::ShowError(GTK_WINDOW(self), _("The folder could not be chosen"), error,
+			                         chosen_state.cancellable.get());
+			    return;
+		    }
+		    if (!folders.empty()) {
+			    gtk_editable_set_text(GTK_EDITABLE(entry), folders.front().c_str());
+		    }
+	    },
+	    state.cancellable.get());
+}
+
+void AddFolderButton(KytySettingsWindow* self, const FieldRow& row) {
+	const char* title  = _(row.spec->chooser_title);
+	GtkWidget*  choose = gtk_button_new_from_icon_name("folder-open-symbolic");
+	gtk_widget_add_css_class(choose, "flat");
+	gtk_widget_set_valign(choose, GTK_ALIGN_CENTER);
+	gtk_widget_set_tooltip_text(choose, title);
+	gtk_accessible_update_property(GTK_ACCESSIBLE(choose), GTK_ACCESSIBLE_PROPERTY_LABEL, title,
+	                               -1);
+	g_object_set_data(G_OBJECT(choose), kFolderRowKey, row.row);
+	adw_entry_row_add_suffix(ADW_ENTRY_ROW(row.row), choose);
+	self->state->signals.push_back(
+	    SignalScope::Connect(choose, "clicked", G_CALLBACK(OnChooseFieldFolder), self));
+}
+
 void BuildFieldRows(KytySettingsWindow* self) {
 	auto& state = *self->state;
 	for (const auto& spec: kFields) {
@@ -832,6 +976,9 @@ void BuildFieldRows(KytySettingsWindow* self) {
 		row.field = field;
 		row.row   = MakeFieldWidget(spec);
 		adw_preferences_group_add(GroupWidget(self, spec.group), row.row);
+		if (spec.kind == RowKind::Folder) {
+			AddFolderButton(self, row);
+		}
 		state.rows.push_back(std::move(row));
 	}
 	// The rows that other rows depend on (LFI-19).
@@ -1362,6 +1509,14 @@ void SaveEdits(KytySettingsWindow* self) {
 		}
 		return;
 	}
+	// As in the upstream launcher's editor, PS5 Pro mode with DLSS needs the model folder. Kyty.ini
+	// and an import may leave it empty (the emulator then does not use DLSS).
+	if (configuration.pro_enabled && configuration.pssr_upscaler == core::PssrUpscaler::DLSS &&
+	    configuration.dlss_folder.empty()) {
+		ShowFieldError(self, core::ValidationError {
+		                         "dlss_folder", {}, core::ValidationRule::MissingOutputPath, {}});
+		return;
+	}
 	// Merge only this editor's part into the current settings (plan D37).
 	core::LauncherSettings next = state.context->settings.loaded.settings;
 	if (state.entry) {
@@ -1754,6 +1909,7 @@ static void kyty_settings_window_class_init(KytySettingsWindowClass* klass) {
 	gtk_widget_class_bind_template_child(widget_class, KytySettingsWindow, network_group);
 	gtk_widget_class_bind_template_child(widget_class, KytySettingsWindow, debugging_group);
 	gtk_widget_class_bind_template_child(widget_class, KytySettingsWindow, rendering_group);
+	gtk_widget_class_bind_template_child(widget_class, KytySettingsWindow, performance_group);
 	gtk_widget_class_bind_template_child(widget_class, KytySettingsWindow, game_folders_group);
 	gtk_widget_class_bind_template_child(widget_class, KytySettingsWindow, addons_group);
 	gtk_widget_class_bind_template_child(widget_class, KytySettingsWindow, controller_group);

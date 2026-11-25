@@ -113,6 +113,9 @@ const char* FieldRuleMsgid(std::string_view key) {
 	if (key == "gpu_index") {
 		return N_("The GPU must be Automatic or a device index from 0.");
 	}
+	if (key == "flush_draws") {
+		return N_("The draws per GPU submit must be 0 (off) or more.");
+	}
 	if (key == "trophy_duration_seconds") {
 		return N_("The trophy notification duration must be between 5 and 10 seconds.");
 	}
@@ -134,6 +137,9 @@ const char* FieldRuleMsgid(std::string_view key) {
 	}
 	if (key == "printf_output_file") {
 		return N_("The printf output file must not be empty while printf output goes to a file.");
+	}
+	if (key == "dlss_folder") {
+		return N_("The DLSS model folder must not be empty while PS5 Pro mode uses DLSS.");
 	}
 	if (key == "host_input_mapping") {
 		return N_("Each input mapping entry must have the form Name=Value with a non-empty name "

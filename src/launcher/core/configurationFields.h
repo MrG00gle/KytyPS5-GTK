@@ -48,14 +48,17 @@ struct BasicFieldDescriptor {
 	// Validate() checks it. Validate() adds the rules that need another field (an output path that
 	// must not be empty while its log goes to a File) and the host_input_mapping entry form.
 	std::optional<std::string> (*check)(const FieldValue& value) = nullptr;
+	// A field that the Qt launcher this one was ported from did not write: a missing Kyty.ini key
+	// gets the default without a report (settingsStore.h).
+	bool optional = false;
 };
 
 using FieldDescriptor           = BasicFieldDescriptor<GameConfiguration>;
 using ControllerFieldDescriptor = BasicFieldDescriptor<ControllerSettings>;
 
-// The Game_Configuration fields in the order of the Qt launcher's Configuration::GameSettings()
-// (screen_resolution ... amd_cpu_enabled, elf), then input_mapping_custom and host_input_mapping:
-// 34 fields.
+// The Game_Configuration fields in the order of the upstream launcher's
+// Configuration::GameSettings() (screen_resolution ... guest_tsc_enabled, elf; this launcher's
+// dlss_preset after dlss_folder), then input_mapping_custom and host_input_mapping: 48 fields.
 std::span<const FieldDescriptor> GameConfigurationFields();
 
 // controller_color, controller_speaker_volume, controller_vibration_intensity,

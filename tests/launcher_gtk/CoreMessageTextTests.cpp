@@ -181,9 +181,16 @@ void TestValidationRules() {
 		const auto text = kyty::gtk::ValidationRuleText({key, {}, ValidationRule::Field, {}});
 		CheckKey(text, "the rule of " + key);
 		const bool general = std::string(text.msgid) == "The value is not valid.";
-		Check(general == (key == "audio_input_device"),
+		Check(general == (key == "audio_input_device" || key == "fsr_folder"),
 		      key + ": the general text only for a field without a rule of its own");
 	}
+	CheckText(kyty::gtk::ValidationRuleText({"flush_draws", {}, ValidationRule::Field, {}}),
+	          "The draws per GPU submit must be 0 (off) or more.", "the draws per GPU submit");
+	// The settings editor's own rule for the DLSS model folder (settingsWindow.cpp).
+	CheckText(
+	    kyty::gtk::ValidationRuleText({"dlss_folder", {}, ValidationRule::MissingOutputPath, {}}),
+	    "The DLSS model folder must not be empty while PS5 Pro mode uses DLSS.",
+	    "the DLSS model folder");
 	// The texts the settings editor showed before (phase 6 D46), on real Validate() errors.
 	kyty::core::GameConfiguration configuration;
 	configuration.user_id = 254;

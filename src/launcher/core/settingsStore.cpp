@@ -177,7 +177,7 @@ public:
 			if (mapping_custom && !per_game) {
 				continue;
 			}
-			Field(field, Key(prefix, field.name), mapping_custom, configuration);
+			Field(field, Key(prefix, field.name), mapping_custom || field.optional, configuration);
 		}
 		const GameConfiguration defaults;
 		for (const auto& field: GameConfigurationFields()) {
