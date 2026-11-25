@@ -89,7 +89,7 @@ The data directory holds the files that the emulator and the launcher write whil
 | `_kyty.txt` | The emulator's log, which includes the game's printf output, when the log goes to a file (`printf_direction` is `File` and `printf_output_file` keeps its default). |
 | `_Shaders` | Shader logs, when they go to a file (`shader_log_direction` is `File` and `shader_log_folder` keeps its default). |
 | `_Buffers` | Command buffer dumps, when they are enabled (`command_buffer_dump_folder` keeps its default). |
-| `_PipelineCache` | The Vulkan driver's pipeline cache, one file per title ID (`_PipelineCache/<TITLE_ID>.bin`), so that pipelines compile faster the next time. |
+| `_PipelineCache` | The Vulkan driver's pipeline cache, one file per title ID (`_PipelineCache/<TITLE_ID>.bin`), so that pipelines compile faster the next time. With `--shader-cache`, also the compiled shaders and pipelines of each title (`_PipelineCache/<TITLE_ID>.shaders`). |
 | `_RenderDoc` | RenderDoc captures (`_RenderDoc/kyty_<number>`), when RenderDoc capture is on (`--rd`). |
 | `compatibility_cache.json` | The launcher's cached copy of the upstream KytyPS5 compatibility list. |
 
@@ -103,8 +103,9 @@ Locations:
   `~/.var/app/io.github.MrG00gle.KytyPS5_GTK/data/Kyty` on the host. The launcher and the emulator
   both use it, including `_PipelineCache` and `_RenderDoc`. The emulator creates it, changes into
   it, and resolves the relative log, shader, and dump paths against it, also when it is started with
-  `flatpak run --command=kyty_emulator`. It turns `--game`, `--game-patch`, and `--addcont-dir` into
-  absolute paths against the directory it was started from first. If the directory cannot be
+  `flatpak run --command=kyty_emulator`. It turns `--game`, `--game-patch`, `--addcont-dir`, the
+  `--addcont` folders, `--dlss-folder`, and `--fsr-folder` into absolute paths against the directory
+  it was started from first. If the directory cannot be
   created or used, the emulator stops with an error that names it.
 
 The emulator's own assets (the trophy unlock sound and the touch cursor images) are installed with

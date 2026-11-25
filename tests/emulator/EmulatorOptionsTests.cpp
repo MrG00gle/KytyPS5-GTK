@@ -214,6 +214,7 @@ std::vector<std::pair<std::string_view, std::string>> ValidValues(const Fixtures
 	    {"--game", fixtures.game_dir.string()},
 	    {"--game-patch", fixtures.patch.string()},
 	    {"--addcont-dir", fixtures.root.string()},
+	    {"--addcont", "ABCDEFGHIJ012345=" + fixtures.root.string()},
 	    {"--screen-width", "1920"},
 	    {"--screen-height", "1080"},
 	    {"--user-name", "1234567890123456"},
@@ -225,7 +226,13 @@ std::vector<std::pair<std::string_view, std::string>> ValidValues(const Fixtures
 	    {"--keyboard-player", "4"},
 	    {"--present-mode", "Immediate"},
 	    {"--gpu", "0"},
+	    {"--pssr-upscaler", "DLSS"},
+	    {"--dlss-folder", (fixtures.root / "dlss").string()},
+	    {"--dlss-preset", "O"},
+	    {"--fsr-folder", (fixtures.root / "fsr").string()},
 	    {"--vblank-frequency", "60"},
+	    {"--flush-draws", "0"},
+	    {"--launch-activity", "activity-01"},
 	    {"--console-language", "29"},
 	    {"--shader-log-direction", "File"},
 	    {"--shader-log-folder", (fixtures.root / "shaders").string()},
@@ -256,7 +263,7 @@ void TestOptionTable() {
 		          !option.value_hint.empty(),
 		      "only Value and Terminal options have a value hint: " + std::string(option.name));
 	}
-	Check(Emulator::Options().size() == 49, "Options() has 49 entries");
+	Check(Emulator::Options().size() == 66, "Options() has 66 entries");
 	Check(flags > 0 && values > 0, "Options() has Flag and Value options");
 	Check(help == std::vector<std::string_view> {"--help", "-h"}, "Help options are --help and -h");
 	Check(terminal == std::vector<std::string_view> {"--guest-exec"},
@@ -282,6 +289,108 @@ void TestFlagOptions(const Fixtures& fixtures) {
 	          set.options.config.gpu_assisted_validation_enabled &&
 	          set.options.config.vulkan_validation_enabled,
 	      "flags store their values, and --gpu-assisted-validation implies --vulkan-validation");
+
+	// The flags added upstream: each is off by default and turns on only its own member.
+	const std::vector<std::pair<std::string, bool Config::ConfigOptions::*>> new_flags = {
+	    {"--stretch", &Config::ConfigOptions::stretch_enabled},
+	    {"--trinity", &Config::ConfigOptions::pro_enabled},
+	    {"--guest-tsc", &Config::ConfigOptions::guest_tsc_enabled},
+	    {"--emulate-psn", &Config::ConfigOptions::psn_emulation_enabled},
+	    {"--shader-cache", &Config::ConfigOptions::shader_cache_enabled},
+	    {"--occlusion-queries", &Config::ConfigOptions::occlusion_queries_enabled},
+	    {"--relaxed-shader-float", &Config::ConfigOptions::relaxed_shader_float},
+	    {"--native-rt", &Config::ConfigOptions::native_rt},
+	    {"--lod-stats", &Config::ConfigOptions::lod_stats_enabled},
+	    {"--readback-storage-images", &Config::ConfigOptions::readback_storage_images},
+	};
+	for (const auto& [flag, field]: new_flags) {
+		Check(!(defaults.options.config.*field), flag + " is off by default");
+		const auto run = CheckRun({"--game", game, flag});
+		Check(run.options.config.*field, flag + " turns its member on");
+		for (const auto& [other, other_field]: new_flags) {
+			Check(other == flag || !(run.options.config.*other_field),
+			      flag + " leaves " + other + " off");
+		}
+	}
+}
+
+// The value options added upstream: their defaults, stored values, and repetition. None of them
+// is limited to one use: --addcont adds an entry each time, and for the others the last one wins.
+void TestUpstreamValueOptions(const Fixtures& fixtures) {
+	const auto  game     = fixtures.game_dir.string();
+	const auto  defaults = CheckRun({"--game", game});
+	const auto& initial  = defaults.options.config;
+	Check(initial.pssr_upscaler == Config::PssrUpscaler::Linear && initial.dlss_folder.empty() &&
+	          initial.dlss_preset == 0 && initial.fsr_folder.empty() && initial.flush_draws == 0 &&
+	          initial.launch_activity.empty() && defaults.options.addcont.empty(),
+	      "the upstream value options keep their defaults without options");
+
+	const std::vector<std::pair<std::string, Config::PssrUpscaler>> upscalers = {
+	    {"Linear", Config::PssrUpscaler::Linear}, {"linear", Config::PssrUpscaler::Linear},
+	    {"DLSS", Config::PssrUpscaler::DLSS},     {"dlss", Config::PssrUpscaler::DLSS},
+	    {"FSR", Config::PssrUpscaler::FSR},       {"Fsr", Config::PssrUpscaler::FSR},
+	};
+	for (const auto& [value, expected]: upscalers) {
+		const auto run = CheckRun({"--game", game, "--pssr-upscaler", value});
+		Check(run.options.config.pssr_upscaler == expected, "--pssr-upscaler " + value);
+	}
+
+	for (char preset = 'A'; preset <= 'O'; preset++) {
+		const auto run = CheckRun({"--game", game, "--dlss-preset", std::string(1, preset)});
+		Check(run.options.config.dlss_preset == static_cast<uint32_t>(preset - 'A' + 1),
+		      std::string("--dlss-preset ") + preset + " is preset " +
+		          std::to_string(preset - 'A' + 1));
+	}
+
+	const auto folders = CheckRun({"--game", game, "--dlss-folder", "models/dlss", "--fsr-folder",
+	                               "/opt/fidelityfx", "--flush-draws", "4294967295"});
+	Check(folders.options.config.dlss_folder == "models/dlss" &&
+	          folders.options.config.fsr_folder == "/opt/fidelityfx" &&
+	          folders.options.config.flush_draws == 4294967295U,
+	      "--dlss-folder, --fsr-folder, and --flush-draws store their values");
+
+	const std::string longest(32, '~');
+	for (const auto& id:
+	     {std::string("a"), std::string(" "), longest, std::string("Act 1: ~go!")}) {
+		const auto run = CheckRun({"--game", game, "--launch-activity", id});
+		Check(run.options.config.launch_activity == id, "--launch-activity '" + id + "'");
+	}
+
+	const auto dir   = fixtures.root.string();
+	const auto added = CheckRun(
+	    {"--game", game, "--addcont", "ABCDEFGHIJ012345", "--addcont", "0123456789ABCDEF=" + dir});
+	Check(added.options.addcont.size() == 2, "--addcont may be repeated");
+	Check(added.options.addcont[0].entitlement_label == "ABCDEFGHIJ012345" &&
+	          added.options.addcont[0].mount_dir.empty(),
+	      "--addcont LABEL adds a license-only entry");
+	Check(added.options.addcont[1].entitlement_label == "0123456789ABCDEF" &&
+	          added.options.addcont[1].mount_dir == fixtures.root,
+	      "--addcont LABEL=DIR adds an entry with its data in DIR");
+	const auto both =
+	    CheckRun({"--game", game, "--addcont-dir", dir, "--addcont", "ABCDEFGHIJ012345"});
+	Check(both.options.addcont_dir == fixtures.root && both.options.addcont.size() == 1,
+	      "--addcont-dir and --addcont work together");
+
+	struct Twice {
+		std::string option;
+		std::string first;
+		std::string second;
+	};
+	const std::vector<Twice> twice = {
+	    {"--pssr-upscaler", "DLSS", "FSR"}, {"--dlss-folder", "a", "b"},
+	    {"--dlss-preset", "A", "B"},        {"--fsr-folder", "c", "d"},
+	    {"--flush-draws", "1", "2"},        {"--launch-activity", "first", "second"},
+	};
+	std::vector<std::string> args = {"--game", game};
+	for (const auto& [option, first, second]: twice) {
+		args.insert(args.end(), {option, first, option, second});
+	}
+	const auto  last   = CheckRun(args);
+	const auto& config = last.options.config;
+	Check(config.pssr_upscaler == Config::PssrUpscaler::FSR && config.dlss_folder == "b" &&
+	          config.dlss_preset == 2 && config.fsr_folder == "d" && config.flush_draws == 2 &&
+	          config.launch_activity == "second",
+	      "for the other upstream value options the last one wins");
 }
 
 void TestValueOptions(const Fixtures& fixtures) {
@@ -410,6 +519,9 @@ void TestErrorMessages(const Fixtures& fixtures) {
 	const std::string user_id_reason =
 	    "expected 0-" + std::to_string(Config::MAX_USER_ID) + ", except 254 and 255";
 	const auto missing_patch = (fixtures.root / "missing.json").string();
+	const auto        missing_dir     = (fixtures.root / "missing").string();
+	const std::string addcont_reason  = "expected <16-character A-Z/0-9 label>[=<existing folder>]";
+	const std::string activity_reason = "must contain 1-32 printable ASCII characters";
 
 	const std::vector<std::vector<std::string>> invalid = {
 	    {"--screen-width", "0", "expected a positive integer"},
@@ -434,6 +546,29 @@ void TestErrorMessages(const Fixtures& fixtures) {
 	    {"--keymap", "=Return", "expected Control=Input"},
 	    {"--game-patch", missing_patch, "must point to an existing file"},
 	    {"--game-patch", game, "must point to an existing file"},
+	    {"--addcont", "", addcont_reason},
+	    {"--addcont", "abcdefghij012345", addcont_reason},
+	    {"--addcont", "ABCDEFGHIJ01234", addcont_reason},
+	    {"--addcont", "ABCDEFGHIJ0123456", addcont_reason},
+	    {"--addcont", "ABCDEFGHIJ01234-", addcont_reason},
+	    {"--addcont", "=" + fixtures.root.string(), addcont_reason},
+	    {"--addcont", "ABCDEFGHIJ012345=" + missing_dir, addcont_reason},
+	    {"--addcont", "ABCDEFGHIJ012345=" + fixtures.patch.string(), addcont_reason},
+	    {"--pssr-upscaler", "Bilinear", "expected Linear, DLSS, or FSR"},
+	    {"--pssr-upscaler", "", "expected Linear, DLSS, or FSR"},
+	    {"--dlss-preset", "P", "expected A-O"},
+	    {"--dlss-preset", "a", "expected A-O"},
+	    {"--dlss-preset", "AB", "expected A-O"},
+	    {"--dlss-preset", "1", "expected A-O"},
+	    {"--dlss-preset", "", "expected A-O"},
+	    {"--flush-draws", "-1", "expected a non-negative integer"},
+	    {"--flush-draws", "4294967296", "expected a non-negative integer"},
+	    {"--flush-draws", "x", "expected a non-negative integer"},
+	    {"--launch-activity", "", activity_reason},
+	    {"--launch-activity", std::string(33, 'a'), activity_reason},
+	    {"--launch-activity", "tab\there", activity_reason},
+	    {"--launch-activity", "caf\xC3\xA9", activity_reason},
+	    {"--launch-activity", "del\x7F", activity_reason},
 	};
 	for (const auto& entry: invalid) {
 		CheckError({entry[0], entry[1]}, InvalidValue(entry[0], entry[1], entry[2]));
@@ -610,6 +745,7 @@ int main(int argc, char* argv[]) {
 	TestOptionTable();
 	TestFlagOptions(fixtures);
 	TestValueOptions(fixtures);
+	TestUpstreamValueOptions(fixtures);
 	TestEnumCase(fixtures);
 	TestHelp(fixtures);
 	TestGuestExec(fixtures);
