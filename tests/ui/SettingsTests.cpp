@@ -112,7 +112,7 @@ constexpr ShownField kShownFields[] = {
     {"printf_output_file", "Printf output file", "debug"},
     {"profiler_enabled", "Tracy profiler", "debug"},
     {"renderdoc_enabled", "RenderDoc capture", "debug"},
-    {"amd_cpu_enabled", "AMD CPU patch (experimental)", "general"},
+    {"amd_cpu_enabled", "Intel CPU compatibility (experimental)", "general"},
 };
 
 // The fields the editors keep without a row (design.md).
