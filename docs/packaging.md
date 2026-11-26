@@ -223,9 +223,10 @@ Before it publishes a release, the `release` job writes the release's text with
   release's text, as written.
 - **Otherwise, the commit subjects** since the previous release, at most the newest 100, grouped
   by the area at the start of each subject: Launcher, Updater, Emulator (with the emulator's
-  subsystems, such as `shader`), and Packaging. Changes to the tests, the build, CI, and the
-  documentation, and subjects without an area, are folded under "Other changes". A link to the
-  full changelog ends the text.
+  subsystems, such as `shader`), and Packaging. The subjects come from the first-parent history,
+  so a merge counts as one line with its own subject, and the commits it brings in are not listed.
+  Changes to the tests, the build, CI, and the documentation, and subjects without an area, are
+  folded under "Other changes". A link to the full changelog ends the text.
 
 To write notes for the next release, replace everything below the comment in
 `packaging/release-notes.md` with the new notes in Markdown, and commit the file to `dev` before

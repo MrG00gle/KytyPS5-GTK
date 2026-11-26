@@ -30,8 +30,10 @@ namespace kyty::gtk {
 
 inline constexpr const char* kGameMenuResource = "/io/github/MrG00gle/KytyPS5_GTK/ui/game-menu.xml";
 
-// The "game-menu" model of resources/ui/game-menu.xml.
-GObjectPtr<GMenuModel> LoadGameMenu();
+// The "game-menu" model of resources/ui/game-menu.xml; with actions, also its first section (the
+// "game-actions" GMenu, which starts with Run), where the main window puts the "Launch into
+// activity" submenu.
+GObjectPtr<GMenuModel> LoadGameMenu(GObjectPtr<GMenu>* actions = nullptr);
 
 // The largest size a game icon is shown at, in pixels at scale 1: the grid view's icon at its
 // largest width (GameGridView: 320 x 9 / 16); the list view shows 48. The library's details worker
@@ -69,6 +71,9 @@ public:
 	bool PopupForSelection();
 	// The menu for a click on empty space; nullptr removes it.
 	void SetEmptySpaceMenu(GMenuModel* menu);
+	// The game menu's model (LoadGameMenu() until then): the main window gives its views and its
+	// header bar one model, so that what it changes in it shows in every one.
+	void SetGameMenu(GMenuModel* menu);
 
 private:
 	static void OnPressed(GtkGestureClick* gesture, int presses, double x, double y, gpointer data);

@@ -46,10 +46,11 @@ int WriteSyntheticGames(const std::filesystem::path& folder, int count, bool wit
 bool WriteGameContent(const std::filesystem::path& games, const std::filesystem::path& data_dir,
                       const std::filesystem::path& addons, int user_id);
 
-// The HEN Cheats Collection indexes for WriteGameContent's Alpha Game, as (core::CheatIndexUrl,
-// body) pairs: the JSON index lists Alpha Game's files PPSA01001_01.020_alpha.json and
+// The remote cheat lists for WriteGameContent's Alpha Game, as (core::CheatSourceUrl, body)
+// pairs: the KytyPS5-Modules catalog lists one patch of Beta Quest and nothing for Alpha Game; the
+// JSON index of the HEN Cheats Collection lists Alpha Game's files PPSA01001_01.020_alpha.json and
 // PPSA01001_01.000_alpha.json and a file of Beta Quest; the MC4 and the SHN index one file each of
-// Alpha Game (listed, but disabled: only JSON files can be previewed).
+// Alpha Game.
 std::vector<std::pair<std::string, std::string>> CheatIndexes();
 
 // A control that WriteGameContent's content (and CheatIndexes()) gives a registry window, such as

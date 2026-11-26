@@ -14,6 +14,7 @@
 #include "common/emulatorConfig.h"
 #include "common/logging/log.h"
 #include "common/threads.h"
+#include "kernel/fileSystem.h"
 #include "kernel/pthread.h"
 #include "libs/errno.h"
 #include "libs/libs.h"
@@ -98,6 +99,7 @@ public:
 
 	int  PoolCreate(const char* name, int size);
 	bool PoolDestroy(int memid);
+	int  PoolGetMemoryPoolStats(int memid, Net::NetMemoryPoolStats* stats);
 	int  ResolverCreate(const char* name, int memid);
 	bool ResolverDestroy(int rid);
 	bool ResolverValid(int rid);
@@ -105,6 +107,7 @@ public:
 	Id   SslInit(uint64_t pool_size);
 	bool SslTerm(Id ssl_ctx_id);
 	bool SslValid(Id ssl_ctx_id);
+	int  SslGetMemoryPoolStats(Id ssl_ctx_id, Net::NetMemoryPoolStats* stats);
 
 	Id   HttpInit(int memid, Id ssl_ctx_id, uint64_t pool_size);
 	bool HttpTerm(Id http_ctx_id);
@@ -271,6 +274,22 @@ bool Network::PoolDestroy(int memid) {
 	return false;
 }
 
+int Network::PoolGetMemoryPoolStats(int memid, Net::NetMemoryPoolStats* stats) {
+	Common::LockGuard lock(m_mutex);
+
+	if (memid < 0 || memid >= POOLS_MAX || !m_pools[memid].used) {
+		return NET_ERROR_EBADF;
+	}
+	if (stats == nullptr) {
+		return NET_ERROR_EINVAL;
+	}
+
+	// Pool allocations are not tracked; only the configured size is available.
+	*stats = {};
+	stats->pool_size = static_cast<uint64_t>(m_pools[memid].size);
+	return OK;
+}
+
 int Network::ResolverCreate(const char* name, int memid) {
 	Common::LockGuard lock(m_mutex);
 
@@ -341,6 +360,23 @@ bool Network::SslValid(Id ssl_ctx_id) {
 
 	return ssl_ctx_id.GetType() == Id::Type::Ssl && ssl_ctx_id.GetId() >= 0 &&
 	       ssl_ctx_id.GetId() < SSL_MAX && m_ssl[ssl_ctx_id.GetId()].used;
+}
+
+int Network::SslGetMemoryPoolStats(Id ssl_ctx_id, Net::NetMemoryPoolStats* stats) {
+	if (stats == nullptr) {
+		return SSL_ERROR_INVALID_VALUE;
+	}
+	*stats = {};
+
+	Common::LockGuard lock(m_mutex);
+
+	if (!SslValid(ssl_ctx_id)) {
+		return SSL_ERROR_INVALID_ID;
+	}
+
+	// Nothing allocates from the pool.
+	stats->pool_size = m_ssl[ssl_ctx_id.GetId()].size;
+	return OK;
 }
 
 Network::Id Network::HttpInit(int memid, Id ssl_ctx_id, uint64_t pool_size) {
@@ -449,7 +485,7 @@ Network::Id Network::HttpCreateTemplate(Id http_ctx_id, const char* user_agent, 
 		HttpTemplate tn {};
 		tn.used               = true;
 		tn.http_ver           = http_ver;
-		tn.user_agent         = std::string(user_agent);
+		tn.user_agent         = user_agent != nullptr ? user_agent : "";
 		tn.is_auto_proxy_conf = is_auto_proxy_conf;
 		tn.http_ctx_id        = http_ctx_id.GetId();
 		tn.nonblock           = false;
@@ -991,6 +1027,7 @@ static int ConvertSocketOptionLevel(int level) {
 static int ConvertSocketOptionName(int level, int option) {
 	if (level == 0xffff) {
 		switch (option) {
+			case 0x0004: return SO_REUSEADDR;
 			case 0x0020: return SO_BROADCAST;
 			case 0x1001: return SO_SNDBUF;
 			case 0x1002: return SO_RCVBUF;
@@ -1273,6 +1310,13 @@ int KYTY_SYSV_ABI NetPoolDestroy(int memid) {
 	return OK;
 }
 
+int KYTY_SYSV_ABI NetGetMemoryPoolStats(int memid, NetMemoryPoolStats* stats) {
+	PRINT_NAME();
+
+	EXIT_IF(g_net == nullptr);
+	return g_net->PoolGetMemoryPoolStats(memid, stats);
+}
+
 int KYTY_SYSV_ABI NetResolverCreate(const char* name, int memid, int flags) {
 	PRINT_NAME();
 
@@ -1314,8 +1358,9 @@ int KYTY_SYSV_ABI NetResolverAbort(int rid, int flags) {
 	return OK;
 }
 
-int KYTY_SYSV_ABI NetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout,
-                                       int retry, int flags) {
+int KYTY_SYSV_ABI NetResolverStartNtoaMultipleRecords(int rid, const char* hostname,
+                                                      NetResolverInfo* info, int timeout, int retry,
+                                                      int flags) {
 	PRINT_NAME();
 
 	LOGF("\t rid      = %d\n"
@@ -1325,10 +1370,7 @@ int KYTY_SYSV_ABI NetResolverStartNtoa(int rid, const char* hostname, void* addr
 	     "\t flags    = 0x%08x\n",
 	     rid, hostname != nullptr ? hostname : "<null>", timeout, retry, flags);
 
-	(void)timeout;
-	(void)retry;
-
-	if (hostname == nullptr || addr == nullptr || (flags & ~0x00010000) != 0) {
+	if (hostname == nullptr || info == nullptr || (flags & ~0x00010000) != 0) {
 		return NET_ERROR_EINVAL;
 	}
 
@@ -1337,7 +1379,11 @@ int KYTY_SYSV_ABI NetResolverStartNtoa(int rid, const char* hostname, void* addr
 		return NET_ERROR_EBADF;
 	}
 
-	if ((flags & 0x00010000) == 0 && NetInetPton(2, hostname, addr) == 1) {
+	*info = {};
+	if ((flags & 0x00010000) == 0 && NetInetPton(2, hostname, &info->addrs[0].addr) == 1) {
+		info->addrs[0].af = 2;
+		info->records     = 1;
+		info->dns4records = 1;
 		return OK;
 	}
 
@@ -1367,15 +1413,35 @@ int KYTY_SYSV_ABI NetResolverStartNtoa(int rid, const char* hostname, void* addr
 	for (auto* ai = result; ai != nullptr; ai = ai->ai_next) {
 		if (ai->ai_family == AF_INET && ai->ai_addr != nullptr &&
 		    ai->ai_addrlen >= sizeof(sockaddr_in)) {
-			const auto* in = reinterpret_cast<const sockaddr_in*>(ai->ai_addr);
-			std::memcpy(addr, &in->sin_addr, sizeof(in->sin_addr));
-			freeaddrinfo(result);
-			return OK;
+			if (info->records < static_cast<int>(std::size(info->addrs))) {
+				NetResolverAddr& out = info->addrs[info->records++];
+				const auto*      in  = reinterpret_cast<const sockaddr_in*>(ai->ai_addr);
+				std::memcpy(&out.addr, &in->sin_addr, sizeof(out.addr));
+				out.af = 2;
+			}
+			info->dns4records++;
 		}
 	}
 
 	freeaddrinfo(result);
-	return NET_ERROR_RESOLVER_ENORECORD;
+	return info->records > 0 ? OK : NET_ERROR_RESOLVER_ENORECORD;
+}
+
+int KYTY_SYSV_ABI NetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout,
+                                       int retry, int flags) {
+	PRINT_NAME();
+
+	if (addr == nullptr) {
+		return NET_ERROR_EINVAL;
+	}
+
+	NetResolverInfo info;
+	const int       ret =
+	    NetResolverStartNtoaMultipleRecords(rid, hostname, &info, timeout, retry, flags);
+	if (ret == OK) {
+		std::memcpy(addr, &info.addrs[0].addr, sizeof(info.addrs[0].addr));
+	}
+	return ret;
 }
 
 int KYTY_SYSV_ABI NetInetPton(int af, const char* src, void* dst) {
@@ -2072,6 +2138,8 @@ int KYTY_SYSV_ABI Setsockopt(int s, int level, int optname, const void* optval, 
 	}
 
 #if defined(__linux__)
+	// SO_ONESBCAST: Linux and Winsock have no equivalent and reject the raw ID. Black Ops II's
+	// local lobby sets it on its UDP socket after SO_BROADCAST and drops the socket on failure.
 	if (level == 0xffff && optname == 0x10000) {
 		if (optlen != sizeof(int)) {
 			return SetGuestSocketError(Posix::POSIX_EINVAL);
@@ -2285,12 +2353,23 @@ int KYTY_SYSV_ABI Select(int nfds, void* readfds, void* writefds, void* exceptfd
 
 	std::vector<std::pair<int, NativeSocket>> descriptors;
 	std::vector<std::shared_ptr<SocketTransport>> stream_reads;
+	std::vector<std::pair<void*, int>> ready_files;
 	int host_nfds = 0;
 	for (int fd = 0; fd < nfds; fd++) {
 		const bool read = GuestFdIsSet(readfds, fd);
 		const bool write = GuestFdIsSet(writefds, fd);
 		const bool except = GuestFdIsSet(exceptfds, fd);
 		if (!read && !write && !except) {
+			continue;
+		}
+		// FreeBSD polls files and devices ready to read and write at once.
+		if (!IsSocket(fd) && LibKernel::FileSystem::IsOpenDescriptor(fd)) {
+			if (read) {
+				ready_files.emplace_back(readfds, fd);
+			}
+			if (write) {
+				ready_files.emplace_back(writefds, fd);
+			}
 			continue;
 		}
 		NativeSocket                    socket = INVALID_NATIVE_SOCKET;
@@ -2329,6 +2408,10 @@ int KYTY_SYSV_ABI Select(int nfds, void* readfds, void* writefds, void* exceptfd
 		host_timeout.tv_usec = static_cast<decltype(host_timeout.tv_usec)>(guest_timeout->tv_usec);
 		host_timeout_ptr = &host_timeout;
 	}
+	if (!ready_files.empty()) {
+		host_timeout     = {};
+		host_timeout_ptr = &host_timeout;
+	}
 
 	int result = 0;
 	{
@@ -2358,6 +2441,10 @@ int KYTY_SYSV_ABI Select(int nfds, void* readfds, void* writefds, void* exceptfd
 			GuestFdSet(exceptfds, fd);
 			result++;
 		}
+	}
+	for (const auto& [fds, fd]: ready_files) {
+		GuestFdSet(fds, fd);
+		result++;
 	}
 	return result;
 }
@@ -2453,6 +2540,13 @@ int KYTY_SYSV_ABI SslFreeCaCerts(int ssl_ctx_id, void* ca_certs) {
 	certs->pool          = nullptr;
 
 	return OK;
+}
+
+int KYTY_SYSV_ABI SslGetMemoryPoolStats(int ssl_ctx_id, Net::NetMemoryPoolStats* stats) {
+	PRINT_NAME();
+
+	EXIT_IF(g_net == nullptr);
+	return g_net->SslGetMemoryPoolStats(Network::Id(ssl_ctx_id), stats);
 }
 
 } // namespace Ssl
@@ -3589,6 +3683,11 @@ struct NpCountryCode {
 	char padding[1];
 };
 
+struct NpLanguageCode {
+	char code[36];
+	char padding[12];
+};
+
 struct NpAgeRestriction {
 	NpCountryCode country_code;
 	int8_t        age;
@@ -3637,14 +3736,31 @@ struct NpCheckPremiumResult {
 
 constexpr int      np_error_invalid_argument            = -2141913085; /* 0x80550003 */
 constexpr int      np_error_signed_out                  = -2141913082; /* 0x80550006 */
+constexpr int      np_error_user_not_found              = -2141913081; /* 0x80550007 */
 constexpr int      np_error_callback_already_registered = -2141913080; /* 0x80550008 */
 constexpr int      np_error_invalid_size                = -2141913071; /* 0x80550011 */
 constexpr int      np_error_aborted                     = -2141913070; /* 0x80550012 */
 constexpr int      np_error_request_max                 = -2141913069; /* 0x80550013 */
 constexpr int      np_error_request_not_found           = -2141913068; /* 0x80550014 */
 constexpr int      np_error_invalid_id                  = -2141913067; /* 0x80550015 */
+constexpr int      np_error_network_not_available       = -2141872086; /* 0x8055a02a */
 constexpr int      np_request_max                       = 128;
 constexpr uint32_t np_state_signed_out                  = 1;
+constexpr uint32_t np_state_signed_in                   = 2;
+constexpr uint64_t np_account_id                        = 0x00000000feedfaceull;
+
+// A simulated account belongs only to the primary user and survives network loss.
+bool IsSignedIn(int user_id) {
+	return Config::PsnEmulationEnabled() && user_id == Config::GetUserId();
+}
+
+static int np_reachability_result(int user_id) {
+	if (!IsSignedIn(user_id)) {
+		return np_error_signed_out;
+	}
+	// This is an explicit compatibility simulation, not a connection to PSN.
+	return NetCtl::NetCtlConnected() ? OK : np_error_network_not_available;
+}
 
 struct NpStateCallback {
 	NpStateCallbackA callback = nullptr;
@@ -3704,7 +3820,7 @@ static NpRequest* np_get_request_locked(int req_id) {
 	return &g_np_requests[index];
 }
 
-static int np_complete_signed_out_locked(NpRequest* request) {
+static int np_complete_locked(NpRequest* request, int result) {
 	if (request->state == NpRequestState::Complete) {
 		request->result = np_error_invalid_argument;
 		return np_error_invalid_argument;
@@ -3715,9 +3831,9 @@ static int np_complete_signed_out_locked(NpRequest* request) {
 	}
 
 	request->state  = NpRequestState::Complete;
-	request->result = np_error_signed_out;
+	request->result = result;
 
-	return (request->async ? OK : np_error_signed_out);
+	return (request->async ? OK : result);
 }
 
 int KYTY_SYSV_ABI NpCheckCallback() {
@@ -3731,7 +3847,9 @@ int KYTY_SYSV_ABI NpCheckCallback() {
 		}
 	}
 	for (const auto& entry: pending) {
-		entry.callback(Config::GetUserId(), np_state_signed_out, entry.userdata);
+		entry.callback(Config::GetUserId(),
+		               IsSignedIn(Config::GetUserId()) ? np_state_signed_in : np_state_signed_out,
+		               entry.userdata);
 	}
 
 	return OK;
@@ -3826,12 +3944,13 @@ int KYTY_SYSV_ABI NpGetNpId(int user_id, NpId* np_id) {
 
 	EXIT_NOT_IMPLEMENTED(np_id == nullptr);
 
-	// int s = snprintf(np_id->handle.data, 16, "Kyty");
-	// EXIT_NOT_IMPLEMENTED(s >= 16);
-	// np_id->handle.term = 0;
 	std::memset(np_id, 0, sizeof(*np_id));
 
-	// return OK;
+	if (IsSignedIn(user_id)) {
+		std::memcpy(np_id->handle.data, "Kyty", 4);
+		return OK;
+	}
+
 	return np_error_signed_out;
 }
 
@@ -3842,12 +3961,13 @@ int KYTY_SYSV_ABI NpGetOnlineId(int user_id, NpOnlineId* online_id) {
 
 	EXIT_NOT_IMPLEMENTED(online_id == nullptr);
 
-	// int s = snprintf(online_id->data, 16, "Kyty");
-	// EXIT_NOT_IMPLEMENTED(s >= 16);
-	// online_id->term = 0;
 	std::memset(online_id, 0, sizeof(*online_id));
 
-	// return OK;
+	if (IsSignedIn(user_id)) {
+		std::memcpy(online_id->data, "Kyty", 4);
+		return OK;
+	}
+
 	return np_error_signed_out;
 }
 
@@ -3858,11 +3978,33 @@ int KYTY_SYSV_ABI NpGetAccountIdA(int user_id, uint64_t* account_id) {
 
 	EXIT_NOT_IMPLEMENTED(account_id == nullptr);
 
-	// *account_id = 0x00000000feedfaceull;
 	*account_id = 0;
 
-	// return OK;
+	if (IsSignedIn(user_id)) {
+		*account_id = np_account_id;
+		return OK;
+	}
+
 	return np_error_signed_out;
+}
+
+int KYTY_SYSV_ABI NpGetUserIdByAccountId(uint64_t account_id, int* user_id) {
+	PRINT_NAME();
+
+	LOGF("\t account_id = 0x%016" PRIx64 "\n", account_id);
+
+	if (account_id == 0 || user_id == nullptr) {
+		return np_error_invalid_argument;
+	}
+	if (!Config::PsnEmulationEnabled()) {
+		return np_error_signed_out;
+	}
+	if (account_id != np_account_id) {
+		return np_error_user_not_found;
+	}
+
+	*user_id = Config::GetUserId();
+	return OK;
 }
 
 int KYTY_SYSV_ABI NpGetAccountCountryA(int user_id, void* country_code) {
@@ -3874,10 +4016,12 @@ int KYTY_SYSV_ABI NpGetAccountCountryA(int user_id, void* country_code) {
 
 	auto* code = static_cast<NpCountryCode*>(country_code);
 	std::memset(code, 0, sizeof(*code));
-	// code->data[0] = '';
-	// code->data[1] = 'S';
 
-	// return OK;
+	if (IsSignedIn(user_id)) {
+		std::memcpy(code->data, "US", 2);
+		return OK;
+	}
+
 	return np_error_signed_out;
 }
 
@@ -3892,11 +4036,14 @@ int KYTY_SYSV_ABI NpGetAccountAge(int req_id, int user_id, uint8_t* age) {
 		return np_error_invalid_argument;
 	}
 
-	// *age = 21;
-	*age = 0;
+	std::lock_guard lock(g_np_request_mutex);
+	auto* request = np_get_request_locked(req_id);
+	if (request == nullptr) {
+		return np_error_request_not_found;
+	}
 
-	// return OK;
-	return np_error_signed_out;
+	*age = IsSignedIn(user_id) ? 21 : 0;
+	return np_complete_locked(request, IsSignedIn(user_id) ? OK : np_error_signed_out);
 }
 
 int KYTY_SYSV_ABI NpGetAccountLanguage2(int req_id, int user_id, void* language_code) {
@@ -3912,11 +4059,17 @@ int KYTY_SYSV_ABI NpGetAccountLanguage2(int req_id, int user_id, void* language_
 
 	std::lock_guard lock(g_np_request_mutex);
 
-	if (np_get_request_locked(req_id) == nullptr) {
+	auto* request = np_get_request_locked(req_id);
+	if (request == nullptr) {
 		return np_error_request_not_found;
 	}
 
-	return np_error_signed_out;
+	auto* code = static_cast<NpLanguageCode*>(language_code);
+	std::memset(code, 0, sizeof(*code));
+	if (IsSignedIn(user_id)) {
+		std::memcpy(code->code, "en-US", 5);
+	}
+	return np_complete_locked(request, IsSignedIn(user_id) ? OK : np_error_signed_out);
 }
 
 int KYTY_SYSV_ABI NpCreateRequest() {
@@ -4015,8 +4168,9 @@ int KYTY_SYSV_ABI NpCheckNpAvailability(int req_id, const char* user, void* resu
 		return np_error_request_not_found;
 	}
 
-	// return OK;
-	return np_complete_signed_out_locked(request);
+	return np_complete_locked(request, std::strcmp(user, "Kyty") == 0
+	                                       ? np_reachability_result(Config::GetUserId())
+	                                       : np_error_signed_out);
 }
 
 int KYTY_SYSV_ABI NpCheckNpReachability(int req_id, int user_id) {
@@ -4038,8 +4192,7 @@ int KYTY_SYSV_ABI NpCheckNpReachability(int req_id, int user_id) {
 		return np_error_request_not_found;
 	}
 
-	// return OK;
-	return np_complete_signed_out_locked(request);
+	return np_complete_locked(request, np_reachability_result(user_id));
 }
 
 int KYTY_SYSV_ABI NpPollAsync(int req_id, int* result) {
@@ -4096,23 +4249,10 @@ int KYTY_SYSV_ABI NpCheckPremium(int req_id, const NpCheckPremiumParameter* para
 		return np_error_request_not_found;
 	}
 
-	if (request->state == NpRequestState::Complete) {
-		request->result = np_error_invalid_argument;
-		return np_error_invalid_argument;
-	}
-
-	if (request->state == NpRequestState::Aborted) {
-		return np_error_aborted;
-	}
-
 	std::memset(result, 0, sizeof(*result));
-	// result->authorized = true;
 
-	// request->state  = NpRequestState::Complete;
-	// request->result = OK;
-
-	// return OK;
-	return np_complete_signed_out_locked(request);
+	// The simulated account has no premium eligibility.
+	return np_complete_locked(request, np_reachability_result(param->user_id));
 }
 
 int KYTY_SYSV_ABI NpGetState(int user_id, uint32_t* state) {
@@ -4122,7 +4262,7 @@ int KYTY_SYSV_ABI NpGetState(int user_id, uint32_t* state) {
 
 	LOGF("\t user_id = %d\n", user_id);
 
-	*state = np_state_signed_out;
+	*state = IsSignedIn(user_id) ? np_state_signed_in : np_state_signed_out;
 
 	return OK;
 }
@@ -4136,8 +4276,7 @@ int KYTY_SYSV_ABI NpGetNpReachabilityState(int user_id, uint32_t* state) {
 
 	LOGF("\t user_id = %d\n", user_id);
 
-	// *state = 2; // SCE_NP_REACHABILITY_STATE_REACHABLE
-	*state = 0; // SCE_NP_REACHABILITY_STATE_UNAVAILABLE
+	*state = np_reachability_result(user_id) == OK ? 2 : 0; // REACHABLE / UNAVAILABLE
 
 	return OK;
 }
@@ -4151,7 +4290,7 @@ int KYTY_SYSV_ABI NpHasSignedUp(int user_id, bool* has_signed_up) {
 
 	LOGF("\t user_id = %d\n", user_id);
 
-	*has_signed_up = false;
+	*has_signed_up = IsSignedIn(user_id);
 
 	return OK;
 }

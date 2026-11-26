@@ -7,8 +7,10 @@
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/image/imageInfo.h"
 
+#include <atomic>
 #include <compare>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <utility>
@@ -29,7 +31,6 @@ struct CachedImageView {
 };
 
 struct ImageUsage {
-	bool storage       = false;
 	bool render_target = false;
 	bool video_out     = false;
 };
@@ -71,6 +72,7 @@ public:
 	void MarkCpuDirty() {
 		m_cpu_dirty       = true;
 		m_maybe_cpu_dirty = false;
+		HeapChanged();
 	}
 
 	[[nodiscard]] bool IsCpuDirty() const { return m_cpu_dirty || m_maybe_cpu_dirty; }
@@ -80,21 +82,15 @@ public:
 		if (!IsCpuDirty()) {
 			m_maybe_cpu_hash  = HashGuestEdges();
 			m_maybe_cpu_dirty = true;
+			HeapChanged();
 		}
 	}
-	[[nodiscard]] bool ResolveMaybeCpuHash(uint64_t hash) {
-		if (!m_maybe_cpu_dirty || m_cpu_dirty) {
-			EXIT("image cannot resolve maybe-dirty hash\n");
-		}
+	void ResolveMaybeCpuHash(uint64_t hash) {
 		m_maybe_cpu_dirty = false;
-		m_cpu_dirty |= hash != m_maybe_cpu_hash;
-		return m_cpu_dirty;
+		m_cpu_dirty       = hash != m_maybe_cpu_hash;
 	}
 
 	void RefreshComplete() {
-		if (!IsCpuDirty()) {
-			EXIT("clean image cannot complete a refresh\n");
-		}
 		m_cpu_dirty       = false;
 		m_maybe_cpu_dirty = false;
 	}
@@ -104,13 +100,14 @@ public:
 	void               ClearGpuModified() noexcept { m_gpu_modified = false; }
 
 	[[nodiscard]] bool IsBufferModified() const noexcept { return m_buffer_modified; }
-	void               MarkBufferModified() noexcept { m_buffer_modified = true; }
+	void               MarkBufferModified() noexcept {
+		m_buffer_modified = true;
+		HeapChanged();
+	}
 	void               ClearBufferModified() noexcept { m_buffer_modified = false; }
 
-	[[nodiscard]] bool Overlaps(uint64_t address, uint64_t size,
-	                            bool pages = false) const noexcept {
-		return pages ? ImagePageRangesOverlap(info.data.address, info.data.size, address, size)
-		             : ImageRangeOverlaps(info.data.address, info.data.size, address, size);
+	[[nodiscard]] bool Overlaps(uint64_t address, uint64_t size) const noexcept {
+		return info.data.address < address + size && address < info.data.End();
 	}
 	[[nodiscard]] bool SafeToDownload() const noexcept {
 		return IsGpuModified() && !IsBufferModified() && !IsCpuDirty();
@@ -120,14 +117,36 @@ public:
 		return backing.image == nullptr ? 0 : Common::AlignUp(info.data.size, 1024);
 	}
 	[[nodiscard]] uint64_t HashGuestEdges() const;
+	[[nodiscard]] vk::ImageLayout ReadLayout() const noexcept {
+		return info.IsDepth() ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
+		                      : vk::ImageLayout::eShaderReadOnlyOptimal;
+	}
+	struct HeapChange {
+		GuestRange data;
+		uint64_t   serial = 0;
+	};
 
+	// Resident image heaps sample an image without rediscovering it until it changes its
+	// contents, tracking, identity or layout, which queues a heap change.
+	void HeapChanged() const {
+		if (heap_refs.load(std::memory_order_relaxed) != 0u) {
+			std::scoped_lock lock {heap_mutex};
+			heap_changes.push_back({info.data, serial});
+		}
+	}
+
+	static inline std::mutex              heap_mutex; // After TextureCache::m_lock.
+	static inline std::vector<HeapChange> heap_changes;
+	static inline std::atomic<uint64_t>   serials {0};
+
+	// Unique per image, unlike ImageId: freed slots are reused.
+	const uint64_t   serial = serials.fetch_add(1u, std::memory_order_relaxed) + 1u;
 	ImageInfo        info;
 	VulkanImage      backing;
 	std::vector<CachedImageView> views;
 	ImageUsage       usage;
 	ImageBinding     binding;
 	bool             registered     = false;
-	mutable uint32_t query_epoch    = 0;
 	uint64_t         track_addr     = 0;
 	uint64_t         track_addr_end = 0;
 	ImageId          depth_id {};
@@ -137,6 +156,8 @@ public:
 	ImageSubresourceRange stencil_subresources;
 	uint64_t         tick_accessed_last = 0;
 	size_t           lru_id             = 0;
+	// Resident image heap elements that select this image.
+	std::atomic<uint32_t> heap_refs {0};
 
 private:
 	friend struct ImageTestAccess;

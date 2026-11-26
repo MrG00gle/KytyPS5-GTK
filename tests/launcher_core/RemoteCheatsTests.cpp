@@ -2,8 +2,10 @@
 // Requirements 11.5, 11.17) with FakeHttpClient and FakeScheduler only (no network): an importable
 // file, a file of another title ID, version, or executable (previewed, not importable), a file
 // that does not parse, every failure kind (network, HTTP status, 8 MiB + 1 bytes, the 30 s limit
-// on the virtual clock), exactly 8 MiB, unsupported formats, a newer Fetch cancelling the
-// previous one, Cancel, destruction mid-download, and an unchanged local cheat file.
+// on the virtual clock), exactly 8 MiB, MC4 and SHN files (tests/fixtures/cheats) converted to
+// cheat JSON, a trainer that is not XML or uses addressing features, files without a URL, a newer
+// Fetch cancelling the previous one, Cancel, destruction mid-download, and an unchanged local
+// cheat file.
 
 #include "launcher/core/atomicFile.h"
 #include "launcher/core/cheats.h"
@@ -17,6 +19,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -173,15 +176,103 @@ void TestFailures() {
 
 void TestUnsupported() {
 	Harness harness;
-	for (const auto& file: {RemoteCheatFile {"PPSA01234_01.000_a.mc4", "", "01.000", "mc4"},
-	                        RemoteCheatFile {"PPSA01234_01.000_a.shn", "", "01.000", "shn"},
+	for (const auto& file: {RemoteCheatFile {"PPSA01234_01.000_a.txt", "", "01.000", "txt"},
+	                        RemoteCheatFile {"PPSA01234_01.000_a.mc4", "", "01.000", "shn"},
 	                        RemoteCheatFile {"not a name.json", "", "", "json"}}) {
 		const auto started = harness.remote->Fetch(file, kGame);
-		Check(!started && started.error() == "Only JSON cheat files are supported.",
+		Check(!started && started.error() == "This cheat file cannot be downloaded.",
 		      "no download of " + file.name);
 	}
 	harness.scheduler.RunUntilIdle();
 	Check(harness.http.Requests().empty() && harness.results.empty(), "nothing was requested");
+}
+
+std::string Fixture(std::string_view name) {
+	const auto path =
+	    std::filesystem::path(KYTY_TEST_SOURCE_DIR) / "tests/fixtures/cheats" / std::string(name);
+	auto bytes = kyty::core::ReadFileLimited(path, 1u << 20u);
+	Check(bytes.has_value(), "read " + path.string());
+	return *bytes;
+}
+
+// MC4 and SHN files (upstream KytyPS5 commit 91c5820c): downloaded from their own folders of the
+// collection, converted to cheat JSON, parsed, and matched against the game like JSON files.
+void TestTrainers() {
+	const CheatGame alpha {"PPSA01001", "01.000", "eboot.bin"};
+	for (const auto& [format, names]: std::vector<std::pair<std::string, std::string>> {
+	         {"shn", "Infinite Health, Max Coins & Gems"},
+	         {"mc4", "Moon Jump, Unlimited Time, Freeze Enemies"}}) {
+		const RemoteCheatFile file {"PPSA01001_01.000_alpha." + format, "Alpha Game", "01.000",
+		                            format};
+		Harness               harness;
+		const auto            result =
+		    harness.Run(ContentGen::ResponseOf(Fixture(file.name), {100, 1000}), file, alpha);
+		Check(harness.http.Requests().size() == 1 &&
+		          harness.http.Requests()[0].url ==
+		              "https://raw.githubusercontent.com/TeeKay87/HEN-Cheats-Collection/master/"
+		              "cheats/" +
+		                  format + "/" + file.name,
+		      format + ": the file's URL");
+		Check(result.importable && result.error.empty() && !result.problem,
+		      format + ": importable: " + result.error);
+		std::string listed;
+		for (const auto& cheat: result.document->cheats) {
+			listed += (listed.empty() ? "" : ", ") + cheat.name;
+		}
+		Check(listed == names && result.document->id == "PPSA01001" &&
+		          result.document->credits == std::vector<std::string> {"Kyty Tests"},
+		      format + ": the converted cheats: " + listed);
+		const auto other = harness.Run(ContentGen::ResponseOf(Fixture(file.name)), file, kGame);
+		Check(!other.importable && other.document.has_value() &&
+		          other.error == "The cheat file does not match this game's title ID.",
+		      format + ": previewed, not importable for another game");
+	}
+
+	const RemoteCheatFile shn {"PPSA01234_01.000_a.shn", "", "01.000", "shn"};
+	Harness               harness;
+	const auto            invalid = harness.Run(ContentGen::ResponseOf("{\"mods\":[]}"), shn);
+	Check(!invalid.importable && !invalid.document &&
+	          invalid.error == "PPSA01234_01.000_a.shn: Invalid cheat XML." && invalid.problem &&
+	          invalid.problem->kind == kyty::core::CheatProblemKind::InvalidXml &&
+	          invalid.problem->file == shn.name,
+	      "a trainer that is not XML: " + invalid.error);
+	const auto section = harness.Run(
+	    ContentGen::ResponseOf(
+	        R"(<Trainer Cusa="PPSA01234" Version="01.000" Process="EBOOT.BIN"><Cheat Text="A">)"
+	        R"(<Cheatline><Offset>0x10</Offset><Section>3</Section><ValueOn>90</ValueOn>)"
+	        R"(<ValueOff>C3</ValueOff></Cheatline></Cheat></Trainer>)"),
+	    shn);
+	Check(!section.importable && section.document.has_value() &&
+	          section.error ==
+	              "This cheat file uses memory addressing features that are not supported yet.",
+	      "a section-relative write is previewed, not importable: " + section.error);
+	const RemoteCheatFile mc4 {"PPSA01234_01.000_a.mc4", "", "01.000", "mc4"};
+	const auto            garbage = harness.Run(ContentGen::ResponseOf("not base64 of XML"), mc4);
+	Check(!garbage.document && garbage.problem &&
+	          garbage.problem->kind == kyty::core::CheatProblemKind::InvalidXml,
+	      "an MC4 file that does not decrypt to a trainer");
+}
+
+// A KytyPS5-Modules file (upstream KytyPS5 commit d2ec91b8): downloaded from its catalog's URL; a
+// file without "process" matches any executable of the game.
+void TestModulesFile() {
+	RemoteCheatFile file {"Unlock everything", "Game", "01.000", "json"};
+	file.kind = kyty::core::RemoteCheatKind::Patch;
+	file.url  = "https://kytyps5.github.io/KytyPS5-Modules/patches/json/PPSA01234/unlock.json";
+	Harness    harness;
+	const auto result = harness.Run(
+	    ContentGen::ResponseOf(R"({"id":"PPSA01234","version":"01.000","name":"Game",)"
+	                           R"("credits":["Modules"],"mods":[{"name":"Unlock all","memory":[)"
+	                           R"({"offset":"0x40","on":"01","off":"00"}]}]})"),
+	    file, CheatGame {"PPSA01234", "01.000", "game.elf"});
+	Check(harness.http.Requests().size() == 1 && harness.http.Requests()[0].url == file.url,
+	      "the file's own URL");
+	Check(harness.http.Requests()[0].redirects == kyty::core::RedirectPolicy::SameOrigin &&
+	          harness.http.Requests()[0].max_bytes == kMaxRemoteCheatFileBytes,
+	      "the limits of every remote file");
+	Check(result.importable && result.file == file && result.document &&
+	          result.document->cheats.size() == 1 && result.document->process.empty(),
+	      "a file without \"process\" is importable: " + result.error);
 }
 
 void TestNewerFetch() {
@@ -203,7 +294,7 @@ void TestNewerFetch() {
 	Harness unsupported;
 	unsupported.http.AddResponse(Url(), first);
 	Check(unsupported.remote->Fetch(kFile, kGame).has_value(), "fetch");
-	Check(!unsupported.remote->Fetch({"PPSA01234_01.000_a.mc4", "", "01.000", "mc4"}, kGame),
+	Check(!unsupported.remote->Fetch({"not a name.json", "", "01.000", "json"}, kGame),
 	      "unsupported");
 	Check(!unsupported.remote->Fetching(), "nothing pending");
 	unsupported.scheduler.RunUntilIdle();
@@ -255,6 +346,8 @@ int main() {
 	TestMismatches();
 	TestFailures();
 	TestUnsupported();
+	TestTrainers();
+	TestModulesFile();
 	TestNewerFetch();
 	TestLocalFileUnchanged();
 	std::printf("RemoteCheatsTests: all tests passed\n");

@@ -6,10 +6,11 @@
 //
 // Text forms are what the Qt launcher writes (QVariant::toString()): "true"/"false" for booleans,
 // decimal integers, the Q_ENUM key name for enums, and the text itself for strings. Reading also
-// accepts the legacy enum forms: the integer index ("1" is the second key) and, for screen
-// resolutions, the "1280x720" spelling (Qt's TextToEnum: a text of 2+ characters that starts with
-// a digit is read as "R" + its upper-case form). A string list (host_input_mapping) has no text
-// form: it is a list in Kyty.ini and an array of strings in a Game_Settings_File.
+// accepts the legacy enum form, the integer index ("1" is the second key). screen_resolution is a
+// String field whose value is upstream's "<width>x<height>" text; it reads every form that
+// ParseScreenResolution reads (the old "R1280X720" keys too) and is written as
+// FormatScreenResolution writes it. A string list (host_input_mapping) has no text form: it is a
+// list in Kyty.ini and an array of strings in a Game_Settings_File.
 
 #include "launcher/core/gameConfiguration.h"
 
@@ -48,14 +49,17 @@ struct BasicFieldDescriptor {
 	// Validate() checks it. Validate() adds the rules that need another field (an output path that
 	// must not be empty while its log goes to a File) and the host_input_mapping entry form.
 	std::optional<std::string> (*check)(const FieldValue& value) = nullptr;
+	// A field that the Qt launcher this one was ported from did not write: a missing Kyty.ini key
+	// gets the default without a report (settingsStore.h).
+	bool optional = false;
 };
 
 using FieldDescriptor           = BasicFieldDescriptor<GameConfiguration>;
 using ControllerFieldDescriptor = BasicFieldDescriptor<ControllerSettings>;
 
-// The Game_Configuration fields in the order of the Qt launcher's Configuration::GameSettings()
-// (screen_resolution ... amd_cpu_enabled, elf), then input_mapping_custom and host_input_mapping:
-// 35 fields.
+// The Game_Configuration fields in the order of the upstream launcher's
+// Configuration::GameSettings() (screen_resolution ... guest_tsc_enabled, elf; this launcher's
+// dlss_preset after dlss_folder), then input_mapping_custom and host_input_mapping: 48 fields.
 std::span<const FieldDescriptor> GameConfigurationFields();
 
 // controller_color, controller_speaker_volume, controller_vibration_intensity,

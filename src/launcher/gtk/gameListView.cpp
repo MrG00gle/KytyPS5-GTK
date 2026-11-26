@@ -543,6 +543,10 @@ void GameListView::SetEmptySpaceMenu(GMenuModel* menu) {
 	m_state->shell->SetEmptySpaceMenu(menu);
 }
 
+void GameListView::SetGameMenu(GMenuModel* menu) {
+	m_state->shell->SetGameMenu(menu);
+}
+
 bool GameListView::PopupMenuAt(double x, double y) {
 	return m_state->shell->PopupAt(x, y);
 }

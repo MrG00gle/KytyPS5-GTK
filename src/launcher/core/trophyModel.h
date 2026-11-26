@@ -202,4 +202,15 @@ std::vector<TrophyPackageFile> FindTrophyPackageFiles(const GameEntry& entry);
 GameTrophies LoadGameTrophies(const GameEntry& entry, const std::filesystem::path& data_dir,
                               int user_id, int console_language);
 
+// ---- Activities (upstream KytyPS5's launcher, commit 2638b1b0)
+
+// An activity ID that the Emulator's --launch-activity accepts: 1-32 printable ASCII characters.
+bool IsLaunchActivityId(std::string_view id);
+
+// The activities a game can be launched into: Common::Trophies::LoadActivityIds (the names of the
+// activity enums of the UDS package sce_sys/uds/uds00.ucp, upstream's source) over the entry's
+// package, a directory's file or an archive's member, sorted and without duplicates, keeping only
+// the IDs that IsLaunchActivityId accepts. Empty when the package is missing or unreadable.
+std::vector<std::string> LoadActivityIds(const GameEntry& entry);
+
 } // namespace kyty::core

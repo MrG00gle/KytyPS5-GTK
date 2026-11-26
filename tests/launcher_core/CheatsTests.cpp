@@ -2,8 +2,9 @@
 // 11.4-11.7): which title IDs have cheats, the path of their cheat file below the Data_Directory,
 // parsing and serializing cheat documents (unknown members kept, enabled states written back),
 // the remote import checks ported from Qt's Cheats::ValidateImport, the confirmation and
-// changed-on-disk rules of SaveIfUnchanged with injected write faults, the import, and the Local
-// view's loading of a real cheat file.
+// changed-on-disk rules of SaveIfUnchanged with injected write faults, the merge of an import into
+// the local file (upstream KytyPS5's Cheats::Merge, commit d2ec91b8, with its test's cases), the
+// import, and the Local view's loading of a real cheat file.
 
 #include "launcher/core/atomicFile.h"
 #include "launcher/core/cheats.h"
@@ -302,6 +303,24 @@ void TestValidateRemoteImport() {
 	         Kind::ProcessMismatch, "game.elf");
 	mismatch("PPSA01234", "01.000", "", "The cheat file does not match this game's executable ().",
 	         Kind::ProcessMismatch, "");
+	// Upstream's ValidateImportChecksTheProcessOnlyWhenTheFileNamesOne: a document without
+	// "process" (a KytyPS5-Modules file) matches any executable, but one is still needed.
+	const auto no_process = Parse(R"({"id":"PPSA01234","version":"01.000","mods":[{"name":"m",)"
+	                              R"("memory":[{"offset":"1","on":"90","off":"0F"}]}]})",
+	                              "no process");
+	Check(!ValidateRemoteImport(no_process, "PPSA01234", "01.000", "eboot.bin") &&
+	          !ValidateRemoteImport(no_process, "PPSA01234", "01.000", "game.elf"),
+	      "a document without \"process\" is accepted for any executable");
+	const auto empty_process = ValidateRemoteImport(no_process, "PPSA01234", "01.000", "");
+	Check(empty_process && empty_process->kind == Kind::ProcessMismatch,
+	      "the game's executable is still needed");
+	const auto number_process =
+	    Parse(R"({"id":"PPSA01234","version":"01.000","process":5,"mods":[{"name":"m",)"
+	          R"("memory":[{"offset":"1","on":"90","off":"0F"}]}]})",
+	          "a process that is not a string");
+	Check(ValidateRemoteImport(number_process, "PPSA01234", "01.000", "eboot.bin")->kind ==
+	          Kind::ProcessMismatch,
+	      "a \"process\" that is not a string names no executable");
 
 	const auto check = [&](const std::string& text, std::string_view expected, Kind kind) {
 		auto document = ParseCheatDocument(text, "remote.json");
@@ -317,7 +336,7 @@ void TestValidateRemoteImport() {
 	};
 	const std::string memory_unsupported = "Unsupported memory entries in cheat \"m\".";
 	const std::string addressing =
-	    "This JSON uses memory addressing features that are not supported yet.";
+	    "This cheat file uses memory addressing features that are not supported yet.";
 	check(with_mod(""), "The cheat file contains no cheats.", Kind::NoCheats);
 	check(with_mod(R"({"name":"m","memory":[{"offset":"1","on":"90","off":"0F"}]})",
 	               R"("master":{},)"),
@@ -500,6 +519,86 @@ void TestSaveIfUnchanged() {
 	}
 }
 
+// A document of upstream's test: PPSA00001, version, one 0x10 write per mod, enabled, and process
+// unless it is nullptr.
+CheatDocument Plan(const std::string& version, const std::vector<std::string>& mods,
+                   const char* process = "eboot.bin") {
+	std::string text = R"({"id":"PPSA00001","version":")" + version + R"(","mods":[)";
+	for (std::size_t i = 0; i < mods.size(); i++) {
+		text += (i == 0 ? "" : ",") + std::string(R"({"name":")") + mods[i] +
+		        R"(","enabled":true,"memory":[{"offset":"0x10","on":"90","off":"c3"}]})";
+	}
+	text += "]";
+	if (process != nullptr) {
+		text += R"(,"process":")" + std::string(process) + "\"";
+	}
+	return Parse(text + "}", "plan " + version);
+}
+
+std::string States(const CheatDocument& document) {
+	std::string states;
+	for (const auto& cheat: document.cheats) {
+		states += (states.empty() ? "" : " ") + cheat.name + (cheat.enabled ? "=on" : "=off");
+	}
+	return states;
+}
+
+// Upstream's MergeKeepsTheOtherCheatsOfAValidLocalFile, then more.
+void TestMerge() {
+	using kyty::core::MergeCheatDocuments;
+	const auto local    = Plan("01.000.000", {"A", "B", "C"});
+	const auto imported = Plan("01.000.000", {"B", "D"}, nullptr);
+
+	const auto merged = MergeCheatDocuments(&local, imported, "eboot.bin");
+	Check(States(merged) == "A=on C=on B=off D=off" && merged.process == "eboot.bin",
+	      "the local file's other cheats first, the imported ones off: " + States(merged));
+	const std::string write = R"("memory":[{"offset":"0x10","on":"90","off":"c3"}])";
+	Check(merged.json == R"({"id":"PPSA00001","version":"01.000.000","mods":[)"
+	                     R"({"name":"A","enabled":true,)" +
+	                         write + R"(},{"name":"C","enabled":true,)" + write +
+	                         R"(},{"name":"B","enabled":false,)" + write +
+	                         R"(},{"name":"D","enabled":false,)" + write +
+	                         R"(}],"process":"eboot.bin"})",
+	      "the members in place, \"process\" added at the end: " + merged.json);
+
+	const auto old      = Plan("00.900.000", {"E"});
+	const auto replaced = MergeCheatDocuments(&old, imported, "game.elf");
+	Check(States(replaced) == "B=off D=off" && replaced.version == "01.000.000" &&
+	          replaced.process == "game.elf",
+	      "a local file of another version is replaced: " + States(replaced));
+	Check(
+	    MergeCheatDocuments(nullptr, Plan("01.000.000", {"B"}, "EBOOT.BIN"), "eboot.bin").process ==
+	        "eboot.bin",
+	    "the saved process is the game's");
+	const auto other_process = Plan("01.000.000", {"E"}, "other.elf");
+	Check(States(MergeCheatDocuments(&other_process, imported, "eboot.bin")) == "B=off D=off",
+	      "a local file of another executable is replaced");
+	Check(MergeCheatDocuments(&old, imported, "eboot.bin") ==
+	          MergeCheatDocuments(nullptr, imported, "eboot.bin"),
+	      "replacing equals merging into nothing");
+
+	// The local file's states stay, a mod without "enabled" stays without it, and names are
+	// compared exactly.
+	const auto mixed =
+	    Parse(R"({"id":"ppsa00001","version":"01.000.000","process":"EBOOT.BIN",)"
+	          R"("mods":[{"name":"b","memory":[{"offset":"1","on":"90","off":"0F"}]},)"
+	          R"({"name":"Off","enabled":false,"memory":[{"offset":"1","on":"90",)"
+	          R"("off":"0F"}]}]})",
+	          "mixed");
+	const auto kept = MergeCheatDocuments(&mixed, imported, "eboot.bin");
+	Check(States(kept) == "b=on Off=off B=off D=off" &&
+	          kept.json.starts_with(R"({"id":"PPSA00001","version":"01.000.000","mods":[)"
+	                                R"({"name":"b","memory":)"),
+	      "local mods unchanged: " + kept.json);
+
+	// A local file that does not pass the import checks is not kept from.
+	const auto invalid_local = Parse(R"({"mods":[{"name":"Z"}]})", "invalid local");
+	Check(States(MergeCheatDocuments(&invalid_local, imported, "eboot.bin")) == "B=off D=off",
+	      "a local file without memory writes is replaced");
+	Check(MergeCheatDocuments(&local, CheatDocument {}, "eboot.bin") == CheatDocument {},
+	      "an imported document without JSON gives nothing");
+}
+
 void TestImport() {
 	const KytyTests::TempDir temp("kyty_cheats_import");
 	const auto               data = temp.Path() / "data";
@@ -507,7 +606,8 @@ void TestImport() {
 	    ContentGen::RemoteCheatSpec("ppsa01234", "01.000", "eboot.bin", {"One", "Two"});
 	auto remote              = Parse(ContentGen::CheatDocumentText(spec), "remote");
 	remote.cheats[1].enabled = true;
-	const auto imported = kyty::core::ImportRemoteCheats(data, " ppsa01234 ", remote, std::nullopt);
+	const auto imported = kyty::core::ImportRemoteCheats(data, " ppsa01234 ", remote, "eboot.bin",
+	                                                     nullptr, std::nullopt);
 	Check(imported.has_value() && *imported == data / "_Patches" / "PPSA01234.json",
 	      "imported to _Patches/<UPPERCASE>.json");
 	const auto local = kyty::core::LoadLocalCheats(data, "PPSA01234");
@@ -521,14 +621,33 @@ void TestImport() {
 	      "every other member is preserved: " + local.document->json);
 
 	// A second import needs confirmation, then replaces the file with the read bytes.
-	auto again = kyty::core::ImportRemoteCheats(data, "PPSA01234", remote, std::nullopt);
+	auto again = kyty::core::ImportRemoteCheats(data, "PPSA01234", remote, "eboot.bin", nullptr,
+	                                            std::nullopt);
 	Check(!again && again.error().kind == CheatSaveErrorKind::NeedsConfirmation,
 	      "an existing local file needs confirmation");
-	again = kyty::core::ImportRemoteCheats(data, "PPSA01234", remote, *local.bytes);
+	again = kyty::core::ImportRemoteCheats(data, "PPSA01234", remote, "eboot.bin", nullptr,
+	                                       *local.bytes);
 	Check(again.has_value(), "confirmed with the bytes LoadLocalCheats read");
 
-	const auto unsupported =
-	    kyty::core::ImportRemoteCheats(data, "CUSA01234", remote, std::nullopt);
+	// Keeping the local file's other cheats (upstream KytyPS5 commit d2ec91b8): a KytyPS5-Modules
+	// file without "process" gets the game's executable.
+	temp.WriteFile("data/_Patches/PPSA01234.json",
+	               ContentGen::CheatDocumentText(ContentGen::RemoteCheatSpec(
+	                   "PPSA01234", "01.000", "GAME.ELF", {"Mine", "Two"})));
+	const auto mine   = kyty::core::LoadLocalCheats(data, "PPSA01234");
+	const auto module = Parse(R"({"id":"PPSA01234","version":"01.000","mods":[{"name":"Two",)"
+	                          R"("memory":[{"offset":"0x8","on":"90","off":"0F"}]}]})",
+	                          "module");
+	again = kyty::core::ImportRemoteCheats(data, "PPSA01234", module, "game.elf", &*mine.document,
+	                                       *mine.bytes);
+	const auto kept = kyty::core::LoadLocalCheats(data, "PPSA01234");
+	Check(again.has_value() && kept.document && States(*kept.document) == "Mine=on Two=off" &&
+	          kept.document->process == "game.elf" &&
+	          kept.document->cheats[1].memory == R"([{"offset":"0x8","on":"90","off":"0F"}])",
+	      "the other cheats kept, the imported one replaced and off, the game's executable");
+
+	const auto unsupported = kyty::core::ImportRemoteCheats(data, "CUSA01234", remote, "eboot.bin",
+	                                                        nullptr, std::nullopt);
 	Check(!unsupported && unsupported.error().message == "Unsupported title ID." &&
 	          unsupported.error().failure == kyty::core::CheatSaveFailure::UnsupportedTitleId,
 	      "no import for a title without cheats");
@@ -606,6 +725,7 @@ int main() {
 	TestSerialize();
 	TestValidateRemoteImport();
 	TestSaveIfUnchanged();
+	TestMerge();
 	TestImport();
 	TestLoadLocalCheats();
 	std::printf("CheatsTests: all tests passed\n");

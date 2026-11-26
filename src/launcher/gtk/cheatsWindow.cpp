@@ -42,7 +42,7 @@ struct CheatsWindowState {
 	core::LocalCheatFile         local;
 	std::vector<GtkCheckButton*> checks;
 	GObjectPtr<GtkSizeGroup>     version_group;
-	GObjectPtr<GtkSizeGroup>     format_group;
+	GObjectPtr<GtkSizeGroup>     type_group;
 	bool                         filling  = false; // the file list is rebuilt: no preview
 	bool                         disposed = false;
 	// Cancelled when the window goes away: no link, alert, or confirmation callback runs after it.
@@ -61,7 +61,7 @@ struct _KytyCheatsWindow {
 	AdwViewStack* stack;
 	GtkLabel*     credit_label;
 	GtkWidget*    version_header;
-	GtkWidget*    format_header;
+	GtkWidget*    type_header;
 	GtkStack*     files_stack;
 	GtkSpinner*   files_spinner;
 	GtkListBox*   files_list;
@@ -108,13 +108,6 @@ std::string Format(const char* format, ...) {
 
 bool Alive(KytyCheatsWindow* self) {
 	return self->state != nullptr && !self->state->disposed;
-}
-
-std::string Upper(std::string_view text) {
-	std::string upper(text);
-	std::transform(upper.begin(), upper.end(), upper.begin(),
-	               [](char c) { return g_ascii_toupper(c); });
-	return upper;
 }
 
 void SetSensitive(GtkWidget* widget, bool sensitive) {
@@ -296,13 +289,20 @@ GtkWidget* NewColumnLabel(const std::string& text, GtkSizeGroup* group) {
 	return label;
 }
 
-// One row of the file list: version ("01.000 (installed)"), format, and file name under the
-// column headers; a file that cannot be previewed (MC4, SHN) is disabled.
+// The Type column's text of a remote file (upstream's "Patch" and "Cheat").
+const char* KindText(core::RemoteCheatKind kind) {
+	return kind == core::RemoteCheatKind::Patch ? C_("remote cheat file type", "Patch")
+	                                            : C_("remote cheat file type", "Cheat");
+}
+
+// One row of the file list: version ("01.000 (installed)"), type, and name (a collection file's
+// file name, a KytyPS5-Modules entry's title) under the column headers (upstream KytyPS5 commit
+// d2ec91b8). Every file can be previewed: MC4 and SHN files are converted (upstream KytyPS5 commit
+// 91c5820c).
 GtkWidget* NewFileRow(KytyCheatsWindow* self, const core::RemoteCheatFile& file) {
 	const auto&       state     = *self->state;
-	const bool        supported = core::IsSupportedRemoteCheatFile(file);
 	const bool        installed = !state.version.empty() && file.version == state.version;
-	const std::string format    = Upper(file.format);
+	const std::string type      = KindText(file.kind);
 	const std::string version =
 	    // TRANSLATORS: a remote cheat file for the installed version of the game: "01.000
 	    // (installed)".
@@ -313,30 +313,20 @@ GtkWidget* NewFileRow(KytyCheatsWindow* self, const core::RemoteCheatFile& file)
 	gtk_widget_set_margin_start(box, 6);
 	gtk_widget_set_margin_end(box, 6);
 	gtk_box_append(GTK_BOX(box), NewColumnLabel(version, state.version_group.get()));
-	gtk_box_append(GTK_BOX(box), NewColumnLabel(format, state.format_group.get()));
+	gtk_box_append(GTK_BOX(box), NewColumnLabel(type, state.type_group.get()));
 	GtkWidget* name = NewColumnLabel(file.name, nullptr);
 	gtk_widget_set_hexpand(name, TRUE);
 	gtk_label_set_ellipsize(GTK_LABEL(name), PANGO_ELLIPSIZE_MIDDLE);
 	gtk_box_append(GTK_BOX(box), name);
 	GtkWidget* row = gtk_list_box_row_new();
 	gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
-	// The collection's title of the file is game data (a plain-text tooltip).
-	const std::string tooltip =
-	    supported ? file.title
-	              // TRANSLATORS: the tooltip of a disabled remote cheat file: "<title> — MC4 is
-	              // not supported."
-	              : Format(_("%s — %s is not supported."), file.title.c_str(), format.c_str());
-	gtk_widget_set_tooltip_text(row, tooltip.c_str());
-	// TRANSLATORS: the accessible name of a remote cheat file: "<version>, <format>, <file>".
+	// The list's title of the file (the game's name) is game data (a plain-text tooltip).
+	gtk_widget_set_tooltip_text(row, file.title.c_str());
+	// TRANSLATORS: the accessible name of a remote cheat file: "<version>, <type>, <name>".
 	const std::string accessible = Format(C_("remote cheat file", "%s, %s, %s"), version.c_str(),
-	                                      format.c_str(), file.name.c_str());
+	                                      type.c_str(), file.name.c_str());
 	gtk_accessible_update_property(GTK_ACCESSIBLE(row), GTK_ACCESSIBLE_PROPERTY_LABEL,
 	                               accessible.c_str(), -1);
-	if (!supported) {
-		gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
-		gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
-		gtk_widget_set_sensitive(row, FALSE);
-	}
 	return row;
 }
 
@@ -375,24 +365,35 @@ void OnRefresh(GtkButton* /*button*/, gpointer data) {
 	}
 }
 
+// The widest of probes in the headers' (bold) font and in the cells' font.
+int ProbeWidth(KytyCheatsWindow* self, const std::vector<std::string>& probes) {
+	int width = 0;
+	// The file list's font is its cells' font: they are plain labels in its rows.
+	for (GtkWidget* widget: {self->version_header, GTK_WIDGET(self->files_list)}) {
+		for (const auto& probe: probes) {
+			auto layout = GObjectPtr<PangoLayout>::Adopt(
+			    gtk_widget_create_pango_layout(widget, probe.c_str()));
+			int probe_width = 0;
+			pango_layout_get_pixel_size(layout.get(), &probe_width, nullptr);
+			width = std::max(width, probe_width);
+		}
+	}
+	return width;
+}
+
 // The columns keep their widths while the list loads (FEAT-010 (8)): the Version header, in its
 // size group with the rows' version cells, reserves the width of the widest usual cell, a version
 // with " (installed)", in the header's (bold) font or in the cells' font, whichever is wider.
 // libadwaita 1.5 gives headings a fixed 11pt size, so with a larger text font the cell is the
-// wider one there. The Format header is wider than its cells.
+// wider one there. The Type header reserves the width of its widest cell, "Patch" or "Cheat", the
+// same way.
 void ReserveVersionColumn(KytyCheatsWindow* self) {
-	const std::string probe = Format(_("%s (installed)"), "00.000");
-	int               width = 0;
-	// The file list's font is its cells' font: they are plain labels in its rows.
-	for (GtkWidget* widget: {self->version_header, GTK_WIDGET(self->files_list)}) {
-		auto layout =
-		    GObjectPtr<PangoLayout>::Adopt(gtk_widget_create_pango_layout(widget, probe.c_str()));
-		int probe_width = 0;
-		pango_layout_get_pixel_size(layout.get(), &probe_width, nullptr);
-		width = std::max(width, probe_width);
-	}
-	gtk_widget_set_size_request(self->version_header, width, -1);
-	g_debug("cheats: the Version column reserves %d px", width);
+	const int version = ProbeWidth(self, {Format(_("%s (installed)"), "00.000")});
+	const int type    = ProbeWidth(
+	    self, {KindText(core::RemoteCheatKind::Patch), KindText(core::RemoteCheatKind::Cheat)});
+	gtk_widget_set_size_request(self->version_header, version, -1);
+	gtk_widget_set_size_request(self->type_header, type, -1);
+	g_debug("cheats: the Version column reserves %d px, the Type column %d px", version, type);
 }
 
 void OnVersionHeaderPainted(GdkFrameClock* /*clock*/, gpointer data) {
@@ -467,7 +468,7 @@ void Preview(KytyCheatsWindow* self, GtkListBoxRow* row) {
 	const auto fetched = state.remote->Fetch(state.files[static_cast<std::size_t>(index)],
 	                                         {state.title_id, state.version, state.process});
 	if (!fetched) {
-		gtk_label_set_text(self->preview_status, _("Only JSON cheat files are supported."));
+		gtk_label_set_text(self->preview_status, _("This cheat file cannot be downloaded."));
 	}
 }
 
@@ -529,16 +530,20 @@ void OnPreviewLoaded(KytyCheatsWindow* self, const core::RemoteCheatResult& resu
 
 void StartImport(KytyCheatsWindow* self, int retries);
 
-// Writes the previewed document with every cheat off over the local file that holds expected (no
-// file for nullopt). When the file appeared or changed since it was read, it is read again and the
-// import starts over (with the question when there is a file now).
-void Import(KytyCheatsWindow* self, const std::optional<std::string>& expected, int retries) {
+// Writes the previewed document with every cheat off, and with the game's executable, over the
+// local file that holds expected (no file for nullopt); with keep, the local file's other cheats
+// stay (core::MergeCheatDocuments). When the file appeared or changed since it was read, it is
+// read again and the import starts over (with the question when there is a file now).
+void Import(KytyCheatsWindow* self, const std::optional<std::string>& expected, bool keep,
+            int retries) {
 	auto& state = *self->state;
 	if (!state.importable) {
 		return;
 	}
+	const core::CheatDocument* local =
+	    keep && state.local.document ? &*state.local.document : nullptr;
 	const auto imported = core::ImportRemoteCheats(
-	    state.context->paths.data_dir, state.title_id, *state.importable,
+	    state.context->paths.data_dir, state.title_id, *state.importable, state.process, local,
 	    expected ? std::optional<std::string_view>(*expected) : std::nullopt);
 	if (!imported) {
 		const auto& error = imported.error();
@@ -588,21 +593,30 @@ void StartImport(KytyCheatsWindow* self, int retries) {
 		return;
 	}
 	if (!state.local.bytes) {
-		Import(self, std::nullopt, retries);
+		Import(self, std::nullopt, false, retries);
 		return;
 	}
+	// Upstream KytyPS5 commit d2ec91b8: Replace, or keep the local file's other cheats when it is
+	// a cheat file of this game and keeping changes what is written.
+	const core::CheatDocument* local = state.local.document ? &*state.local.document : nullptr;
+	const bool can_keep = core::MergeCheatDocuments(local, *state.importable, state.process) !=
+	                      core::MergeCheatDocuments(nullptr, *state.importable, state.process);
+	std::vector<std::string> labels = {_("Cancel"), _("Replace")};
+	if (can_keep) {
+		labels.emplace_back(_("Keep other cheats"));
+	}
 	const std::string body =
-	    Format(_("Replace the local cheat file and selections for %s? Imported cheats will start "
-	             "unchecked."),
+	    // TRANSLATORS: %s is the game's title ID.
+	    Format(_("A local cheat file for %s exists. Imported cheats will start unchecked."),
 	           state.title_id.c_str());
-	kyty::gtk::Confirm(
-	    GTK_WINDOW(self), _("Replace local cheats?"), body, _("Replace"), _("Cancel"), true,
-	    [self, bytes = *state.local.bytes, retries](bool accepted) {
-		    if (accepted && Alive(self)) {
-			    Import(self, bytes, retries);
+	kyty::gtk::Choose(
+	    GTK_WINDOW(self), _("Import to Local"), body, labels, 0, 0,
+	    [self, bytes = *state.local.bytes, retries](int index) {
+		    if (index > 0 && Alive(self)) {
+			    Import(self, bytes, index == 2, retries);
 		    }
 	    },
-	    state.cancellable.get());
+	    state.cancellable.get(), 1);
 }
 
 void OnImport(GtkButton* /*button*/, gpointer data) {
@@ -612,19 +626,24 @@ void OnImport(GtkButton* /*button*/, gpointer data) {
 	}
 }
 
-// The credit link opens the HEN Cheats Collection repository (Requirement 11.4) through the
-// DesktopLauncher, not GTK's default handler.
-gboolean OnActivateLink(GtkLabel* /*label*/, const char* /*uri*/, gpointer data) {
+// The credit links open the KytyPS5-Modules and the HEN Cheats Collection repositories
+// (Requirement 11.4) through the DesktopLauncher, not GTK's default handler; the label has no
+// other link.
+gboolean OnActivateLink(GtkLabel* /*label*/, const char* uri, gpointer data) {
 	auto* self = KYTY_CHEATS_WINDOW(data);
 	if (!Alive(self)) {
 		return TRUE;
 	}
-	auto& state = *self->state;
+	auto&             state = *self->state;
+	const char* const link =
+	    std::string_view(uri != nullptr ? uri : "") == core::kKytyModulesRepository
+	        ? core::kKytyModulesRepository
+	        : core::kHenCheatsRepository;
 	state.context->services.desktop_launcher.OpenUri(
-	    GTK_WINDOW(self), core::kHenCheatsRepository,
-	    [self](const std::string& error) {
+	    GTK_WINDOW(self), link,
+	    [self, link](const std::string& error) {
 		    if (Alive(self) && !error.empty()) {
-			    g_message("cheats: cannot open %s: %s", core::kHenCheatsRepository, error.c_str());
+			    g_message("cheats: cannot open %s: %s", link, error.c_str());
 			    kyty::gtk::ShowError(GTK_WINDOW(self), _("The link could not be opened"), error,
 			                         self->state->cancellable.get());
 		    }
@@ -641,10 +660,10 @@ static void kyty_cheats_window_init(KytyCheatsWindow* self) {
 	auto& state = *self->state;
 	state.version_group =
 	    GObjectPtr<GtkSizeGroup>::Adopt(gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL));
-	state.format_group =
+	state.type_group =
 	    GObjectPtr<GtkSizeGroup>::Adopt(gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL));
 	gtk_size_group_add_widget(state.version_group.get(), self->version_header);
-	gtk_size_group_add_widget(state.format_group.get(), self->format_header);
+	gtk_size_group_add_widget(state.type_group.get(), self->type_header);
 }
 
 static void kyty_cheats_window_dispose(GObject* object) {
@@ -680,7 +699,7 @@ static void kyty_cheats_window_class_init(KytyCheatsWindowClass* klass) {
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, stack);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, credit_label);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, version_header);
-	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, format_header);
+	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, type_header);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, files_stack);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, files_spinner);
 	gtk_widget_class_bind_template_child(widget_class, KytyCheatsWindow, files_list);
@@ -719,7 +738,7 @@ KytyCheatsWindow* kyty_cheats_window_new(kyty::gtk::LauncherContext& context, Gt
 	const std::string name = entry.title_name.empty() ? state.title_id : entry.title_name;
 	const std::string title =
 	    // TRANSLATORS: the cheats window's title; %s is the game's name.
-	    Format(_("Cheats (experimental) — %s"), name.c_str());
+	    Format(_("Cheats and patches (experimental) — %s"), name.c_str());
 	gtk_window_set_title(GTK_WINDOW(self), title.c_str());
 	const std::string game =
 	    // TRANSLATORS: the game of the cheats window: "<title ID> · Installed version: <version>".
@@ -727,9 +746,11 @@ KytyCheatsWindow* kyty_cheats_window_new(kyty::gtk::LauncherContext& context, Gt
 	           state.version.empty() ? C_("game version", "Unknown") : state.version.c_str());
 	gtk_label_set_text(self->game_label, game.c_str());
 	const GCharPtr credit(g_markup_printf_escaped(
-	    // TRANSLATORS: Pango markup; keep the <a href="%s"> element (%s is the link's address).
-	    _("Cheats by <a href=\"%s\">TeeKay87 / HEN Cheats Collection</a> and its contributors."),
-	    core::kHenCheatsRepository));
+	    // TRANSLATORS: Pango markup; keep both <a href="%s"> elements (each %s is a link's
+	    // address, KytyPS5-Modules first).
+	    _("Patches and cheats by <a href=\"%s\">KytyPS5-Modules</a> and <a href=\"%s\">TeeKay87 / "
+	      "HEN Cheats Collection</a> and their contributors."),
+	    core::kKytyModulesRepository, core::kHenCheatsRepository));
 	gtk_label_set_markup(self->credit_label, credit ? credit.get() : "");
 
 	state.catalog = std::make_unique<core::CheatCatalog>(

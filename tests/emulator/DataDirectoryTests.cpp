@@ -1,9 +1,9 @@
 // Emulator::ApplyDataDirectory and FlatpakDataDirectory (task 25.1, Requirement 12.2): nothing
 // changes outside the Flatpak_Sandbox; inside it the Data_Directory is $XDG_DATA_HOME/Kyty by the
-// launcher's rule, it is created and entered, the game, patch, and add-on paths become absolute
-// against the original working directory, and relative log, shader, and buffer paths resolve in the
-// Data_Directory. Failures are injected through the environment's callbacks (no chmod), and one
-// real failure uses a regular file where a directory is needed.
+// launcher's rule, it is created and entered, the game, patch, add-on, DLSS, and FidelityFX paths
+// become absolute against the original working directory, and relative log, shader, and buffer
+// paths resolve in the Data_Directory. Failures are injected through the environment's callbacks
+// (no chmod), and one real failure uses a regular file where a directory is needed.
 
 #include "common/archive.h"
 #include "emulatorOptions.h"
@@ -70,18 +70,35 @@ RunOptions RelativeOptions() {
 	options.elf                               = "/app0/eboot.bin";
 	options.game_patch                        = "patches/PPSA00001.json";
 	options.addcont_dir                       = "../dlc";
+	options.config.dlss_folder                = "models/dlss";
+	options.config.fsr_folder                 = "ffx";
 	options.config.guest_arguments            = {"relative-argument"};
 	options.config.screen_width               = 1920;
 	options.config.printf_output_file         = "_kyty.txt";
 	options.config.shader_log_folder          = "_Shaders";
 	options.config.command_buffer_dump_folder = "logs/_Buffers/";
+
+	// One add-on with its data in a folder, and one license-only add-on.
+	options.addcont = {{"", "ABCDEFGHIJ012345", "addons/A", ""}, {"", "0123456789ABCDEF", "", ""}};
 	return options;
+}
+
+// The add-on labels and folders, in order.
+std::vector<std::string> AddcontOf(const RunOptions& options) {
+	std::vector<std::string> entries;
+	for (const auto& entry: options.addcont) {
+		entries.push_back(entry.entitlement_label + "=" + entry.mount_dir.native());
+	}
+	return entries;
 }
 
 void CheckUnchanged(const RunOptions& actual, const RunOptions& expected, const std::string& what) {
 	Check(actual.app0_dir == expected.app0_dir && actual.elf == expected.elf &&
 	          actual.game_patch == expected.game_patch &&
 	          actual.addcont_dir == expected.addcont_dir &&
+	          AddcontOf(actual) == AddcontOf(expected) &&
+	          actual.config.dlss_folder.native() == expected.config.dlss_folder.native() &&
+	          actual.config.fsr_folder.native() == expected.config.fsr_folder.native() &&
 	          actual.config.guest_arguments == expected.config.guest_arguments &&
 	          actual.config.screen_width == expected.config.screen_width &&
 	          actual.config.printf_output_file.native() ==
@@ -117,6 +134,11 @@ void TestInsideFlatpak() {
 	CheckPath(options.app0_dir, "/work/dir/games/Title", "the game directory");
 	CheckPath(options.game_patch, "/work/dir/patches/PPSA00001.json", "the game patch");
 	CheckPath(options.addcont_dir, "/work/dir/../dlc", "the add-on directory");
+	Check(AddcontOf(options) ==
+	          std::vector<std::string> {"ABCDEFGHIJ012345=/work/dir/addons/A", "0123456789ABCDEF="},
+	      "an --addcont folder becomes absolute, and a license-only entry stays without one");
+	CheckPath(options.config.dlss_folder, "/work/dir/models/dlss", "the DLSS model folder");
+	CheckPath(options.config.fsr_folder, "/work/dir/ffx", "the FidelityFX folder");
 	CheckPath(options.config.printf_output_file, "/xdg/data/Kyty/_kyty.txt", "the printf file");
 	CheckPath(options.config.shader_log_folder, "/xdg/data/Kyty/_Shaders", "the shader log folder");
 	CheckPath(options.config.command_buffer_dump_folder, "/xdg/data/Kyty/logs/_Buffers/",
@@ -132,13 +154,15 @@ void TestInsideFlatpak() {
 	absolute.config.printf_output_file         = "/logs/kyty.txt";
 	absolute.config.shader_log_folder          = "/logs/shaders";
 	absolute.config.command_buffer_dump_folder = "/logs/buffers";
+	absolute.config.dlss_folder                = "/models/dlss";
+	absolute.addcont                           = {{"", "ABCDEFGHIJ012345", "/addons/A", ""}};
 	RunOptions copy                            = absolute;
 	Check(Emulator::ApplyDataDirectory(copy, recorder.Environment(true, "/xdg", "/home/u", "/work"))
 	          .empty(),
 	      "absolute paths: no error");
 	CheckUnchanged(copy, absolute, "absolute and empty paths");
-	Check(copy.game_patch.empty() && copy.addcont_dir.empty(),
-	      "an empty game patch and add-on directory stay empty");
+	Check(copy.game_patch.empty() && copy.addcont_dir.empty() && copy.config.fsr_folder.empty(),
+	      "an empty game patch, add-on directory, and FidelityFX folder stay empty");
 
 	// An archive game keeps its member marker and its host archive.
 	RunOptions archive;

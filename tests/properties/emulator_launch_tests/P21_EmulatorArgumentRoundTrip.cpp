@@ -10,7 +10,10 @@
 // ParseOptions must accept them with status Run and options equal to the fields per the design's
 // mapping table. The Emulator reads a '\' in an --addcont-dir, --game, or --game-patch value as
 // '/' (Common::FixFilenameSlash in its option parser), so the add-ons directory is compared after
-// that replacement, and elf names on disk hold neither '\' nor NUL.
+// that replacement, and elf names on disk hold neither '\' nor NUL. User add-ons (upstream's
+// --addcont) are licenses only or have a data folder on disk; each valid entry reaches the
+// Emulator with its label and folder, in order. Half of the cases launch into an activity of 1-32
+// printable ASCII characters.
 
 #include "common/archive.h"
 #include "common/emulatorConfig.h"
@@ -112,16 +115,6 @@ Config::PresentMode EmulatorMode(kyty::core::PresentMode mode) {
 	return Config::PresentMode::Mailbox;
 }
 
-Config::ShaderOptimizationType EmulatorType(kyty::core::ShaderOptimizationType type) {
-	switch (type) {
-		case kyty::core::ShaderOptimizationType::None: return Config::ShaderOptimizationType::None;
-		case kyty::core::ShaderOptimizationType::Size: return Config::ShaderOptimizationType::Size;
-		case kyty::core::ShaderOptimizationType::Performance:
-			return Config::ShaderOptimizationType::Performance;
-	}
-	return Config::ShaderOptimizationType::None;
-}
-
 Config::LogDirection EmulatorDirection(kyty::core::LogDirection direction) {
 	switch (direction) {
 		case kyty::core::LogDirection::Silent: return Config::LogDirection::Silent;
@@ -131,19 +124,22 @@ Config::LogDirection EmulatorDirection(kyty::core::LogDirection direction) {
 	return Config::LogDirection::Silent;
 }
 
+Config::PssrUpscaler EmulatorUpscaler(kyty::core::PssrUpscaler upscaler) {
+	switch (upscaler) {
+		case kyty::core::PssrUpscaler::Linear: return Config::PssrUpscaler::Linear;
+		case kyty::core::PssrUpscaler::DLSS: return Config::PssrUpscaler::DLSS;
+		case kyty::core::PssrUpscaler::FSR: return Config::PssrUpscaler::FSR;
+	}
+	return Config::PssrUpscaler::Linear;
+}
+
 struct Size {
 	uint32_t width  = 0;
 	uint32_t height = 0;
 };
 
-Size SizeOf(kyty::core::ScreenResolution resolution) {
-	switch (resolution) {
-		case kyty::core::ScreenResolution::R1280X720: return {1280, 720};
-		case kyty::core::ScreenResolution::R1920X1080: return {1920, 1080};
-		case kyty::core::ScreenResolution::R2560X1440: return {2560, 1440};
-		case kyty::core::ScreenResolution::R3840X2160: return {3840, 2160};
-	}
-	return {};
+Size SizeOf(const kyty::core::ScreenResolution& resolution) {
+	return {static_cast<uint32_t>(resolution.width), static_cast<uint32_t>(resolution.height)};
 }
 
 std::optional<Config::ControllerColor> ColorOf(const std::string& text) {
@@ -159,6 +155,50 @@ std::optional<Config::ControllerColor> ColorOf(const std::string& text) {
 		color[i] = static_cast<uint8_t>(digit(1 + 2 * i) * 16 + digit(2 + 2 * i));
 	}
 	return color;
+}
+
+// The user add-ons of a case: the entries as stored, and the label and data folder of each valid
+// entry in order (what --addcont gives the Emulator).
+struct UserAddOnCase {
+	std::vector<std::string> stored;
+	std::vector<std::string> labels;
+	std::vector<std::string> folders; // "" for a license only
+};
+
+UserAddOnCase UserAddOns(const KytyTests::TempDir& dir) {
+	static const std::string_view         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+	static const std::vector<std::string> invalid  = {
+	    "", "SHORT", "lowercase0000000", "LICENSE0000000001", "LICENSE000000001=", "=folder"};
+	UserAddOnCase addons;
+	const int     count = OneIn(3) ? 0 : ConfigGen::Choose(1, 4);
+	for (int i = 0; i < count; i++) {
+		if (OneIn(5)) {
+			addons.stored.push_back(PickOf(invalid));
+			continue;
+		}
+		std::string label;
+		for (int j = 0; j < 16; j++) {
+			label += alphabet[ConfigGen::Choose<size_t>(0, alphabet.size())];
+		}
+		std::string folder;
+		if (OneIn(2)) {
+			folder = dir.MakeDirectories("addon " + std::to_string(i)).string();
+		}
+		addons.stored.push_back(folder.empty() ? label : label + "=" + folder);
+		addons.labels.push_back(label);
+		addons.folders.push_back(folder);
+	}
+	return addons;
+}
+
+// An activity ID that core::IsLaunchActivityId accepts: 1-32 printable ASCII characters.
+std::string ActivityId() {
+	std::string id;
+	const int   length = ConfigGen::Choose(1, 33);
+	for (int i = 0; i < length; i++) {
+		id += static_cast<char>(ConfigGen::Choose<int>(' ', '~' + 1));
+	}
+	return id;
 }
 
 std::string Joined(const std::vector<std::string>& args) {
@@ -202,6 +242,13 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		if (with_invalid) {
 			config.host_input_mapping = WithInvalidEntries(config.host_input_mapping);
 		}
+
+		// User add-ons (upstream's --addcont): licenses only and add-ons whose data folder exists,
+		// with entries that --addcont would refuse mixed in (the arguments leave them out).
+		const auto user_addons = UserAddOns(dir);
+		effective.user_addons  = user_addons.stored;
+		// One run into an activity (upstream's "Launch activity"), or none.
+		effective.launch_activity = OneIn(2) ? std::string() : ActivityId();
 
 		const auto title = ConfigGen::TitleId();
 		if (kyty::core::IsCheatTitleId(title) && OneIn(2)) {
@@ -270,7 +317,6 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		RC_ASSERT(c.console_language == static_cast<uint32_t>(config.console_language));
 		RC_ASSERT(c.vulkan_validation_enabled == config.vulkan_validation_enabled);
 		RC_ASSERT(c.shader_validation_enabled == config.shader_validation_enabled);
-		RC_ASSERT(c.shader_optimization_type == EmulatorType(config.shader_optimization_type));
 		RC_ASSERT(c.shader_log_direction == EmulatorDirection(config.shader_log_direction));
 		RC_ASSERT(c.shader_log_folder.native() == config.shader_log_folder);
 		RC_ASSERT(c.command_buffer_dump_enabled == config.command_buffer_dump_enabled);
@@ -280,6 +326,27 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		RC_ASSERT(c.profiler_enabled == config.profiler_enabled);
 		RC_ASSERT(c.renderdoc_enabled == config.renderdoc_enabled);
 		RC_ASSERT(c.amd_cpu_enabled == config.amd_cpu_enabled);
+		RC_ASSERT(c.stretch_enabled == config.stretch_enabled);
+		RC_ASSERT(c.readback_storage_images == config.readback_storage_images);
+		RC_ASSERT(c.flush_draws == static_cast<uint32_t>(config.flush_draws));
+		RC_ASSERT(c.occlusion_queries_enabled == config.occlusion_queries_enabled);
+		RC_ASSERT(c.relaxed_shader_float == config.relaxed_shader_float);
+		RC_ASSERT(c.native_rt == config.native_rt);
+		RC_ASSERT(c.shader_cache_enabled == config.shader_cache_enabled);
+		RC_ASSERT(c.psn_emulation_enabled == config.psn_emulation_enabled);
+		RC_ASSERT(c.guest_tsc_enabled == config.guest_tsc_enabled);
+		RC_ASSERT(c.launch_activity == effective.launch_activity);
+		// PS5 Pro mode: the upscaler, and its folder and preset, only with it (else the defaults).
+		RC_ASSERT(c.pro_enabled == config.pro_enabled);
+		const bool dlss =
+		    config.pro_enabled && config.pssr_upscaler == kyty::core::PssrUpscaler::DLSS;
+		const bool fsr =
+		    config.pro_enabled && config.pssr_upscaler == kyty::core::PssrUpscaler::FSR;
+		RC_ASSERT(c.pssr_upscaler == (config.pro_enabled ? EmulatorUpscaler(config.pssr_upscaler)
+		                                                 : Config::ConfigOptions {}.pssr_upscaler));
+		RC_ASSERT(c.dlss_folder.native() == (dlss ? config.dlss_folder : std::string()));
+		RC_ASSERT(c.dlss_preset == (dlss ? static_cast<uint32_t>(config.dlss_preset) : 0U));
+		RC_ASSERT(c.fsr_folder.native() == (fsr ? config.fsr_folder : std::string()));
 		// One --keymap per valid entry, in order and as stored.
 		RC_ASSERT(c.keymap == valid_mapping);
 		RC_ASSERT(c.keymap == kyty::core::DropInvalidMappingEntries(config.host_input_mapping));
@@ -310,6 +377,11 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		auto addons = effective.addons_dir;
 		std::replace(addons.begin(), addons.end(), '\\', '/');
 		RC_ASSERT(parsed.addcont_dir.native() == addons);
+		RC_ASSERT(parsed.addcont.size() == user_addons.labels.size());
+		for (size_t i = 0; i < parsed.addcont.size(); i++) {
+			RC_ASSERT(parsed.addcont[i].entitlement_label == user_addons.labels[i]);
+			RC_ASSERT(parsed.addcont[i].mount_dir.native() == user_addons.folders[i]);
+		}
 		if (effective.cheat_plan) {
 			RC_ASSERT(effective.cheat_plan->native() ==
 			          kyty::core::CheatFilePath(dir.Path(), title).native());
@@ -323,5 +395,7 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		                                   : "directory, other elf");
 		RC_CLASSIFY(effective.cheat_plan.has_value(), "cheat plan");
 		RC_CLASSIFY(with_invalid, "invalid mapping entries dropped");
+		RC_CLASSIFY(!user_addons.labels.empty(), "user add-ons");
+		RC_CLASSIFY(!effective.launch_activity.empty(), "an activity");
 	});
 }

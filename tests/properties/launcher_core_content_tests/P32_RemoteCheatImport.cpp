@@ -6,11 +6,15 @@
 // writes each (offsets with or without 0x, byte strings in either case, "absolute": false and
 // "expected" equal to "off" now and then), "enabled" absent, true, or false, and unknown members at
 // the top level and in mods. The real Data_Directory holds other titles' cheat files and other
-// data, and the game's own cheat file is absent, valid, or invalid. ImportRemoteCheats must refuse
-// to replace an existing file without the bytes LoadLocalCheats read (NeedsConfirmation, nothing
-// changed), then write <data>/_Patches/<UPPERCASE TITLE_ID>.json, whose cheats are the remote
-// ones, all disabled, with every other member preserved (the document equals the remote one with
-// "enabled": false in each mod), and leave every other path byte-identical.
+// data, and the game's own cheat file is absent, valid, invalid, or a cheat file of this game
+// whose cheats may be kept. ImportRemoteCheats must refuse to replace an existing file without the
+// bytes LoadLocalCheats read (NeedsConfirmation, nothing changed), then write
+// <data>/_Patches/<UPPERCASE TITLE_ID>.json, whose cheats are the remote ones, all disabled, with
+// every other member preserved and "process" set to the game's executable (the document equals the
+// remote one with "enabled": false in each mod and the game's "process"), after the local file's
+// other cheats when they are kept (upstream KytyPS5 commit d2ec91b8: the local cheats whose names
+// no remote cheat has, in their order and with their states), and leave every other path
+// byte-identical.
 
 #include "launcher/core/cheats.h"
 #include "support/contentGenerators.h"
@@ -144,20 +148,41 @@ KYTY_PROPERTY(32, "Remote cheat import") {
 		temp.WriteFile("data/_Patches/readme.txt", "other");
 		temp.WriteFile("data/_SaveData/" + title + "/save.bin", "save");
 		const auto target = data / "_Patches" / (title + ".json");
-		const int  local  = Choose(0, 3); // 0: no file, 1: a valid file, 2: an invalid file
+		// 0: no file, 1: a valid file of no game, 2: an invalid file, 3: a cheat file of this game.
+		const int                local = Choose(0, 4);
+		std::vector<std::string> local_names;
+		std::vector<bool>        local_enabled;
 		if (local == 1) {
 			temp.WriteFile("data/_Patches/" + title + ".json",
 			               R"({"mods":[{"name":"old","enabled":true}]})");
 		} else if (local == 2) {
 			temp.WriteFile("data/_Patches/" + title + ".json", "{ not json");
+		} else if (local == 3) {
+			ContentGen::CheatDocumentSpec own;
+			own.before      = {{"id", ContentGen::JsonString(RandomCase(title))},
+			                   {"version", ContentGen::JsonString(version)},
+			                   {"process", ContentGen::JsonString(RandomCase(process))}};
+			const int count = Choose(1, 4);
+			for (int i = 0; i < count; i++) {
+				// Now and then the name of a remote cheat, which the import replaces.
+				local_names.push_back(OneIn(3) ? "Cheat " + std::to_string(Choose(0, mods))
+				                               : "Local " + std::to_string(i));
+				local_enabled.push_back(OneIn(2));
+				own.mods.push_back({{"name", ContentGen::JsonString(local_names.back())},
+				                    {"enabled", local_enabled.back() ? "true" : "false"},
+				                    {"memory", ContentGen::JsonArrayText({MemoryWrite()})}});
+			}
+			temp.WriteFile("data/_Patches/" + title + ".json", ContentGen::CheatDocumentText(own));
 		}
 		const auto loaded = kyty::core::LoadLocalCheats(data, spelling);
 		RC_ASSERT(loaded.path == target && loaded.readable);
 		const auto before = ContentGen::SnapshotTree(data);
 
+		const bool keep = local != 0 && OneIn(2) && loaded.document.has_value();
+		const kyty::core::CheatDocument* kept_from = keep ? &*loaded.document : nullptr;
 		if (local != 0) {
-			const auto refused =
-			    kyty::core::ImportRemoteCheats(data, spelling, *remote, std::nullopt);
+			const auto refused = kyty::core::ImportRemoteCheats(data, spelling, *remote, process,
+			                                                    kept_from, std::nullopt);
 			RC_ASSERT(!refused.has_value());
 			RC_ASSERT(refused.error().kind == kyty::core::CheatSaveErrorKind::NeedsConfirmation);
 			RC_ASSERT(ContentGen::SnapshotTree(data) == before);
@@ -166,24 +191,49 @@ KYTY_PROPERTY(32, "Remote cheat import") {
 		if (loaded.bytes) {
 			expected_bytes = *loaded.bytes;
 		}
-		const auto imported =
-		    kyty::core::ImportRemoteCheats(data, spelling, *remote, expected_bytes);
+		const auto imported = kyty::core::ImportRemoteCheats(data, spelling, *remote, process,
+		                                                     kept_from, expected_bytes);
 		RC_ASSERT(imported.has_value());
 		RC_ASSERT(*imported == target);
 
-		// The written file: the remote cheats, all disabled, every other member preserved.
+		// The written file: the local file's other cheats when they are kept (only a cheat file of
+		// this game), then the remote cheats, all disabled, every other member preserved, and the
+		// game's executable.
 		const auto written = kyty::core::LoadLocalCheats(data, title);
 		RC_ASSERT(written.document.has_value());
-		RC_ASSERT(written.document->cheats.size() == remote->cheats.size());
-		for (std::size_t i = 0; i < remote->cheats.size(); i++) {
-			RC_ASSERT(!written.document->cheats[i].enabled);
-			RC_ASSERT(written.document->cheats[i].name == remote->cheats[i].name);
-			RC_ASSERT(written.document->cheats[i].memory == remote->cheats[i].memory);
+		const auto& cheats = written.document->cheats;
+		std::size_t first  = 0;
+		if (keep && local == 3) {
+			for (std::size_t i = 0; i < local_names.size(); i++) {
+				if (local_names[i].starts_with("Local ")) {
+					RC_ASSERT(first < cheats.size());
+					RC_ASSERT(cheats[first].name == local_names[i]);
+					RC_ASSERT(cheats[first].enabled == local_enabled[i]);
+					RC_ASSERT(cheats[first].memory == loaded.document->cheats[i].memory);
+					first++;
+				}
+			}
+			RC_TAG("kept the local file's other cheats");
 		}
-		const auto expected = kyty::core::ParseCheatDocument(
-		    ContentGen::CheatDocumentText(ContentGen::AllDisabledSpec(spec)), "expected.json");
-		RC_ASSERT(expected.has_value());
-		RC_ASSERT(written.document->json == expected->json);
+		RC_ASSERT(cheats.size() == first + remote->cheats.size());
+		for (std::size_t i = 0; i < remote->cheats.size(); i++) {
+			RC_ASSERT(!cheats[first + i].enabled);
+			RC_ASSERT(cheats[first + i].name == remote->cheats[i].name);
+			RC_ASSERT(cheats[first + i].memory == remote->cheats[i].memory);
+		}
+		RC_ASSERT(written.document->process == process);
+		auto expected_spec = ContentGen::AllDisabledSpec(spec);
+		for (auto& member: expected_spec.before) {
+			if (member.key == "process") {
+				member.value = ContentGen::JsonString(process);
+			}
+		}
+		if (first == 0) {
+			const auto expected = kyty::core::ParseCheatDocument(
+			    ContentGen::CheatDocumentText(expected_spec), "expected.json");
+			RC_ASSERT(expected.has_value());
+			RC_ASSERT(written.document->json == expected->json);
+		}
 
 		// Nothing else changed.
 		auto after = ContentGen::SnapshotTree(data);
@@ -192,7 +242,8 @@ KYTY_PROPERTY(32, "Remote cheat import") {
 		rest.erase("_Patches/" + title + ".json");
 		RC_ASSERT(after == rest);
 		RC_TAG(local == 0   ? "no local file"
-		       : local == 1 ? "replaced a valid file"
-		                    : "replaced an invalid file");
+		       : local == 1 ? "a valid file of no game"
+		       : local == 2 ? "an invalid file"
+		                    : "a cheat file of this game");
 	});
 }

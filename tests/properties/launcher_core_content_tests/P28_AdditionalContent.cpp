@@ -190,9 +190,9 @@ KYTY_PROPERTY(28, "Additional content listing") {
 		RC_ASSERT(listing.items == on_disk);
 		RC_ASSERT(listing.status == (on_disk.empty() ? AdditionalContentStatus::NoItems
 		                                             : AdditionalContentStatus::Listed));
-		RC_ASSERT(listing.message ==
-		          (on_disk.empty() ? "No add-ons found for this game in:\n" + folder.string()
-		                           : std::to_string(on_disk.size()) + " installed add-on(s)"));
+		RC_ASSERT(listing.message == (on_disk.empty()
+		                                  ? "No add-ons found for this game in:\n" + folder.string()
+		                                  : std::to_string(on_disk.size()) + " add-on(s)"));
 		RC_TAG("real files");
 	});
 }

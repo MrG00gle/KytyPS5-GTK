@@ -6,7 +6,14 @@
 //
 // The Qt field red_zone_protection_enabled is not modeled: the --redzone option is gone
 // (Requirement 3.4). In Kyty.ini a key of that name is an unknown key, kept on rewrite; in a
-// Game_Settings_File it is an unknown field, rejected on import.
+// Game_Settings_File it is an unknown field, rejected on import. The field
+// shader_optimization_type is not modeled either: the emulator drops its option. In Kyty.ini it is
+// an unknown key, kept on rewrite; a Game_Settings_File import ignores it.
+//
+// The fields from stretch_enabled to guest_tsc_enabled came with the upstream launcher's later
+// settings, under its key names. dlss_preset is this launcher's own (the upstream launcher has no
+// such setting). fsr_folder and the FSR upscaler are kept so that upstream's files load, but the
+// settings editor does not offer them: FSR has no effect on Linux.
 //
 // configurationFields.h has the field table: the Kyty.ini and JSON key of each field, its text
 // form, and its rules.
@@ -21,11 +28,42 @@
 
 namespace kyty::core {
 
+// The screen size the emulator's window gets, in pixels (the upstream launcher's free-form
+// resolution). Kyty.ini and Game_Settings_File store it as "<width>x<height>".
+struct ScreenResolution {
+	int32_t width  = 1280;
+	int32_t height = 720;
+
+	friend bool operator==(const ScreenResolution&, const ScreenResolution&) = default;
+};
+
+// The upstream launcher's limits for each side.
+inline constexpr int32_t kMinScreenSize = 320;
+inline constexpr int32_t kMaxScreenSize = 16384;
+
+// The upstream launcher's presets, in its order: 1280x720, 1920x1080, 2560x1440, 3840x2160, then
+// the ultrawide 2560x1080, 3440x1440, 3840x1600, and 5120x2160.
+std::span<const ScreenResolution> ScreenResolutionPresets();
+
+// Each side kMinScreenSize-kMaxScreenSize.
+bool IsValidScreenResolution(const ScreenResolution& resolution);
+
+// "<width>x<height>" in decimal, as the upstream launcher writes it ("1280x720").
+std::string FormatScreenResolution(const ScreenResolution& resolution);
+
+// The sizes the text forms give, without the range check: the upstream launcher's form (optional
+// ASCII spaces around, an optional "R", the width, "x" or "X", the height: "1920x1080",
+// " 3440 X 1440 "), which also reads the old keys "R1280X720", "R1920X1080", "R2560X1440", and
+// "R3840X2160"; and the integer index 0-3 of those four (the old enum's legacy form). Nothing for
+// other text or a side that does not fit int32_t.
+std::optional<ScreenResolution> ParseScreenResolution(std::string_view text);
+
 // The Qt launcher's Q_ENUM types. Kyty.ini and Game_Settings_File store their key names.
-enum class ScreenResolution { R1280X720, R1920X1080, R2560X1440, R3840X2160 };
 enum class PresentMode { Fifo, Mailbox, Immediate };
-enum class ShaderOptimizationType { None, Size, Performance };
 enum class LogDirection { Silent, Console, File };
+enum class PssrUpscaler { Linear, DLSS, FSR };
+// Default is the DLSS model's own preset; A-O are passed as --dlss-preset <letter>.
+enum class DlssPreset { Default, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O };
 
 // The emulator's limits (src/common/emulatorConfig.h).
 inline constexpr int32_t kDefaultUserId = 1000;
@@ -41,39 +79,52 @@ inline constexpr int32_t kMaxKeyboardPlayer      = 4; // the emulator's player c
 // fields; input_mapping_custom is meaningful only per game. An empty audio_input_device means no
 // audio input, and gpu_index -1 means automatic.
 struct GameConfiguration {
-	ScreenResolution       screen_resolution           = ScreenResolution::R1280X720;
-	std::string            user_name                   = "Kyty";
-	int32_t                user_id                     = kDefaultUserId;
-	std::string            audio_input_device          = {};
-	PresentMode            present_mode                = PresentMode::Mailbox;
-	int32_t                gpu_index                   = -1;
-	bool                   fullscreen_enabled          = false;
-	bool                   hdr_enabled                 = false;
-	bool                   hide_cursor_enabled         = false;
-	bool                   readback_linear_images      = false;
-	bool                   readback_tiled_images       = false;
-	bool                   sync_raw_image_buffers      = false;
-	bool                   tessellation_enabled        = false;
-	bool                   trophy_enabled              = true;
-	int32_t                trophy_duration_seconds     = 6;
-	bool                   perf_overlay_enabled        = false;
-	bool                   skip_notice_screen          = false;
-	bool                   network_connected           = false;
-	int32_t                vblank_frequency            = 60;
-	int32_t                console_language            = kDefaultConsoleLanguage;
-	bool                   vulkan_validation_enabled   = false;
-	bool                   shader_validation_enabled   = false;
-	ShaderOptimizationType shader_optimization_type    = ShaderOptimizationType::Performance;
-	LogDirection           shader_log_direction        = LogDirection::Silent;
-	std::string            shader_log_folder           = "_Shaders";
-	bool                   command_buffer_dump_enabled = false;
-	std::string            command_buffer_dump_folder  = "_Buffers";
-	LogDirection           printf_direction            = LogDirection::Silent;
-	std::string            printf_output_file          = "_kyty.txt";
-	bool                   profiler_enabled            = false;
-	bool                   renderdoc_enabled           = false;
-	bool                   amd_cpu_enabled             = false;
-	std::string            elf                         = "eboot.bin";
+	ScreenResolution screen_resolution           = {};
+	std::string      user_name                   = "Kyty";
+	int32_t          user_id                     = kDefaultUserId;
+	std::string      audio_input_device          = {};
+	PresentMode      present_mode                = PresentMode::Mailbox;
+	int32_t          gpu_index                   = -1;
+	bool             fullscreen_enabled          = false;
+	bool             hdr_enabled                 = false;
+	bool             hide_cursor_enabled         = false;
+	bool             stretch_enabled             = false;
+	bool             readback_linear_images      = false;
+	bool             readback_tiled_images       = false;
+	bool             readback_storage_images     = false;
+	bool             sync_raw_image_buffers      = false;
+	int32_t          flush_draws                 = 0; // 0 is off
+	bool             tessellation_enabled        = false;
+	bool             occlusion_queries_enabled   = false;
+	bool             relaxed_shader_float        = false;
+	bool             native_rt                   = false;
+	bool             shader_cache_enabled        = true;
+	bool             trophy_enabled              = true;
+	int32_t          trophy_duration_seconds     = 6;
+	bool             perf_overlay_enabled        = false;
+	bool             skip_notice_screen          = false;
+	bool             network_connected           = false;
+	bool             psn_emulation_enabled       = false;
+	int32_t          vblank_frequency            = 60;
+	int32_t          console_language            = kDefaultConsoleLanguage;
+	bool             vulkan_validation_enabled   = false;
+	bool             shader_validation_enabled   = false;
+	LogDirection     shader_log_direction        = LogDirection::Silent;
+	std::string      shader_log_folder           = "_Shaders";
+	bool             command_buffer_dump_enabled = false;
+	std::string      command_buffer_dump_folder  = "_Buffers";
+	LogDirection     printf_direction            = LogDirection::Silent;
+	std::string      printf_output_file          = "_kyty.txt";
+	bool             profiler_enabled            = false;
+	bool             renderdoc_enabled           = false;
+	bool             pro_enabled                 = false;
+	PssrUpscaler     pssr_upscaler               = PssrUpscaler::Linear;
+	std::string      dlss_folder                 = {};
+	DlssPreset       dlss_preset                 = DlssPreset::Default;
+	std::string      fsr_folder                  = {};
+	bool             amd_cpu_enabled             = false;
+	bool             guest_tsc_enabled           = false;
+	std::string      elf                         = "eboot.bin";
 	// Per game: true when host_input_mapping replaces the global mapping (Requirement 11.14).
 	bool input_mapping_custom = false;
 	// Entries "Control=Input", one --keymap option each.
@@ -130,7 +181,8 @@ enum class ValidationScope { Global, Game };
 // (user name 1-16 UTF-8 bytes after TrimWhitespace; user ID 0-2,147,482,879 except 254 and 255;
 // vblank frequency 30-360; trophy duration 5-10; shader_log_folder, printf_output_file, and
 // command_buffer_dump_folder not empty while shader logs or printf output go to a File or command
-// buffer dumps are enabled); gpu_index >= -1; console_language 0-29; enum values that name a key;
+// buffer dumps are enabled); IsValidScreenResolution; gpu_index >= -1; flush_draws >= 0;
+// console_language 0-29; enum values that name a key;
 // elf a non-empty relative path without a ".." component; and each host_input_mapping entry
 // IsValidMappingEntry (in Game scope only while input_mapping_custom is true). The
 // host_input_mapping message lists every invalid entry, numbered from 1, with its quoted text.

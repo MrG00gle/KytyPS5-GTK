@@ -4,6 +4,10 @@
 #include "launcher/core/text.h"
 #include "launcher/core/version.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <utility>
 
@@ -75,6 +79,59 @@ std::string GetTitleId(const Json& root) {
 	return {};
 }
 
+// attribute3 bit 22: the title supports PS5 Pro mode (upstream KytyPS5's launcher, commit
+// bd28a152).
+constexpr std::uint64_t kProModeAttribute = std::uint64_t {1} << 22u;
+
+bool SupportsProMode(const Json& root) {
+	const auto it = root.find("attribute3");
+	if (it == root.end()) {
+		return false;
+	}
+	std::uint64_t bits = 0;
+	if (it->is_number_unsigned()) {
+		// Above the qint64 range Qt reads a double that toInteger() does not convert.
+		bits = it->get<std::uint64_t>();
+		if (bits > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+			return false;
+		}
+	} else if (it->is_number_integer()) {
+		bits = static_cast<std::uint64_t>(it->get<std::int64_t>());
+	} else if (it->is_number_float()) {
+		// QJsonValue::toInteger(): a whole number that fits in a qint64, else 0.
+		const double value = it->get<double>();
+		if (!std::isfinite(value) || std::trunc(value) != value || value < -0x1p63 ||
+		    value >= 0x1p63) {
+			return false;
+		}
+		bits = static_cast<std::uint64_t>(static_cast<std::int64_t>(value));
+	} else {
+		return false;
+	}
+	return (bits & kProModeAttribute) != 0;
+}
+
+// A launchActivity intent among gameIntent.permittedIntents (upstream KytyPS5's launcher, commit
+// 2638b1b0).
+bool HasActivityIntent(const Json& root) {
+	const auto intent = root.find("gameIntent");
+	if (intent == root.end() || !intent->is_object()) {
+		return false;
+	}
+	const auto permitted = intent->find("permittedIntents");
+	if (permitted == intent->end() || !permitted->is_array()) {
+		return false;
+	}
+	return std::any_of(permitted->begin(), permitted->end(), [](const Json& item) {
+		if (!item.is_object()) {
+			return false;
+		}
+		const auto type = item.find("intentType");
+		return type != item.end() && type->is_string() &&
+		       type->get_ref<const std::string&>() == "launchActivity";
+	});
+}
+
 } // namespace
 
 std::string FallbackTitle(const std::filesystem::path& entry_path, GameEntry::Kind kind) {
@@ -113,6 +170,8 @@ GameMetadata ParseParamJson(std::string_view bytes, std::string_view fallback_ti
 	}
 	metadata.firmware_version =
 	    FormatSystemSoftwareVersion(GetString(root, "requiredSystemSoftwareVersion"));
+	metadata.pro_supported   = SupportsProMode(root);
+	metadata.activity_intent = HasActivityIntent(root);
 	return metadata;
 }
 

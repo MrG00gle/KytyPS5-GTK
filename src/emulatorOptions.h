@@ -65,11 +65,11 @@ std::filesystem::path FlatpakDataDirectory(const DataDirectoryEnvironment& env);
 
 // Requirement 12.2. Outside the Flatpak_Sandbox it changes nothing. Inside it, it creates
 // FlatpakDataDirectory(env) and makes it the working directory, then makes a relative app0_dir,
-// game_patch, and addcont_dir absolute against env.cwd, and a relative printf_output_file,
-// shader_log_folder, and command_buffer_dump_folder absolute against the Data_Directory. Empty and
-// absolute paths stay as they are. Returns an empty string, or "cannot create the data directory
-// <path>: <strerror>" or "cannot enter the data directory <path>: <strerror>" with options
-// unchanged.
+// game_patch, addcont_dir, addcont mount_dir, dlss_folder, and fsr_folder absolute against
+// env.cwd, and a relative printf_output_file, shader_log_folder, and command_buffer_dump_folder
+// absolute against the Data_Directory. Empty and absolute paths stay as they are. Returns an empty
+// string, or "cannot create the data directory <path>: <strerror>" or "cannot enter the data
+// directory <path>: <strerror>" with options unchanged.
 std::string ApplyDataDirectory(RunOptions& options, const DataDirectoryEnvironment& env);
 
 // Requirement 14.6: the asset relative (for example "sounds/trophy-unlock.wav") of the Emulator in

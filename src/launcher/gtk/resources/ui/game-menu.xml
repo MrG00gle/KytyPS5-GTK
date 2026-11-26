@@ -7,7 +7,9 @@
      core::IsCheatTitleId accepts offer cheats, as in Qt). -->
 <interface domain="kyty-launcher">
   <menu id="game-menu">
-    <section>
+    <!-- After Run, the main window inserts the "Launch into activity" submenu for a game that has
+         a launchActivity intent (upstream KytyPS5's launcher). -->
+    <section id="game-actions">
       <item>
         <attribute name="label" translatable="yes" context="game menu">Run</attribute>
         <attribute name="action">game.run</attribute>
@@ -25,7 +27,7 @@
         <attribute name="action">game.trophies</attribute>
       </item>
       <item>
-        <attribute name="label" translatable="yes">Cheats (experimental)…</attribute>
+        <attribute name="label" translatable="yes">Cheats and patches (experimental)…</attribute>
         <attribute name="action">game.cheats</attribute>
         <attribute name="hidden-when">action-disabled</attribute>
       </item>

@@ -12,15 +12,19 @@
 // - Trophies (11.1, 11.2, LFI-25, LFI-26): content_trophy_viewer, content_trophy_details,
 //   content_trophy_overview, content_trophy_overview_alignment (W4-20),
 //   content_trophy_overview_cancel (W4-16), trophy_overview_trims_titles (p7-u7-2).
-// - Add-ons (11.3, LFI-28): content_addons_list, content_addons_refresh_focused (W4-27).
+// - Add-ons (11.3, LFI-28): content_addons_list, content_addons_refresh_focused (W4-27),
+//   content_addons_user (upstream KytyPS5's user add-ons).
 // - Compression (11.8-11.11, 11.16, LFI-29): content_compress_progress_cancel,
 //   content_compress_verify_failed, content_compress_quit_midway (W4-17),
 //   compression_quit_after_main_window_closed and compression_quit_job_outlives_wait (p7-u7-2).
 // - Cheats (11.4-11.6, LFI-27): content_cheats_remote_list (W4-24, W4-28),
-//   content_cheats_remote_not_json (W4-25, phase 8 plan D9), content_cheats_local_states (W4-22,
+//   content_cheats_remote_not_json (W4-25, phase 8 plan D9), content_cheats_remote_trainers
+//   (upstream KytyPS5's MC4 and SHN import), content_cheats_modules_import (upstream KytyPS5's
+//   KytyPS5-Modules list and merged import), content_cheats_local_states (W4-22,
 //   W4-23, p7-u7-1), content_cheats_apply_enable_disable, cheats_version_column_font_change
 //   (p7-u7-3), cheats_split_position_states (phase 8 plan D12).
 // - Input mapping (11.14, LFI-24): content_input_mapping_capture (key, mouse, and pad),
+//   content_input_mapping_swipes (upstream KytyPS5's touch pad swipes),
 //   content_input_mapping_per_game, content_input_mapping_per_game_note (W4-14),
 //   content_input_mapping_markup (W4-13, a translated section title with "<" and "&" through a
 //   catalog the case writes), content_controller_preview (the pressed-state highlight, 11.11's
@@ -336,12 +340,13 @@ bool ReleaseJsonIndex(KytyUi::UiContext& ui) {
 	return Check(ui.Server().Release(url), "the JSON index request arrived");
 }
 
-// Serves Alpha Game's JSON file of version (01.000 or 01.020) with body.
-void ServeAlphaFile(KytyUi::UiContext& ui, std::string body, const char* version = "01.000") {
+// Serves Alpha Game's file of version (01.000 or 01.020) in format with body.
+void ServeAlphaFile(KytyUi::UiContext& ui, std::string body, const char* version = "01.000",
+                    const char* format = "json") {
 	core::RemoteCheatFile file;
-	file.name    = gen::CheatFileName("PPSA01001", version, "alpha", "json");
+	file.name    = gen::CheatFileName("PPSA01001", version, "alpha", format);
 	file.version = version;
-	file.format  = "json";
+	file.format  = format;
 	KytyTests::LoopbackResponse response;
 	response.body         = std::move(body);
 	response.content_type = "text/plain";
@@ -547,8 +552,9 @@ KYTY_UI_CASE(content_remove_save_data_confirm) {
 	context.path_remover = &core::HostPathRemover();
 }
 
-// Import to Local over an existing local file (11.5): "Replace local cheats?"; Cancel keeps the
-// file; Replace writes the remote file with every cheat off and shows the Local view.
+// Import to Local over an existing local file (11.5; upstream KytyPS5 commit d2ec91b8): "Import to
+// Local" with Cancel (the default), Replace, and Keep other cheats; Cancel keeps the file; Replace
+// writes the remote file with every cheat off and shows the Local view.
 KYTY_UI_CASE(content_cheats_import_confirm) {
 	KytyUi::UiContext ui;
 	const auto        games = ContentLibrary(ui);
@@ -578,10 +584,15 @@ KYTY_UI_CASE(content_cheats_import_confirm) {
 	      "the preview lists the remote cheats");
 	const auto import_once = [&](const char* answer) {
 		Check(KytyUi::Activate(import), "a click on Import to Local");
-		if (GtkWindow* question = KytyUi::FindAlert("Replace local cheats?"); question != nullptr) {
-			Check(HasText(GTK_WIDGET(question), "Replace the local cheat file and selections for "
-			                                    "PPSA01001? Imported cheats will start unchecked."),
+		// The question's heading is "Import to Local", which the window's button says too.
+		if (GtkWindow* question = KytyUi::FindAlert("A local cheat file for PPSA01001 exists.");
+		    question != nullptr) {
+			Check(HasText(GTK_WIDGET(question), "Import to Local") &&
+			          HasText(GTK_WIDGET(question), "A local cheat file for PPSA01001 exists. "
+			                                        "Imported cheats will start unchecked."),
 			      "the question names the title ID");
+			Check(HasText(GTK_WIDGET(question), "Keep other cheats"),
+			      "the local file of this game can keep its other cheats");
 			KytyUi::CloseAlert(question, answer);
 		}
 	};
@@ -1155,7 +1166,7 @@ KYTY_UI_CASE(content_addons_list) {
 	std::sort(titles.begin(), titles.end());
 	Check(titles == std::vector<std::string> {"ALPHABONUSPACK01", "Alpha Soundtrack"},
 	      "Alpha Game's two add-ons, one by its entitlement label, none of Beta Quest");
-	Check(LabelText(root, "status_label") == "2 installed add-ons",
+	Check(LabelText(root, "status_label") == "2 add-ons",
 	      "the status counts them: " + LabelText(root, "status_label"));
 	Check(KytyUi::Capture(GTK_WINDOW(window), "listed"), "the listed add-ons render");
 	struct State {
@@ -1235,6 +1246,142 @@ KYTY_UI_CASE(content_addons_refresh_focused) {
 	Check(FirstNamed(root, ADW_TYPE_ACTION_ROW, "Alpha Soundtrack") != nullptr,
 	      "the add-on is listed after the refreshes");
 	KytyUi::CloseWithEscape(GTK_WINDOW(window), "the additional content window");
+}
+
+// Upstream KytyPS5's user add-ons: Add checks the label and the folder (the status says why and
+// the row is marked), takes a content ID's label and a folder from the chooser, and saves the
+// game's list to Kyty.ini ([AdditionalContent], by title ID); the rows follow the packages with
+// their state; Remove saves the list without the entry. A game without a title ID has none.
+KYTY_UI_CASE(content_addons_user) {
+	KytyUi::UiContext ui;
+	const auto        games = ContentLibrary(ui);
+	if (games.empty()) {
+		return;
+	}
+	const fs::path  data = ui.Root() / "user dlc";
+	std::error_code ec;
+	fs::create_directories(data, ec);
+	auto& context = ui.Context();
+	auto* window  = KYTY_ADDITIONAL_CONTENT_WINDOW(
+	    Present(GTK_WINDOW(kyty_additional_content_window_new(context, ui.ParentWindow(),
+	                                                          Entry(games, kAlphaTitle))),
+	            "the additional content window"));
+	if (window == nullptr) {
+		return;
+	}
+	GtkWidget* root   = GTK_WIDGET(window);
+	const auto loaded = [window]() { return kyty_additional_content_window_is_loaded(window); };
+	KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	GtkWidget* label_row  = Widget(root, "label_row");
+	GtkWidget* folder_row = Widget(root, "folder_row");
+	if (!Check(label_row != nullptr && folder_row != nullptr &&
+	               gtk_widget_is_sensitive(Widget(root, "add_group")) != FALSE,
+	           "the add form is offered for a game with a title ID")) {
+		return;
+	}
+	const auto stored = [&ui]() {
+		auto report = core::LoadSettings(ui.SettingsFile());
+		return report ? report->settings.user_addons
+		              : std::map<std::string, std::vector<std::string>> {};
+	};
+	const auto add = [&](const char* label, const std::string& folder) {
+		gtk_editable_set_text(GTK_EDITABLE(label_row), label);
+		gtk_editable_set_text(GTK_EDITABLE(folder_row), folder.c_str());
+		Check(KytyUi::Activate(Widget(root, "add_button")), "a click on Add");
+		KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	};
+	const std::string refused =
+	    "Enter a 16-character entitlement label (A-Z, 0-9) and an existing data folder, or no "
+	    "folder for a license only.";
+
+	// Refused: a short label, then a folder that does not exist; nothing is saved.
+	add("SHORT", "");
+	Check(LabelText(root, "status_label") == refused &&
+	          gtk_widget_has_css_class(label_row, "error") != FALSE &&
+	          gtk_widget_has_css_class(folder_row, "error") == FALSE,
+	      "a short label is refused: " + LabelText(root, "status_label"));
+	add("USERLICENSE00001", (ui.Root() / "missing").string());
+	Check(LabelText(root, "status_label") == refused &&
+	          gtk_widget_has_css_class(label_row, "error") == FALSE &&
+	          gtk_widget_has_css_class(folder_row, "error") != FALSE,
+	      "a missing data folder is refused");
+	Check(stored().empty() && context.settings.loaded.settings.user_addons.empty(),
+	      "nothing is saved");
+
+	// A license only, by the content ID's label.
+	add("UP0000-PPSA01001_00-USERLICENSE00001", "");
+	// An add-on with its data folder, chosen through the folder chooser.
+	gtk_editable_set_text(GTK_EDITABLE(label_row), "USERDATAPACK0001");
+	ui.Services().file_chooser.folder_answers.push_back({data});
+	Check(KytyUi::Activate(Widget(root, "choose_button")), "a click on the folder button");
+	KytyUi::WaitFor(
+	    [&]() { return data.string() == gtk_editable_get_text(GTK_EDITABLE(folder_row)); }, 3000,
+	    "the chosen folder in the data folder row");
+	const auto& calls = ui.Services().file_chooser.calls;
+	Check(!calls.empty() && calls.back() == "SelectFolders Select add-on data folder",
+	      "the chooser is titled Select add-on data folder");
+	Check(KytyUi::Activate(Widget(root, "add_button")), "a click on Add");
+	KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	const std::vector<std::string> expected = {"USERLICENSE00001",
+	                                           "USERDATAPACK0001=" + data.string()};
+	Check(stored() == std::map<std::string, std::vector<std::string>> {{"PPSA01001", expected}} &&
+	          context.settings.loaded.settings.user_addons.at("PPSA01001") == expected,
+	      "Kyty.ini holds the game's two user add-ons by its title ID");
+	Check(std::string(gtk_editable_get_text(GTK_EDITABLE(label_row))).empty() &&
+	          std::string(gtk_editable_get_text(GTK_EDITABLE(folder_row))).empty() &&
+	          gtk_widget_has_css_class(label_row, "error") == FALSE,
+	      "the form is empty after Add");
+	GtkWidget* license = FirstNamed(root, ADW_TYPE_ACTION_ROW, "USERLICENSE00001");
+	GtkWidget* pack    = FirstNamed(root, ADW_TYPE_ACTION_ROW, "USERDATAPACK0001");
+	Check(license != nullptr &&
+	          adw_action_row_get_subtitle(ADW_ACTION_ROW(license)) == std::string("License only") &&
+	          pack != nullptr &&
+	          adw_action_row_get_subtitle(ADW_ACTION_ROW(pack)) == "Data: " + data.string(),
+	      "the user add-ons' rows with their state");
+	Check(Named(root, ADW_TYPE_ACTION_ROW, "").size() == 3 &&
+	          LabelText(root, "status_label") == "3 add-ons",
+	      "the folder's add-on and the two user add-ons: " + LabelText(root, "status_label"));
+	Check(KytyUi::Capture(GTK_WINDOW(window), "user-add-ons"), "the user add-ons render");
+
+	// A stored data folder that is gone.
+	fs::remove(data, ec);
+	Check(KytyUi::Activate(Widget(root, "refresh_button")), "a click on Refresh");
+	KytyUi::WaitFor(loaded, 5000, "Refresh to list again");
+	pack = FirstNamed(root, ADW_TYPE_ACTION_ROW, "USERDATAPACK0001");
+	Check(pack != nullptr && adw_action_row_get_subtitle(ADW_ACTION_ROW(pack)) ==
+	                             "Data folder not found: " + data.string(),
+	      "a missing data folder is shown");
+
+	// Remove.
+	Check(KytyUi::Activate(KytyUi::FindByAccessibleLabel(root, "Remove USERLICENSE00001")),
+	      "a click on the license's Remove button");
+	KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	Check(stored() ==
+	              std::map<std::string, std::vector<std::string>> {
+	                  {"PPSA01001", {"USERDATAPACK0001=" + data.string()}}} &&
+	          FirstNamed(root, ADW_TYPE_ACTION_ROW, "USERLICENSE00001") == nullptr,
+	      "Remove saves the list without the license");
+	Check(KytyUi::Activate(KytyUi::FindByAccessibleLabel(root, "Remove USERDATAPACK0001")),
+	      "a click on the data pack's Remove button");
+	KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	Check(stored().empty() && context.settings.loaded.settings.user_addons.empty() &&
+	          LabelText(root, "status_label") == "1 add-on",
+	      "the last Remove leaves no list for the game");
+	KytyUi::CloseWithEscape(GTK_WINDOW(window), "the additional content window");
+
+	// No title ID: no user add-ons.
+	auto untitled     = Entry(games, kAlphaTitle);
+	untitled.title_id = "  ";
+	auto* plain       = KYTY_ADDITIONAL_CONTENT_WINDOW(Present(
+	    GTK_WINDOW(kyty_additional_content_window_new(context, ui.ParentWindow(), untitled)),
+	    "the additional content window without a title ID"));
+	if (plain != nullptr) {
+		KytyUi::WaitFor([plain]() { return kyty_additional_content_window_is_loaded(plain); }, 5000,
+		                "the add-ons to be listed");
+		Check(gtk_widget_is_sensitive(Widget(GTK_WIDGET(plain), "add_group")) == FALSE,
+		      "the add form is off without a title ID");
+		KytyUi::CloseWithEscape(GTK_WINDOW(plain), "the additional content window");
+	}
 }
 
 // ---- Compression
@@ -1564,7 +1711,7 @@ KYTY_UI_CASE(compression_quit_job_outlives_wait) {
 // ---- Cheats
 
 // The Remote view (11.4): the credit link, Alpha Game's files with the installed version first,
-// MC4 and SHN disabled, the count; W4-28: the Version column keeps its width while the list loads;
+// every one enabled, the count; W4-28: the Version column keeps its width while the list loads;
 // W4-24: the window opens at 900x700 with room for the preview.
 KYTY_UI_CASE(content_cheats_remote_list) {
 	KytyUi::UiContext ui;
@@ -1595,7 +1742,7 @@ KYTY_UI_CASE(content_cheats_remote_list) {
 	gtk_window_get_default_size(cheats, &width, &height);
 	Check(width == 900 && height == 700, "the window opens at 900x700");
 	GtkWidget* version = Widget(root, "version_header");
-	GtkWidget* format  = Widget(root, "format_header");
+	GtkWidget* format  = Widget(root, "type_header");
 	Check(HasText(root, "Loading remote cheats…"), "the list is loading");
 	const int loading_version = gtk_widget_get_width(version);
 	const int loading_format  = gtk_widget_get_width(format);
@@ -1607,7 +1754,7 @@ KYTY_UI_CASE(content_cheats_remote_list) {
 	KytyUi::WaitForPaintedFrame(root);
 	Check(gtk_widget_get_width(version) == loading_version &&
 	          gtk_widget_get_width(format) == loading_format,
-	      "the Version and Format columns keep their widths (" + std::to_string(loading_version) +
+	      "the Version and Type columns keep their widths (" + std::to_string(loading_version) +
 	          " -> " + std::to_string(gtk_widget_get_width(version)) + ", " +
 	          std::to_string(loading_format) + " -> " +
 	          std::to_string(gtk_widget_get_width(format)) + ")");
@@ -1617,19 +1764,18 @@ KYTY_UI_CASE(content_cheats_remote_list) {
 	for (GtkWidget* row: rows) {
 		names.push_back(KytyUi::ControlName(row));
 	}
-	Check(names.size() == 4 && names[0] == "01.000 (installed), JSON, PPSA01001_01.000_alpha.json",
+	Check(names.size() == 4 && names[0] == "01.000 (installed), Cheat, PPSA01001_01.000_alpha.json",
 	      "four files, the installed version's JSON file first: " +
 	          (names.empty() ? std::string("none") : names[0]));
-	int disabled = 0;
+	// Every file can be previewed, MC4 and SHN files too (upstream KytyPS5 commit 91c5820c); the
+	// tooltip is the collection's title of the file.
 	for (GtkWidget* row: rows) {
-		if (gtk_widget_get_sensitive(row) == FALSE) {
-			disabled++;
-			const char* tooltip = gtk_widget_get_tooltip_text(row);
-			Check(tooltip != nullptr && std::string_view(tooltip).ends_with(" is not supported."),
-			      "a disabled file says why");
-		}
+		const char* tooltip = gtk_widget_get_tooltip_text(row);
+		Check(gtk_widget_get_sensitive(row) != FALSE &&
+		          gtk_list_box_row_get_selectable(GTK_LIST_BOX_ROW(row)) != FALSE &&
+		          tooltip != nullptr && std::string_view(tooltip) == "Alpha Game",
+		      "an enabled file with its title: " + KytyUi::ControlName(row));
 	}
-	Check(disabled == 2, "the MC4 and SHN files are disabled");
 	Check(LabelText(root, "remote_status") == "4 remote files for PPSA01001.",
 	      "the status line: " + LabelText(root, "remote_status"));
 	// The preview of the installed version's file (W4-24: every cheat visible).
@@ -1646,15 +1792,23 @@ KYTY_UI_CASE(content_cheats_remote_list) {
 	      "the preview keeps its minimum height (" +
 	          std::to_string(scrolled != nullptr ? gtk_widget_get_height(scrolled) : 0) + " px)");
 	Check(KytyUi::Capture(cheats, "remote-preview"), "the preview renders");
-	// The credit link opens the collection's page through the desktop launcher.
-	gboolean handled = FALSE;
-	g_signal_emit_by_name(Widget(root, "credit_label"), "activate-link", core::kHenCheatsRepository,
-	                      &handled);
+	// The credit links open the collection's and KytyPS5-Modules' pages through the desktop
+	// launcher.
 	const auto& calls = ui.Services().desktop_launcher.calls;
-	KytyUi::WaitFor([&calls]() { return !calls.empty(); }, 3000, "the credit link to open");
-	Check(handled != FALSE && !calls.empty() &&
-	          calls.back() == std::string("OpenUri ") + core::kHenCheatsRepository,
-	      "the credit link opens the HEN Cheats Collection");
+	for (const char* link: {core::kHenCheatsRepository, core::kKytyModulesRepository}) {
+		gboolean   handled = FALSE;
+		const auto before  = calls.size();
+		g_signal_emit_by_name(Widget(root, "credit_label"), "activate-link", link, &handled);
+		KytyUi::WaitFor([&calls, before]() { return calls.size() > before; }, 3000,
+		                "the credit link to open");
+		Check(handled != FALSE && calls.size() > before &&
+		          calls.back() == std::string("OpenUri ") + link,
+		      std::string("the credit link opens ") + link);
+	}
+	Check(KytyUi::WidgetText(Widget(root, "credit_label")) ==
+	          "Patches and cheats by KytyPS5-Modules and TeeKay87 / HEN Cheats Collection and "
+	          "their contributors.",
+	      "the credit line: " + KytyUi::WidgetText(Widget(root, "credit_label")));
 	KytyUi::CloseWithEscape(cheats, "the cheats window");
 }
 
@@ -1701,6 +1855,214 @@ KYTY_UI_CASE(content_cheats_remote_not_json) {
 	      "Import to Local stays disabled");
 	Check(KytyUi::ReadText(local) == before, "the local file is unchanged");
 	Check(KytyUi::Capture(cheats, "not-json"), "the error renders");
+	KytyUi::CloseWithEscape(cheats, "the cheats window");
+}
+
+// MC4 and SHN files (upstream KytyPS5 commit 91c5820c): the trainers of tests/fixtures/cheats,
+// served for Alpha Game, preview their converted cheats; the SHN file imports to the local file
+// with every cheat off. A trainer that is not XML says so and keeps Import disabled.
+KYTY_UI_CASE(content_cheats_remote_trainers) {
+	KytyUi::UiContext ui;
+	const auto        games = ContentLibrary(ui);
+	if (games.empty()) {
+		return;
+	}
+	const fs::path fixtures = fs::path(KYTY_TEST_SOURCE_DIR) / "tests" / "fixtures" / "cheats";
+	ServeAlphaFile(ui, KytyUi::ReadText(fixtures / "PPSA01001_01.000_alpha.mc4"), "01.000", "mc4");
+	ServeAlphaFile(ui, KytyUi::ReadText(fixtures / "PPSA01001_01.000_alpha.shn"), "01.000", "shn");
+	const fs::path data   = ui.AppDirectory();
+	GtkWindow*     cheats = OpenCheats(ui, Entry(games, kAlphaTitle));
+	if (cheats == nullptr) {
+		return;
+	}
+	GtkWidget* root = GTK_WIDGET(cheats);
+	adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(Widget(root, "stack")), "remote");
+	if (!WaitForRemoteList(root)) {
+		return;
+	}
+	GtkWidget* import  = Widget(root, "import_button");
+	const auto preview = [&](std::string_view name) {
+		gtk_list_box_select_row(GTK_LIST_BOX(Widget(root, "files_list")),
+		                        GTK_LIST_BOX_ROW(FileRow(root, name)));
+		KytyUi::WaitFor([import]() { return gtk_widget_get_sensitive(import) != FALSE; }, 5000,
+		                "the preview of " + std::string(name) + " to enable Import to Local");
+		KytyUi::WaitForPaintedFrame(root);
+		std::vector<std::string> names;
+		for (GtkWidget* row: Named(Widget(root, "preview_list"), ADW_TYPE_ACTION_ROW, "")) {
+			names.push_back(KytyUi::ControlName(row));
+		}
+		return names;
+	};
+	using Names = std::vector<std::string>;
+	Check(preview(", PPSA01001_01.000_alpha.mc4") ==
+	          Names {"Moon Jump", "Unlimited Time", "Freeze Enemies"},
+	      "the MC4 file's cheats");
+	Check(LabelText(root, "preview_status")
+	          .starts_with("Alpha Game\nCredits: Kyty Tests · Version: "
+	                       "01.000\n\nImport to Local"),
+	      "the MC4 file's name, credits, and version: " + LabelText(root, "preview_status"));
+	Check(KytyUi::Capture(cheats, "mc4-preview"), "the MC4 preview renders");
+	Check(preview(", PPSA01001_01.000_alpha.shn") == Names {"Infinite Health", "Max Coins & Gems"},
+	      "the SHN file's cheats");
+
+	// Import the SHN file over Alpha Game's local file.
+	Check(KytyUi::Activate(import), "a click on Import to Local");
+	if (GtkWindow* question = KytyUi::FindAlert("A local cheat file for PPSA01001 exists.");
+	    question != nullptr) {
+		KytyUi::CloseAlert(question, "Replace");
+	}
+	KytyUi::WaitFor([root]() { return KytyUi::VisiblePage(root) == "local"; }, 3000,
+	                "the Local view after the import");
+	using States = std::vector<std::pair<std::string, bool>>;
+	Check(StoredCheats(data) == States {{"Infinite Health", false}, {"Max Coins & Gems", false}},
+	      "the local file has the SHN file's cheats, every one off");
+	const auto local = core::LoadLocalCheats(data, "PPSA01001");
+	Check(local.document && local.document->id == "PPSA01001" &&
+	          local.document->process == "eboot.bin" &&
+	          local.document->cheats[0].memory ==
+	              R"([{"offset":"0x1A2B3C","on":"909090","off":"0F85C3"}])",
+	      "the local file is cheat JSON with the converted writes");
+	Check(KytyUi::Capture(cheats, "shn-imported"), "the imported cheats render");
+
+	// An MC4 file that is not a trainer.
+	ServeAlphaFile(ui, "not an encrypted trainer", "01.000", "mc4");
+	adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(Widget(root, "stack")), "remote");
+	KytyUi::WaitForPaintedFrame(root);
+	gtk_list_box_select_row(GTK_LIST_BOX(Widget(root, "files_list")),
+	                        GTK_LIST_BOX_ROW(FileRow(root, ", PPSA01001_01.000_alpha.mc4")));
+	KytyUi::WaitFor(
+	    [root]() {
+		    return LabelText(root, "preview_status").starts_with("Could not preview this file: ");
+	    },
+	    5000, "the error of an MC4 file that is not a trainer");
+	Check(
+	    LabelText(root, "preview_status").find("PPSA01001_01.000_alpha.mc4: Invalid cheat XML.") !=
+	        std::string::npos,
+	    "the error names the file: " + LabelText(root, "preview_status"));
+	Check(Named(Widget(root, "preview_list"), ADW_TYPE_ACTION_ROW, "").empty(),
+	      "no cheat is listed");
+	Check(gtk_widget_get_sensitive(import) == FALSE, "Import to Local stays disabled");
+	KytyUi::CloseWithEscape(cheats, "the cheats window");
+}
+
+// KytyPS5-Modules (upstream KytyPS5 commit d2ec91b8; plan D15), through the loopback server: its
+// catalog lists a patch and a cheat of Alpha Game, which show as Patch and Cheat among the
+// collection's files, and an entry outside its folder, which the status line reports. The patch,
+// a file without "process", previews and imports; "Keep other cheats" keeps the local file's other
+// cheats and writes the game's executable. Over a local file of another version, the question
+// offers only Replace.
+KYTY_UI_CASE(content_cheats_modules_import) {
+	KytyUi::UiContext ui;
+	const auto        games = ContentLibrary(ui);
+	if (games.empty()) {
+		return;
+	}
+	KytyTests::LoopbackResponse catalog;
+	catalog.body = R"({"patches":{"PPSA01001":[{"path":"patches/json/PPSA01001/unlock.json",)"
+	               R"("title":"Unlock all stages","gameName":"Alpha Game","version":"01.000"}]},)"
+	               R"("cheats":{"PPSA01001":[{"path":"cheats/json/PPSA01001/moon.json",)"
+	               R"("title":"Moon gravity","gameName":"Alpha Game","version":"01.020"},)"
+	               R"({"path":"../outside.json","title":"Outside"}]}})";
+	ui.Server().Script(core::kModulesCatalogUrl, std::move(catalog));
+	const std::string patch_url =
+	    std::string(core::kModulesBaseUrl) + "patches/json/PPSA01001/unlock.json";
+	KytyTests::LoopbackResponse patch;
+	patch.body = R"({"id":"PPSA01001","version":"01.000","name":"Alpha Game",)"
+	             R"("credits":["Modules Team"],"mods":[{"name":"Unlock all stages","memory":[)"
+	             R"({"offset":"0x5000","on":"01","off":"00"}]},{"name":"Max Coins","memory":[)"
+	             R"({"offset":"0x5010","on":"FF","off":"00"}]}]})";
+	ui.Server().Script(patch_url, std::move(patch));
+	const fs::path data   = ui.AppDirectory();
+	const fs::path local  = core::CheatFilePath(data, "PPSA01001");
+	GtkWindow*     cheats = OpenCheats(ui, Entry(games, kAlphaTitle));
+	if (cheats == nullptr) {
+		return;
+	}
+	GtkWidget* root = GTK_WIDGET(cheats);
+	adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(Widget(root, "stack")), "remote");
+	if (!WaitForRemoteList(root)) {
+		return;
+	}
+	KytyUi::WaitForPaintedFrame(root);
+	std::vector<std::string> names;
+	for (GtkWidget* row: KytyUi::FindAll(Widget(root, "files_list"), [](GtkWidget* widget) {
+		     return GTK_IS_LIST_BOX_ROW(widget);
+	     })) {
+		names.push_back(KytyUi::ControlName(row));
+	}
+	using Names = std::vector<std::string>;
+	Check(names == Names {"01.000 (installed), Cheat, PPSA01001_01.000_alpha.json",
+	                      "01.000 (installed), Patch, Unlock all stages",
+	                      "01.000 (installed), Cheat, PPSA01001_01.000_alpha.mc4",
+	                      "01.000 (installed), Cheat, PPSA01001_01.000_alpha.shn",
+	                      "01.020, Cheat, Moon gravity",
+	                      "01.020, Cheat, PPSA01001_01.020_alpha.json"},
+	      "the KytyPS5-Modules patch and cheat among the collection's files: " +
+	          (names.size() > 1 ? names[1] : std::string("too few")));
+	Check(LabelText(root, "remote_status") ==
+	          "6 remote files for PPSA01001.\nCould not load the complete collection: Modules: "
+	          "Skipped 1 invalid module catalog entry.\nUse Refresh to retry.",
+	      "the status line reports the entry outside the folder: " +
+	          LabelText(root, "remote_status"));
+
+	GtkWidget*  row     = FileRow(root, ", Patch, Unlock all stages");
+	const char* tooltip = row != nullptr ? gtk_widget_get_tooltip_text(row) : nullptr;
+	Check(tooltip != nullptr && std::string_view(tooltip) == "Alpha Game",
+	      "the patch's tooltip is the catalog's game name");
+	gtk_list_box_select_row(GTK_LIST_BOX(Widget(root, "files_list")), GTK_LIST_BOX_ROW(row));
+	GtkWidget* import = Widget(root, "import_button");
+	KytyUi::WaitFor([import]() { return gtk_widget_get_sensitive(import) != FALSE; }, 5000,
+	                "the patch's preview to enable Import to Local");
+	KytyUi::WaitForPaintedFrame(root);
+	Check(ui.Server().Hits(patch_url) == 1, "the patch downloads from its catalog's URL");
+	Check(Named(Widget(root, "preview_list"), ADW_TYPE_ACTION_ROW, "").size() == 2 &&
+	          LabelText(root, "preview_status")
+	              .starts_with("Alpha Game\nCredits: Modules Team · Version: 01.000\n\n"
+	                           "Import to Local"),
+	      "a file without \"process\" can be imported: " + LabelText(root, "preview_status"));
+	Check(KytyUi::Capture(cheats, "modules-preview"), "the patch's preview renders");
+
+	// Keep the local file's other cheats.
+	Check(KytyUi::Activate(import), "a click on Import to Local");
+	GtkWindow* question = KytyUi::FindAlert("A local cheat file for PPSA01001 exists.");
+	if (!Check(question != nullptr && HasText(GTK_WIDGET(question), "Keep other cheats"),
+	           "the question offers to keep the other cheats")) {
+		return;
+	}
+	KytyUi::CloseAlert(question, "Keep other cheats");
+	KytyUi::WaitFor([root]() { return KytyUi::VisiblePage(root) == "local"; }, 3000,
+	                "the Local view after the import");
+	using States = std::vector<std::pair<std::string, bool>>;
+	Check(StoredCheats(data) == States {{"Infinite Health", true},
+	                                    {"Unlock all stages", false},
+	                                    {"Max Coins", false}},
+	      "the local file keeps Infinite Health; Max Coins is the patch's, off");
+	const auto merged = core::LoadLocalCheats(data, "PPSA01001");
+	Check(merged.document && merged.document->process == "eboot.bin" &&
+	          merged.document->credits == std::vector<std::string> {"Modules Team"},
+	      "the patch's members and the game's executable");
+	Check(LabelText(root, "local_status") == "Imported 2 cheats. Select cheats and apply your "
+	                                         "selection for the next game launch.",
+	      "the status line counts the imported cheats: " + LabelText(root, "local_status"));
+	Check(KytyUi::Capture(cheats, "modules-kept"), "the merged cheats render");
+
+	// A local file of another version can only be replaced.
+	const std::string other = gen::CheatDocumentText(
+	    gen::RemoteCheatSpec("PPSA01001", "01.020", "eboot.bin", {"From another version"}));
+	Check(KytyUi::WriteText(local, other), "write a local file of version 01.020");
+	Check(KytyUi::Activate(Widget(root, "reload_button")), "a click on Reload");
+	adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(Widget(root, "stack")), "remote");
+	KytyUi::WaitForPaintedFrame(root);
+	Check(KytyUi::Activate(import), "a click on Import to Local");
+	question = KytyUi::FindAlert("A local cheat file for PPSA01001 exists.");
+	if (Check(question != nullptr, "the question")) {
+		Check(HasText(GTK_WIDGET(question), "Replace") &&
+		          !HasText(GTK_WIDGET(question), "Keep other cheats"),
+		      "only Replace and Cancel for a file of another version");
+		KytyUi::CloseAlert(question, "Cancel");
+	}
+	KytyUi::Pump(200);
+	Check(KytyUi::ReadText(local) == other, "Cancel leaves the local file");
 	KytyUi::CloseWithEscape(cheats, "the cheats window");
 }
 
@@ -2262,6 +2624,58 @@ KYTY_UI_CASE(content_input_mapping_capture) {
 
 // The per-game editor (11.14): Save gives the game its own mapping (the global one unchanged);
 // reopened, the editor says so, and Use global mapping makes the game use the global one again.
+// Upstream KytyPS5's touch pad swipes: four System rows on the Keyboard and mouse tab, without a
+// default key and not on the Gamepad tab; a captured key is saved under the Emulator's name.
+KYTY_UI_CASE(content_input_mapping_swipes) {
+	KytyUi::UiContext ui;
+	if (ContentLibrary(ui).empty()) {
+		return;
+	}
+	auto* editor = OpenEditor(ui, nullptr);
+	if (editor == nullptr) {
+		return;
+	}
+	GtkWidget* root = GTK_WIDGET(editor);
+	kyty_input_mapping_window_show_tab(editor, "gamepad");
+	KytyUi::WaitForPaintedFrame(root);
+	for (GtkWidget* button: MappedBindings(root)) {
+		GtkWidget* row = gtk_widget_get_ancestor(button, ADW_TYPE_ACTION_ROW);
+		Check(row == nullptr || !KytyUi::WidgetText(row).starts_with("Touch pad swipe"),
+		      "the Gamepad tab has no swipe row");
+	}
+	kyty_input_mapping_window_show_tab(editor, "keyboard");
+	KytyUi::WaitForPaintedFrame(root);
+	for (const char* title: {"Touch pad swipe up", "Touch pad swipe down", "Touch pad swipe left",
+	                         "Touch pad swipe right"}) {
+		GtkWidget* button = BindingOf(root, title);
+		GtkWidget* group  = button != nullptr
+		                        ? gtk_widget_get_ancestor(button, ADW_TYPE_PREFERENCES_GROUP)
+		                        : nullptr;
+		Check(group != nullptr && adw_preferences_group_get_title(ADW_PREFERENCES_GROUP(group)) ==
+		                              std::string("System"),
+		      std::string(title) + " is a System row");
+	}
+	Check(Bound(editor, core::InputDevice::KeyboardMouse, "TouchPadSwipeUp").empty(),
+	      "a swipe has no default key");
+	GtkWidget* up = BindingOf(root, "Touch pad swipe up");
+	Capture(up, [](KytyBindingCaptureDialog* capture) {
+		Check(kyty_binding_capture_dialog_handle_key(capture, GDK_KEY_u, GdkModifierType(0)) !=
+		          FALSE,
+		      "the capture takes U");
+	});
+	Check(Bound(editor, core::InputDevice::KeyboardMouse, "TouchPadSwipeUp") == "U",
+	      "Touch pad swipe up is bound to U (" +
+	          Bound(editor, core::InputDevice::KeyboardMouse, "TouchPadSwipeUp") + ")");
+	// The rows in sight: the focus scrolls the binding into view.
+	gtk_widget_grab_focus(up);
+	KytyUi::WaitForPaintedFrame(root);
+	Check(KytyUi::Capture(GTK_WINDOW(editor), "keyboard-swipes"), "the editor renders");
+	SaveEditor(editor);
+	const auto stored = KytyUi::StoredSettings(ui).global.host_input_mapping;
+	Check(std::find(stored.begin(), stored.end(), "TouchPadSwipeUp=U") != stored.end(),
+	      "Save writes TouchPadSwipeUp=U");
+}
+
 KYTY_UI_CASE(content_input_mapping_per_game) {
 	KytyUi::UiContext ui;
 	const auto        games = ContentLibrary(ui);

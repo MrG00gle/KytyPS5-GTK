@@ -1,5 +1,6 @@
 #include "emulatorOptions.h"
 
+#include "common/additionalContent.h"
 #include "common/archive.h"
 #include "common/emulatorConfig.h"
 #include "common/file.h"
@@ -26,9 +27,11 @@ namespace {
 
 using Config::ConfigOptions;
 
+// Enumerator names match without regard to case ("immediate" is Immediate), as upstream parses
+// them.
 template <typename E>
 bool ParseEnum(const std::string& value, E& out) {
-	auto enum_value = magic_enum::enum_cast<E>(value.c_str());
+	auto enum_value = magic_enum::enum_cast<E>(value, magic_enum::case_insensitive);
 	if (!enum_value.has_value()) {
 		return false;
 	}
@@ -193,6 +196,17 @@ std::string ApplyAddcontDir(RunOptions& options, std::string_view name, const st
 	return {};
 }
 
+// "LABEL" (license only) or "LABEL=DIR" (data in DIR); may be repeated.
+std::string ApplyAddcont(RunOptions& options, std::string_view name, const std::string& value) {
+	auto entry = Common::ParseAddContent(value);
+	if (!entry) {
+		return InvalidValue(name, value,
+		                    "expected <16-character A-Z/0-9 label>[=<existing folder>]");
+	}
+	options.addcont.push_back(std::move(*entry));
+	return {};
+}
+
 std::string ApplyScreenWidth(RunOptions& options, std::string_view name, const std::string& value) {
 	if (!ParseUint32(value, options.config.screen_width) || options.config.screen_width == 0) {
 		return InvalidValue(name, value, "expected a positive integer");
@@ -271,6 +285,32 @@ std::string ApplyPresentMode(RunOptions& options, std::string_view name, const s
 	return ApplyEnum(options.config.present_mode, name, value);
 }
 
+std::string ApplyPssrUpscaler(RunOptions& options, std::string_view name,
+                              const std::string& value) {
+	return ApplyEnum(options.config.pssr_upscaler, name, value);
+}
+
+std::string ApplyDlssFolder(RunOptions&        options, std::string_view /*name*/,
+                            const std::string& value) {
+	options.config.dlss_folder = Common::PathFromUtf8(value);
+	return {};
+}
+
+// A to O select presets 1 to 15; 0, the model's own preset, is the default.
+std::string ApplyDlssPreset(RunOptions& options, std::string_view name, const std::string& value) {
+	if (value.size() != 1 || value[0] < 'A' || value[0] > 'O') {
+		return InvalidValue(name, value, "expected A-O");
+	}
+	options.config.dlss_preset = static_cast<uint32_t>(value[0] - 'A' + 1);
+	return {};
+}
+
+std::string ApplyFsrFolder(RunOptions&        options, std::string_view /*name*/,
+                           const std::string& value) {
+	options.config.fsr_folder = Common::PathFromUtf8(value);
+	return {};
+}
+
 std::string ApplyGpu(RunOptions& options, std::string_view name, const std::string& value) {
 	if (!ParseInt32(value, options.config.gpu_index)) {
 		return InvalidValue(name, value, "expected an integer");
@@ -286,6 +326,27 @@ std::string ApplyVblankFrequency(RunOptions& options, std::string_view name,
 	return {};
 }
 
+std::string ApplyFlushDraws(RunOptions& options, std::string_view name, const std::string& value) {
+	if (!ParseUint32(value, options.config.flush_draws)) {
+		return InvalidValue(name, value, "expected a non-negative integer");
+	}
+	return {};
+}
+
+constexpr size_t MAX_ACTIVITY_ID_LENGTH = 32;
+
+std::string ApplyLaunchActivity(RunOptions& options, std::string_view name,
+                                const std::string& value) {
+	if (value.empty() || value.size() > MAX_ACTIVITY_ID_LENGTH ||
+	    !std::ranges::all_of(value, [](char c) { return c >= ' ' && c <= '~'; })) {
+		return InvalidValue(
+		    name, value,
+		    fmt::format("must contain 1-{} printable ASCII characters", MAX_ACTIVITY_ID_LENGTH));
+	}
+	options.config.launch_activity = value;
+	return {};
+}
+
 std::string ApplyConsoleLanguage(RunOptions& options, std::string_view name,
                                  const std::string& value) {
 	if (!ParseConsoleLanguage(value, options.config.console_language)) {
@@ -293,11 +354,6 @@ std::string ApplyConsoleLanguage(RunOptions& options, std::string_view name,
 		                    fmt::format("expected 0-{}", Config::MAX_CONSOLE_LANGUAGE));
 	}
 	return {};
-}
-
-std::string ApplyShaderOptimizationType(RunOptions& options, std::string_view name,
-                                        const std::string& value) {
-	return ApplyEnum(options.config.shader_optimization_type, name, value);
 }
 
 std::string ApplyShaderLogDirection(RunOptions& options, std::string_view name,
@@ -385,6 +441,9 @@ constexpr OptionDef OPTION_DEFS[] = {
     ValueOption("--game", "<dir|elf|zar>", ApplyGame, "Game directory, ELF, or ZArchive to load."),
     ValueOption("--game-patch", "<json>", ApplyGamePatch, "ETAHen cheat file."),
     ValueOption("--addcont-dir", "<dir>", ApplyAddcontDir, "Add-ons (DLC) folder (default: none)."),
+    ValueOption("--addcont", "<label>[=<dir>]", ApplyAddcont,
+                "Add-on (DLC) by entitlement label with its data in\n"
+                "<dir>, or license only without <dir>. Repeatable."),
     ValueOption("--screen-width", "<num>", ApplyScreenWidth, "Window width. Default: 1280."),
     ValueOption("--screen-height", "<num>", ApplyScreenHeight, "Window height. Default: 720."),
     ValueOption("--user-name", "<name>", ApplyUserName,
@@ -407,10 +466,25 @@ constexpr OptionDef OPTION_DEFS[] = {
     FlagOption("--hdr", &ConfigOptions::hdr_enabled, "Enable HDR10 output when supported."),
     FlagOption("--hide-cursor", &ConfigOptions::hide_cursor_enabled,
                "Hide the cursor after 2 s idle. Default: off."),
+    FlagOption("--stretch", &ConfigOptions::stretch_enabled,
+               "Stretch the image to the window. Default: off."),
     FlagOption("--no-splash", &ConfigOptions::splash_enabled, "Disable the startup splash screen.",
                false),
     FlagOption("--vr", &ConfigOptions::vr_enabled, "Enable the virtual VR headset."),
+    FlagOption("--trinity", &ConfigOptions::pro_enabled,
+               "Enable experimental PS5 Pro mode for\n"
+               "supported titles. Default: off."),
+    ValueOption("--pssr-upscaler", "<value>", ApplyPssrUpscaler,
+                "With --trinity, upscale PSSR with Linear,\n"
+                "DLSS, or FSR. Default: Linear."),
+    ValueOption("--dlss-folder", "<folder>", ApplyDlssFolder, "DLSS model folder."),
+    ValueOption("--dlss-preset", "<A-O>", ApplyDlssPreset,
+                "DLSS preset. Default: the model's own."),
+    ValueOption("--fsr-folder", "<folder>", ApplyFsrFolder,
+                "FidelityFX DLL folder; no effect on Linux."),
     FlagOption("--amd-cpu", &ConfigOptions::amd_cpu_enabled, "Apply AMD CPU instruction patches."),
+    FlagOption("--guest-tsc", &ConfigOptions::guest_tsc_enabled,
+               "Run the guest TSC at the PS5's 1.6 GHz."),
     ValueOption("--vblank-frequency", "<num>", ApplyVblankFrequency,
                 "Virtual vblank frequency. Default: 60."),
     ValueOption("--console-language", "<0-29>", ApplyConsoleLanguage,
@@ -419,19 +493,27 @@ constexpr OptionDef OPTION_DEFS[] = {
                "Enable Vulkan validation."),
     FlagOption("--network-connected", &ConfigOptions::network_connected,
                "Use the host local network."),
+    FlagOption("--emulate-psn", &ConfigOptions::psn_emulation_enabled,
+               "Simulate PSN sign-in for compatibility."),
     FlagOption("--gpu-assisted-validation", &ConfigOptions::gpu_assisted_validation_enabled,
                "Bounds-check shader accesses on the GPU.\n"
                "Implies --vulkan-validation; very slow."),
     FlagOption("--shader-validation", &ConfigOptions::shader_validation_enabled,
                "Enable shader validation."),
+    FlagOption("--shader-cache", &ConfigOptions::shader_cache_enabled,
+               "Keep compiled shaders and pipelines between boots."),
     FlagOption("--tessellation", &ConfigOptions::tessellation_enabled,
                "Draw tessellation patches; skipped by default."),
-    ValueOption("--shader-optimization-type", "<value>", ApplyShaderOptimizationType,
-                "None, Size, or Performance."),
+    FlagOption("--occlusion-queries", &ConfigOptions::occlusion_queries_enabled,
+               "Count occlusion query samples on the GPU."),
+    FlagOption("--relaxed-shader-float", &ConfigOptions::relaxed_shader_float,
+               "Native GPU float ops in shaders; faster, can be inaccurate."),
+    FlagOption("--native-rt", &ConfigOptions::native_rt, "Use native RT on the GPU."),
+    FlagOption("--lod-stats", &ConfigOptions::lod_stats_enabled,
+               "Report bound textures in mip statistics."),
     ValueOption("--shader-log-direction", "<value>", ApplyShaderLogDirection,
                 "Silent, Console, or File."),
-    ValueOption("--shader-log-folder", "<path>", ApplyShaderLogFolder,
-                "Shader log output folder."),
+    ValueOption("--shader-log-folder", "<path>", ApplyShaderLogFolder, "Shader log output folder."),
     FlagOption("--command-buffer-dump", &ConfigOptions::command_buffer_dump_enabled,
                "Enable command buffer dumps."),
     ValueOption("--command-buffer-dump-folder", "<path>", ApplyCommandBufferDumpFolder,
@@ -448,8 +530,12 @@ constexpr OptionDef OPTION_DEFS[] = {
                "Read back writable linear images on submit."),
     FlagOption("--readback-tiled-images", &ConfigOptions::readback_tiled_images,
                "Read back small writable tiled images on submit."),
+    FlagOption("--readback-storage-images", &ConfigOptions::readback_storage_images,
+               "Read back storage images on GL2 writeback."),
     FlagOption("--sync-raw-image-buffers", &ConfigOptions::sync_raw_image_buffers,
                "Synchronize raw reads of GPU images."),
+    ValueOption("--flush-draws", "<num>", ApplyFlushDraws,
+                "Submit GPU work every <num> draws; 0 is off."),
     FlagOption("--no-trophy-notifications", &ConfigOptions::trophy_enabled,
                "Disable trophy unlock toasts and their sound.", false),
     ValueOption("--trophy-duration", "<seconds>", ApplyTrophyDuration,
@@ -457,9 +543,11 @@ constexpr OptionDef OPTION_DEFS[] = {
     FlagOption("--perf-overlay", &ConfigOptions::perf_overlay_enabled,
                "Show the performance panel (F2)."),
     FlagOption("--playgo-hack", &ConfigOptions::playgo_hack_enabled,
-               "Use the supplied PlayGo stub fallback."),
+               "Report 1000 PlayGo chunks without chunk metadata."),
     FlagOption("--skip-notice-screen", &ConfigOptions::skip_notice_screen,
                "Skip startup logos and notices in supported games."),
+    ValueOption("--launch-activity", "<id>", ApplyLaunchActivity,
+                "Launch into this activity (1-32 printable ASCII chars)."),
     ValueOption("--keymap", "<Control=Input>", ApplyKeymap, "DualSense mapping; may be repeated."),
     FlagOption("--rd", &ConfigOptions::renderdoc_enabled, "Enable RenderDoc capture."),
     TerminalOption("--guest-exec", "<elf> [args...]", ApplyGuestExec,
@@ -679,6 +767,11 @@ std::string ApplyDataDirectory(RunOptions& options, const DataDirectoryEnvironme
 	MakeAbsolute(options.app0_dir, cwd);
 	MakeAbsolute(options.game_patch, cwd);
 	MakeAbsolute(options.addcont_dir, cwd);
+	for (auto& entry: options.addcont) {
+		MakeAbsolute(entry.mount_dir, cwd);
+	}
+	MakeAbsolute(options.config.dlss_folder, cwd);
+	MakeAbsolute(options.config.fsr_folder, cwd);
 	MakeAbsolute(options.config.printf_output_file, data_dir);
 	MakeAbsolute(options.config.shader_log_folder, data_dir);
 	MakeAbsolute(options.config.command_buffer_dump_folder, data_dir);

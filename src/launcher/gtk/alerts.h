@@ -29,15 +29,17 @@ GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view
                    GCancellable*                      cancellable = nullptr);
 
 // A modal alert with heading, body, and one button per label, left to right (the update offer,
-// task 21.6). Escape and closing the alert choose the button at cancel_index; default_index is the
-// default button. callback runs once from the main loop with the index of the chosen button,
-// unless cancellable is cancelled first; with a cancellable, destroying parent counts as
+// task 21.6; the cheats import). Escape and closing the alert choose the button at cancel_index;
+// default_index is the default button; the button at destructive_index (none for -1) has the
+// destructive-action style. callback runs once from the main loop with the index of the chosen
+// button, unless cancellable is cancelled first; with a cancellable, destroying parent counts as
 // cancelling (as for Confirm). When cancellable is already cancelled, nothing is created, callback
 // never runs, and the result is nullptr. Returns the alert's window, or nullptr when it could not
 // be found.
 GtkWindow* Choose(GtkWindow* parent, std::string_view heading, std::string_view body,
                   const std::vector<std::string>& labels, int cancel_index, int default_index,
-                  std::function<void(int index)> callback, GCancellable* cancellable = nullptr);
+                  std::function<void(int index)> callback, GCancellable* cancellable = nullptr,
+                  int destructive_index = -1);
 
 // A modal alert with heading, body, and GTK's own Close button. Cancelling cancellable closes it;
 // with a cancellable, destroying parent closes it too (as for Confirm). When cancellable is

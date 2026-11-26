@@ -23,6 +23,8 @@ constexpr const char* kPlaceholderIcon = "applications-games-symbolic";
 constexpr float kDimOpacity     = 0.55F;
 constexpr int   kEmblemIconSize = 16;
 constexpr int   kTileLines      = 2;
+// The PS5 Pro badge's distance from the top and the end of the drawn icon.
+constexpr int kProBadgeInset = 2;
 
 struct CellState {
 	GameCellKind           kind = GameCellKind::Text;
@@ -36,6 +38,7 @@ struct CellState {
 	GtkWidget*             indicator        = nullptr; // Status: child
 	GtkWidget*             metadata_emblem  = nullptr; // child, made when needed
 	GtkWidget*             running_emblem   = nullptr; // child, made when needed
+	GtkWidget*             pro_badge        = nullptr; // child, made when needed
 	// Tile: the title's width and height on one line, in the font of text_serial (GTK measures a
 	// grid item many times, at several widths: the title is shaped once).
 	bool  text_measured = false;
@@ -191,6 +194,55 @@ void SetEmblem(GtkWidget* cell, GtkWidget*& emblem, bool metadata, bool show) {
 	}
 }
 
+// The PS5 Pro badge of the icon (upstream KytyPS5's launcher, commit bd28a152: "PS5 PRO" on the
+// grid's covers, "PRO" over the list's small icon), created the first time it is shown.
+void SetProBadge(GtkWidget* cell, GtkWidget*& badge, bool tile, bool show) {
+	if (badge == nullptr) {
+		if (!show) {
+			return;
+		}
+		// TRANSLATORS: the badge of a game that supports PS5 Pro mode, over its icon in the grid
+		// and in the list (a few letters).
+		badge = gtk_label_new(tile ? C_("game badge", "PS5 PRO") : C_("game badge", "PRO"));
+		gtk_widget_add_css_class(badge, "game-pro-badge");
+		if (!tile) {
+			gtk_widget_add_css_class(badge, "compact");
+		}
+		const char* text = _("Supports PS5 Pro mode");
+		gtk_widget_set_tooltip_text(badge, text);
+		gtk_accessible_update_property(GTK_ACCESSIBLE(badge), GTK_ACCESSIBLE_PROPERTY_LABEL, text,
+		                               -1);
+		gtk_widget_set_parent(badge, cell);
+	}
+	if ((gtk_widget_get_visible(badge) != FALSE) != show) {
+		gtk_widget_set_visible(badge, show ? TRUE : FALSE);
+	}
+}
+
+// Allocates badge at the top end of the drawn icon, inset by kProBadgeInset and kept inside the
+// icon square (upstream's place: the top-right corner of the cover).
+void AllocateProBadge(GtkWidget* badge, const graphene_rect_t& square, const graphene_rect_t& icon,
+                      bool rtl) {
+	if (badge == nullptr || gtk_widget_get_visible(badge) == FALSE) {
+		return;
+	}
+	int width  = 0;
+	int height = 0;
+	gtk_widget_measure(badge, GTK_ORIENTATION_HORIZONTAL, -1, nullptr, &width, nullptr, nullptr);
+	gtk_widget_measure(badge, GTK_ORIENTATION_VERTICAL, width, nullptr, &height, nullptr, nullptr);
+	const auto  w     = static_cast<float>(width);
+	const auto  h     = static_cast<float>(height);
+	const float inset = static_cast<float>(kProBadgeInset);
+	float       left  = rtl ? icon.origin.x + inset : icon.origin.x + icon.size.width - inset - w;
+	float       top   = icon.origin.y + inset;
+	left = std::clamp(left, square.origin.x,
+	                  std::max(square.origin.x, square.origin.x + square.size.width - w));
+	top  = std::clamp(top, square.origin.y,
+	                  std::max(square.origin.y, square.origin.y + square.size.height - h));
+	const GtkAllocation allocation {static_cast<int>(left), static_cast<int>(top), width, height};
+	gtk_widget_size_allocate(badge, &allocation, -1);
+}
+
 // Allocates emblem centered on the corner (x, y) of the drawn icon, kept inside the icon square.
 void AllocateEmblem(GtkWidget* emblem, const graphene_rect_t& square, float x, float y) {
 	if (emblem == nullptr || gtk_widget_get_visible(emblem) == FALSE) {
@@ -335,9 +387,11 @@ void SizeAllocate(GtkWidget* widget, int width, int height, int /*baseline*/) {
 	const float            left   = r.origin.x;
 	const float            right  = r.origin.x + r.size.width;
 	const float            bottom = r.origin.y + r.size.height;
-	// As the overlay had them: running at the top start, metadata unavailable at the bottom end.
+	// As the overlay had them: running at the top start, metadata unavailable at the bottom end;
+	// the PS5 Pro badge at the top end.
 	AllocateEmblem(state.running_emblem, state.square, rtl ? right : left, r.origin.y);
 	AllocateEmblem(state.metadata_emblem, state.square, rtl ? left : right, bottom);
+	AllocateProBadge(state.pro_badge, state.square, r, rtl);
 }
 
 void SnapshotIcon(GtkWidget* widget, GtkSnapshot* snapshot, const GdkRGBA& color) {
@@ -398,7 +452,8 @@ void Snapshot(GtkWidget* widget, GtkSnapshot* snapshot) {
 	gtk_widget_get_color(widget, &color);
 	SnapshotIcon(widget, snapshot, color);
 	SnapshotText(widget, snapshot, color);
-	for (GtkWidget* child: {state.indicator, state.metadata_emblem, state.running_emblem}) {
+	for (GtkWidget* child:
+	     {state.indicator, state.metadata_emblem, state.running_emblem, state.pro_badge}) {
 		if (child != nullptr) {
 			gtk_widget_snapshot_child(widget, child, snapshot);
 		}
@@ -493,7 +548,8 @@ static void kyty_game_cell_init(KytyGameCell* cell) {
 
 static void kyty_game_cell_dispose(GObject* object) {
 	CellState& state = StateOf(GTK_WIDGET(object));
-	for (GtkWidget** child: {&state.indicator, &state.metadata_emblem, &state.running_emblem}) {
+	for (GtkWidget** child:
+	     {&state.indicator, &state.metadata_emblem, &state.running_emblem, &state.pro_badge}) {
 		if (*child != nullptr) {
 			gtk_widget_unparent(*child);
 			*child = nullptr;
@@ -594,6 +650,8 @@ void kyty_game_cell_set_icon(KytyGameCell* cell, KytyGame* game, int icon_size,
 	          game != nullptr && kyty_game_get_metadata_unavailable(game));
 	SetEmblem(GTK_WIDGET(cell), state.running_emblem, false,
 	          game != nullptr && kyty_game_get_running(game));
+	SetProBadge(GTK_WIDGET(cell), state.pro_badge, state.kind == GameCellKind::Tile,
+	            game != nullptr && kyty_game_get_entry(game).pro_supported);
 	if (resize) {
 		gtk_widget_queue_resize(GTK_WIDGET(cell));
 	} else if (changed) {
@@ -625,6 +683,10 @@ GtkWidget* kyty_game_cell_get_metadata_emblem(KytyGameCell* cell) {
 
 GtkWidget* kyty_game_cell_get_running_emblem(KytyGameCell* cell) {
 	return cell->state->running_emblem;
+}
+
+GtkWidget* kyty_game_cell_get_pro_badge(KytyGameCell* cell) {
+	return cell->state->pro_badge;
 }
 
 void kyty_game_cell_set_status_class(KytyGameCell* cell, const char* css_class) {

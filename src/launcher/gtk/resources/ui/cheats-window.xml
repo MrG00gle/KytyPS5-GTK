@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- The cheats window (task 21.4, plan D43, LFI-27): the Remote view (the credit link, the HEN
-     Cheats Collection files of the game with version, format, and file, a preview of the selected
-     JSON file, Refresh, and Import to Local) and the Local view (the cheats of the game's local
+<!-- The cheats window (task 21.4, plan D43, LFI-27): the Remote view (the credit links, the
+     KytyPS5-Modules patches and cheats and the HEN Cheats Collection files of the game with
+     version, type, and name, a preview of the selected file, Refresh, and Import to Local) and
+     the Local view (the cheats of the game's local
      cheat file with check boxes, Reload, Apply selection, Enable all, and Disable all).
      cheatsWindow.cpp fills the lists, the status lines, and the credit link. -->
 <interface domain="kyty-launcher">
   <template class="KytyCheatsWindow" parent="AdwWindow">
     <property name="modal">True</property>
     <property name="destroy-with-parent">True</property>
-    <property name="title" translatable="yes">Cheats (experimental)</property>
+    <property name="title" translatable="yes">Cheats and patches (experimental)</property>
     <!-- 900x700 and the preview's minimum height keep both lists readable next to two
          multi-line status lines (phase 7 D29, p6-u10-3). -->
     <property name="default-width">900</property>
@@ -67,7 +68,7 @@
                         </child>
                         <child>
                           <object class="GtkLabel">
-                            <property name="label" translatable="yes">Only JSON cheats are supported. MC4 and SHN files are shown disabled. Select a JSON file to preview its cheats.</property>
+                            <property name="label" translatable="yes">Select a file to preview its cheats.</property>
                             <property name="xalign">0</property>
                             <property name="wrap">True</property>
                             <style>
@@ -107,8 +108,8 @@
                                       </object>
                                     </child>
                                     <child>
-                                      <object class="GtkLabel" id="format_header">
-                                        <property name="label" translatable="yes">Format</property>
+                                      <object class="GtkLabel" id="type_header">
+                                        <property name="label" translatable="yes">Type</property>
                                         <property name="xalign">0</property>
                                         <style>
                                           <class name="heading"/>
@@ -117,7 +118,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label" translatable="yes">File</property>
+                                        <property name="label" translatable="yes">Name</property>
                                         <property name="xalign">0</property>
                                         <property name="hexpand">True</property>
                                         <style>

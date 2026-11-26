@@ -98,6 +98,8 @@ the version you tested.
 ## System requirements
 
 - The only supported platform is Linux on an x86-64 processor.
+- The processor must support x86-64-v3 (AVX2, BMI2, FMA, F16C, LZCNT, and MOVBE). On an older
+  processor the programs stop with an illegal instruction error.
 - A GPU with Vulkan 1.3 support is required, with a current driver. Update the graphics driver
   before you report rendering problems.
 - The Flatpak needs Flatpak and the GNOME 49 runtime from Flathub, which `flatpak install` fetches.

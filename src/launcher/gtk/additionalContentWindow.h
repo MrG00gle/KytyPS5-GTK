@@ -6,12 +6,20 @@
 // thread, the add-ons of the game's title ID in the global add-ons folder
 // (core::LoadAdditionalContent(settings.addons_dir, entry.title_id)): each with its icon (the
 // add-on's sce_sys/icon0.png, else the game's icon), its title (or its entitlement label), and its
-// content ID as the tooltip. The status line gives the number of add-ons ("1 installed add-on",
-// "2 installed add-ons") or says that the add-ons folder is not set, does not exist, or has no
-// add-on for the game (the launcher's translated texts, D46). Refresh lists again (a focused row
-// gives the focus to Refresh before the rows go, focusSupport.h; phase 7 D29); Open folder
-// (enabled while the folder exists) opens the add-ons folder through DesktopLauncher::OpenFolder
-// and shows an error when that fails. Escape and Close close the window.
+// content ID as the tooltip. After them come the game's user add-ons (upstream KytyPS5's launcher,
+// commit 66e21a62; settings.user_addons of the normalized title ID): each with the game's icon,
+// its entitlement label, "License only", "Data: <folder>", or "Data folder not found: <folder>",
+// and a Remove button. The status line gives the number of add-ons ("1 add-on", "2 add-ons") or
+// says that the add-ons folder is not set, does not exist, or has no add-on for the game (the
+// launcher's translated texts, D46). Below the list, "Add an add-on" takes a label or content ID
+// and a data folder (typed, or chosen through FileChooser::SelectFolders; empty for a license
+// only), checks them with core::MakeUserAddOn (an error goes to the status line and marks the
+// row), and saves the game's list through SaveSettingsInteractively; Remove saves the list
+// without the entry. A game without a title ID cannot have user add-ons (the group is off).
+// Refresh lists again (a focused row gives the focus to Refresh before the rows go,
+// focusSupport.h; phase 7 D29); Open folder (enabled while the folder exists) opens the add-ons
+// folder through DesktopLauncher::OpenFolder and shows an error when that fails. Escape and Close
+// close the window.
 
 #include "launcher/core/gameMetadata.h"
 #include "launcher/gtk/launcherContext.h"

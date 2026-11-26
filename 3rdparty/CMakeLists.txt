@@ -10,7 +10,6 @@ kyty_check_prefetched_sources()
 set(kyty_build_testing_saved "${BUILD_TESTING}")
 set(BUILD_TESTING OFF)
 set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
-set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
 set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
 kyty_make_dependency_available(opus)
 set(BUILD_TESTING "${kyty_build_testing_saved}")
@@ -21,11 +20,18 @@ install(FILES "${opus_SOURCE_DIR}/COPYING" DESTINATION "licenses/opus")
 set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
 set(BUILD_WITH_SYSTEM_JSONCPP OFF CACHE BOOL "" FORCE)
 kyty_make_dependency_available(openxr)
-# Keep the loader's headers and library out of the installed package.
-set_property(DIRECTORY "${openxr_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
 # The loader uses exceptions internally.
 target_compile_options(openxr_loader PRIVATE -fexceptions)
 install(FILES "${openxr_SOURCE_DIR}/LICENSE" DESTINATION "licenses/openxr")
+
+# Noto Sans v2.015 (SIL Open Font License 1.1) is libFont's fallback font. The registry pins its
+# license and its four TTF files; they are collected in KYTY_NOTO_SANS_DIR, which the top-level
+# CMakeLists.txt installs as assets and cmake/KytyLicenses.cmake registers as noto-sans.
+set(KYTY_NOTO_SANS_DIR "${FETCHCONTENT_BASE_DIR}/noto-sans")
+foreach(kyty_noto_sans_file IN ITEMS license regular bold italic bold_italic)
+	kyty_dependency_fetch_file(noto_sans_${kyty_noto_sans_file} "${KYTY_NOTO_SANS_DIR}")
+endforeach()
+set(KYTY_NOTO_SANS_DIR "${KYTY_NOTO_SANS_DIR}" PARENT_SCOPE)
 
 # The guest instruction patcher needs a decoder/encoder and a small
 # trampoline assembler. Pin the same revisions used by shadPS4's implementation.
@@ -53,6 +59,12 @@ kyty_make_dependency_available(zstd)
 # The registry applies patches/zarchive-reader.patch to the build-tree copy that
 # zarchive_source_SOURCE_DIR names.
 kyty_make_dependency_available(zarchive_source)
+
+# Keep the fetched libraries' install rules out of the package.
+foreach(kyty_dir "${opus_SOURCE_DIR}" "${openxr_SOURCE_DIR}" "${xbyak_SOURCE_DIR}" "${zydis_SOURCE_DIR}"
+		"${zstd_SOURCE_DIR}/build/cmake")
+	set_property(DIRECTORY "${kyty_dir}" PROPERTY EXCLUDE_FROM_ALL TRUE)
+endforeach()
 
 add_library(zarchive STATIC
 	"${zarchive_source_SOURCE_DIR}/src/zarchivereader.cpp"

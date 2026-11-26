@@ -1101,7 +1101,7 @@ KYTY_UI_CASE(lfi_12) {
 		                                        "cheats") == FALSE,
 		      "no cheats for a game without a PPSA title ID");
 		if (menu != nullptr) {
-			GtkWidget* cheats = MenuItem(GTK_WIDGET(menu), "Cheats (experimental)…");
+			GtkWidget* cheats = MenuItem(GTK_WIDGET(menu), "Cheats and patches (experimental)…");
 			Check(cheats == nullptr || gtk_widget_get_mapped(cheats) == FALSE ||
 			          gtk_widget_get_sensitive(cheats) == FALSE,
 			      "the Cheats item is not offered for it");
@@ -2077,7 +2077,7 @@ KYTY_UI_CASE(lfi_28) {
 		KytyUi::WaitFor(
 		    [&]() { return kyty_additional_content_window_is_loaded(addons) && listed(); }, 5000,
 		    "the add-on to be listed");
-		Check(KytyUi::AllText(root).find("1 installed add-on") != std::string::npos,
+		Check(KytyUi::AllText(root).find("1 add-on") != std::string::npos,
 		      "the status line counts the add-on");
 		Check(KytyUi::Activate(KytyUi::FindByBuildableId(root, "refresh_button")),
 		      "a click on Refresh");

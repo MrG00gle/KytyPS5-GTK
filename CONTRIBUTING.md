@@ -29,6 +29,63 @@ evidence showing what the change fixes. Linux is the target platform, so changes
 introduce regressions on Linux. Because the emulator is still evolving quickly, consider opening an
 issue before starting a large change.
 
+## Following upstream KytyPS5
+
+KytyPS5-GTK takes the work of [upstream KytyPS5](https://github.com/KytyPS5/KytyPS5) by merging
+its `main` branch. The last upstream commit merged into the fork is the merge base of `dev` and
+the upstream branch:
+
+```bash
+git merge-base dev refs/upstream/heads/main
+```
+
+Fetch upstream by URL into `refs/upstream/`, without tags and without adding a remote: the fork's
+version names come from its own tags, so upstream's tags must stay out of `refs/tags`. The status
+tool fetches that way with `--fetch` (`git fetch --no-tags` with the URL) and then shows the
+upstream head, the last synced commit, the number of upstream commits not merged yet, and the size
+of their changes:
+
+```bash
+python3 tools/upstream/sync_status.py --repo . --fetch --forecast
+```
+
+Without `--fetch` it only reads the repository. `--forecast` adds the paths that a plain merge and
+the merge helper would leave in conflict, and `--tsv FILE` writes a draft table with a suggested
+disposition for each upstream commit.
+
+Merge upstream about every two weeks, so that each merge brings about one stage of upstream work.
+Create a branch from `dev`, and merge one or two cut points (the upstream commits to merge up to)
+on it with the merge helper. It needs `unifdef` and a work tree without changes, and it writes its
+report and a copy of every file it computed to the paths you give it:
+
+```bash
+git switch -c upstream-sync dev
+python3 tools/upstream/platform_merge.py --repo . --report _Build/upstream-merge/report.md \
+    --auto-dir _Build/upstream-merge/auto <upstream commit>
+```
+
+The helper runs `git merge --no-ff --no-commit` and then:
+
+- strips the conditionals for the removed platforms from upstream's side of every C and C++ file
+  under `src` and `tests` before it merges the file, and lists the conditionals that are left;
+- keeps the old launcher's sources and tests and the removed platforms' files deleted, and leaves
+  out what upstream adds to them;
+- keeps the fork's own `README.md`, `CONTRIBUTING.md`, documentation, CI workflow, top-level
+  `CMakeLists.txt`, and `src/main.cpp`, and lists the upstream commits that change them, so that
+  you can carry their intent over by hand (for example, upstream's new tests are registered in
+  `tests/CMakeLists.txt`);
+- leaves every remaining conflict unmerged, with its markers, and lists it in the report.
+
+It exits with 0 when nothing is left to do by hand and with 1 otherwise. Resolve what the report
+lists, build, and run the full test suite. Then conclude the merge with `git commit`, or drop it
+with `git merge --abort`. Name the upstream range in the merge commit's message, for example
+`emulator: merge upstream kytyps5 up to 0685bffb`. Generated release notes show such a merge as one
+line, as the [packaging guide](docs/packaging.md#release-notes) describes.
+
+Port upstream's changes to the old launcher to the GTK launcher in separate commits, and name the
+upstream commit in the body of each commit message, for example
+`Ports upstream KytyPS5 commit d2ec91b8.` Then open the pull request from the branch to `dev`.
+
 ## Building and testing
 
 The [building guide](docs/building.md) lists the dependencies and the build commands, and the

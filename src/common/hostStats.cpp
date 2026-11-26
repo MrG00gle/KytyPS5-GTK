@@ -1,9 +1,9 @@
 #include "common/hostStats.h"
 
 #include "common/config.h"
+#include "common/timer.h"
 
 #include <algorithm>
-#include <chrono>
 #include <thread>
 #include <unordered_map>
 
@@ -34,12 +34,6 @@ struct Counters {
 	std::unordered_map<uint64_t, Thread> threads;
 	uint64_t                             wall_ns = 0;
 };
-
-uint64_t WallNanoseconds() {
-	return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-	                                 std::chrono::steady_clock::now().time_since_epoch())
-	                                 .count());
-}
 
 
 void SampleRusage(Counters& now) {
@@ -215,7 +209,7 @@ HostStats HostStatsSampler::Sample() {
 	stats.logical_cores = m_impl->logical_cores;
 
 	Counters now;
-	now.wall_ns = WallNanoseconds();
+	now.wall_ns = Common::SteadyNs();
 	SamplePlatform(m_impl->state, stats, now);
 
 	const auto& last    = m_impl->last;

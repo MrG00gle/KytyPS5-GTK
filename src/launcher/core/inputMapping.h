@@ -51,7 +51,8 @@ struct InputControl {
 	std::string_view keyboard_default; // "" when the control has no default key
 	std::string_view pad_default;      // "" when the control has no default pad source
 	bool             pad_tab;          // listed on the Gamepad tab
-	bool             pad_mappable; // the Emulator accepts "Pad:<id>=..." (not a stick direction)
+	// The Emulator accepts "Pad:<id>=..." (not a stick direction and not a touch pad swipe).
+	bool             pad_mappable;
 	InputSection     section;
 };
 

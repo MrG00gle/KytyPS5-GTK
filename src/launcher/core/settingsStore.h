@@ -14,7 +14,10 @@
 //   launcher's [ConfigurationEditDialog] geometry is an unknown key, kept but not read);
 // - [GlobalConfiguration] every <field> except input_mapping_custom, plus the GlobalOnlyFields();
 // - [GameConfigurations] size and, for each element N from 1 to size, N\name, N\basedir,
-//   N\game_path, N\custom_settings, and N\<field>.
+//   N\game_path, N\custom_settings, and N\<field>;
+// - [AdditionalContent] <TITLE_ID> (string list): a game's user add-ons, upstream KytyPS5's
+//   launcher's group (optional: a missing key is no add-on; a value that is not a string or a
+//   string list is reported; an empty list is no key).
 //
 // Loading (Requirement 9.6) gives each key that is missing, does not parse as its kind, or breaks
 // its field's rule (FieldDescriptor::check, an output path that is empty while its output is on,
@@ -22,8 +25,10 @@
 // color that is not #RRGGBB) the default value and lists it in LoadReport::defaulted_keys, except:
 // - optional keys, which Qt never wrote, give the default without a report when they are missing
 //   (and are reported when present but invalid): LauncherWindow/*, SettingsWindow/*,
-//   GameConfigurations/N/input_mapping_custom, and, in a legacy store (game_dirs missing,
-//   game_dir present), Launcher/addons_dir, grid_view, and grid_icon_width;
+//   GameConfigurations/N/input_mapping_custom, the optional fields (FieldDescriptor::optional:
+//   the settings that came with the upstream launcher's later versions) in both groups, and, in a
+//   legacy store (game_dirs missing, game_dir present), Launcher/addons_dir, grid_view, and
+//   grid_icon_width;
 // - MainDialog/theme and MainDialog/geometry are kept as they are, or stay absent;
 // - controller integers are clamped (Requirement 9.12), not defaulted; only an unparsable one is
 //   reported;
@@ -122,6 +127,10 @@ struct LauncherSettings {
 	ControllerSettings controller;
 	// [GameConfigurations], in file order.
 	std::vector<GameSettingsEntry> games;
+	// [AdditionalContent]: the user add-ons of each game (additionalContentModel.h), keyed by its
+	// title ID as NormalizeTitleId gives it, with the entries as stored. A title has a key only
+	// while it has an entry.
+	std::map<std::string, std::vector<std::string>> user_addons;
 	// Every key outside the schema and outside the elements.
 	IniFile unknown;
 
@@ -132,7 +141,7 @@ struct LoadReport {
 	LauncherSettings settings;
 	// The keys that got their default, as "<group>/<key>" or "GameConfigurations/<N>/<key>" (N as
 	// in the file), in the order they are checked: [Launcher], [MainDialog], [LauncherWindow],
-	// [SettingsWindow], [GlobalConfiguration], then each element.
+	// [SettingsWindow], [GlobalConfiguration], each element, then [AdditionalContent].
 	std::vector<std::string> defaulted_keys;
 };
 
@@ -223,7 +232,13 @@ struct EffectiveConfiguration {
 	GameConfiguration                    configuration;
 	ControllerSettings                   controller; // always the global one
 	std::string                          addons_dir; // the global one
+	// The game's user add-ons (LauncherSettings::user_addons of its normalized title ID), as stored
+	// (the launch arguments drop the entries that are not IsUserAddOnEntry).
+	std::vector<std::string>             user_addons;
 	std::optional<std::filesystem::path> cheat_plan; // as the caller passed it
+	// The activity to launch into for this run (upstream KytyPS5's launcher; never stored): ""
+	// unless the caller sets it.
+	std::string launch_activity;
 
 	friend bool operator==(const EffectiveConfiguration&, const EffectiveConfiguration&) = default;
 };

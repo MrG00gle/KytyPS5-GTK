@@ -237,15 +237,17 @@ The repository owner approved these exceptions, each for the listed tests only:
   test is accepted only when it fails with exactly the listed text. It fails CI when it fails for
   another reason, is skipped, or passes (then remove it from the list). These tests run on a real
   GPU in the manual checklist before each merge.
-- **The Ubuntu-only expected failure** (`tools/checks/ci-expected-failures-ubuntu.txt`, approved on
-  2026-11-13, a deviation from Requirements 16.5 and 16.10 for this one test in two jobs).
-  Ubuntu 24.04's lavapipe (Mesa 25.2.8) lacks `imageViewMinLod` and `depthBounds`, so the
-  emulator rejects it and `kernel_file_system` stops with "Could not find suitable device:
-  llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; depthBounds is not
-  supported". Only the Ubuntu and Coverage jobs pass this list, and the same rules apply: the test
-  still runs, and it fails CI there when it fails for another reason or passes. On Fedora it is on
-  no list and must pass. `tools/checks/workflow_check.py` checks that only those two jobs use the
-  file and that it holds only this entry.
+- **The Ubuntu-only expected failures** (`tools/checks/ci-expected-failures-ubuntu.txt`,
+  `kernel_file_system` approved on 2026-11-13 and `pm4_flip`, `video_out_flip_rate`, and
+  `device_creation` on 2026-11-24, a deviation from Requirements 16.5 and 16.10 for these tests in
+  two jobs). Each of them creates a Vulkan window. Ubuntu 24.04's lavapipe (Mesa 25.2.8) lacks
+  `imageViewMinLod` and `depthBounds`, so the emulator rejects it and each test stops with
+  "Could not find suitable device: llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not
+  supported; depthBounds is not supported". Only the Ubuntu and Coverage jobs pass this list, and
+  the same rules apply: the tests still run, and a listed test fails CI there when it fails for
+  another reason, is skipped, or passes. On Fedora they are on no list and must pass.
+  `tools/checks/workflow_check.py` checks that only those two jobs use the file and that it holds
+  exactly these entries.
 - **Timing reruns** (`tools/checks/ci-timing-retries.txt`). The two search timing tests
   (`launcher_ui_library_search_timing_wayland` and `_x11`) have little headroom on shared CI runners.
   After the full run, the `timing-rerun` step runs every listed test that failed there again, and

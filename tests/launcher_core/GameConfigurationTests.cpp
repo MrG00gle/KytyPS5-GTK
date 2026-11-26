@@ -1,9 +1,10 @@
 // Example tests of the Game_Configuration fields, their table, and their rules
 // (src/launcher/core/gameConfiguration.h, configurationFields.h; task 13.2, Requirements 3.4, 9.1,
-// 9.4, 9.12): the design defaults, every enum spelling including the legacy forms, the text forms
-// of booleans and integers, every Requirement 9.4 boundary, the gpu_index, console_language, elf,
-// and input mapping rules, the mapping rule in each ValidationScope, FindInvalidMappingEntries and
-// DropInvalidMappingEntries on mixed lists and the message that lists every invalid entry (plan
+// 9.4, 9.12): the design defaults, every enum spelling including the legacy forms, the screen
+// resolution's text forms (upstream's "<width>x<height>" and the old ones) and range, the text
+// forms of booleans and integers, every Requirement 9.4 boundary, the gpu_index, console_language,
+// elf, and input mapping rules, the mapping rule in each ValidationScope, FindInvalidMappingEntries
+// and DropInvalidMappingEntries on mixed lists and the message that lists every invalid entry (plan
 // D26), the order Validate() reports in, and ClampControllerSettings at and beyond its limits.
 
 #include "launcher/core/configurationFields.h"
@@ -37,7 +38,6 @@ using kyty::core::InvalidMappingEntry;
 using kyty::core::LogDirection;
 using kyty::core::PresentMode;
 using kyty::core::ScreenResolution;
-using kyty::core::ShaderOptimizationType;
 using kyty::core::Validate;
 using kyty::core::ValidationScope;
 
@@ -88,26 +88,31 @@ void CheckText(const std::string& actual, const std::string& expected, const std
 
 void TestDefaults() {
 	const GameConfiguration c;
-	Check(c.screen_resolution == ScreenResolution::R1280X720, "screen_resolution default");
+	Check((c.screen_resolution == ScreenResolution {1280, 720}), "screen_resolution default");
 	Check(c.user_name == "Kyty", "user_name default");
 	Check(c.user_id == 1000, "user_id default");
 	Check(c.audio_input_device.empty(), "audio_input_device default");
 	Check(c.present_mode == PresentMode::Mailbox, "present_mode default");
 	Check(c.gpu_index == -1, "gpu_index default");
-	Check(!c.fullscreen_enabled && !c.hdr_enabled && !c.hide_cursor_enabled &&
-	          !c.readback_linear_images && !c.readback_tiled_images && !c.sync_raw_image_buffers &&
-	          !c.tessellation_enabled && !c.perf_overlay_enabled && !c.skip_notice_screen &&
-	          !c.network_connected && !c.vulkan_validation_enabled &&
+	Check(!c.fullscreen_enabled && !c.hdr_enabled && !c.hide_cursor_enabled && !c.stretch_enabled &&
+	          !c.readback_linear_images && !c.readback_tiled_images && !c.readback_storage_images &&
+	          !c.sync_raw_image_buffers && !c.tessellation_enabled &&
+	          !c.occlusion_queries_enabled && !c.relaxed_shader_float && !c.native_rt &&
+	          !c.perf_overlay_enabled && !c.skip_notice_screen && !c.network_connected &&
+	          !c.psn_emulation_enabled && !c.vulkan_validation_enabled &&
 	          !c.shader_validation_enabled && !c.command_buffer_dump_enabled &&
-	          !c.profiler_enabled && !c.renderdoc_enabled && !c.amd_cpu_enabled &&
-	          !c.input_mapping_custom,
+	          !c.profiler_enabled && !c.renderdoc_enabled && !c.pro_enabled && !c.amd_cpu_enabled &&
+	          !c.guest_tsc_enabled && !c.input_mapping_custom,
 	      "boolean defaults are false");
+	Check(c.shader_cache_enabled, "shader_cache_enabled default (on, as upstream)");
+	Check(c.flush_draws == 0, "flush_draws default (off)");
+	Check(c.pssr_upscaler == kyty::core::PssrUpscaler::Linear, "pssr_upscaler default");
+	Check(c.dlss_folder.empty() && c.fsr_folder.empty(), "upscaler folder defaults");
+	Check(c.dlss_preset == kyty::core::DlssPreset::Default, "dlss_preset default");
 	Check(c.trophy_enabled, "trophy_enabled default");
 	Check(c.trophy_duration_seconds == 6, "trophy_duration_seconds default");
 	Check(c.vblank_frequency == 60, "vblank_frequency default");
 	Check(c.console_language == 1, "console_language default");
-	Check(c.shader_optimization_type == ShaderOptimizationType::Performance,
-	      "shader_optimization_type default");
 	Check(c.shader_log_direction == LogDirection::Silent, "shader_log_direction default");
 	Check(c.shader_log_folder == "_Shaders", "shader_log_folder default");
 	Check(c.command_buffer_dump_folder == "_Buffers", "command_buffer_dump_folder default");
@@ -124,43 +129,72 @@ void TestDefaults() {
 }
 
 void TestTable() {
-	const std::vector<std::string_view> names  = {"screen_resolution",
-	                                              "user_name",
-	                                              "user_id",
-	                                              "audio_input_device",
-	                                              "present_mode",
-	                                              "gpu_index",
-	                                              "fullscreen_enabled",
-	                                              "hdr_enabled",
-	                                              "hide_cursor_enabled",
-	                                              "readback_linear_images",
-	                                              "readback_tiled_images",
-	                                              "sync_raw_image_buffers",
-	                                              "tessellation_enabled",
-	                                              "trophy_enabled",
-	                                              "trophy_duration_seconds",
-	                                              "perf_overlay_enabled",
-	                                              "skip_notice_screen",
-	                                              "network_connected",
-	                                              "vblank_frequency",
-	                                              "console_language",
-	                                              "vulkan_validation_enabled",
-	                                              "shader_validation_enabled",
-	                                              "shader_optimization_type",
-	                                              "shader_log_direction",
-	                                              "shader_log_folder",
-	                                              "command_buffer_dump_enabled",
-	                                              "command_buffer_dump_folder",
-	                                              "printf_direction",
-	                                              "printf_output_file",
-	                                              "profiler_enabled",
-	                                              "renderdoc_enabled",
-	                                              "amd_cpu_enabled",
-	                                              "elf",
-	                                              "input_mapping_custom",
-	                                              "host_input_mapping"};
-	const auto                          fields = GameConfigurationFields();
-	Check(fields.size() == names.size(), "35 Game_Configuration fields");
+	const std::vector<std::string_view> names = {"screen_resolution",
+	                                             "user_name",
+	                                             "user_id",
+	                                             "audio_input_device",
+	                                             "present_mode",
+	                                             "gpu_index",
+	                                             "fullscreen_enabled",
+	                                             "hdr_enabled",
+	                                             "hide_cursor_enabled",
+	                                             "stretch_enabled",
+	                                             "readback_linear_images",
+	                                             "readback_tiled_images",
+	                                             "readback_storage_images",
+	                                             "sync_raw_image_buffers",
+	                                             "flush_draws",
+	                                             "tessellation_enabled",
+	                                             "occlusion_queries_enabled",
+	                                             "relaxed_shader_float",
+	                                             "native_rt",
+	                                             "shader_cache_enabled",
+	                                             "trophy_enabled",
+	                                             "trophy_duration_seconds",
+	                                             "perf_overlay_enabled",
+	                                             "skip_notice_screen",
+	                                             "network_connected",
+	                                             "psn_emulation_enabled",
+	                                             "vblank_frequency",
+	                                             "console_language",
+	                                             "vulkan_validation_enabled",
+	                                             "shader_validation_enabled",
+	                                             "shader_log_direction",
+	                                             "shader_log_folder",
+	                                             "command_buffer_dump_enabled",
+	                                             "command_buffer_dump_folder",
+	                                             "printf_direction",
+	                                             "printf_output_file",
+	                                             "profiler_enabled",
+	                                             "renderdoc_enabled",
+	                                             "pro_enabled",
+	                                             "pssr_upscaler",
+	                                             "dlss_folder",
+	                                             "dlss_preset",
+	                                             "fsr_folder",
+	                                             "amd_cpu_enabled",
+	                                             "guest_tsc_enabled",
+	                                             "elf",
+	                                             "input_mapping_custom",
+	                                             "host_input_mapping"};
+	// The fields that came with the upstream launcher's later settings: a missing Kyty.ini key
+	// gets the default without a report.
+	const std::vector<std::string_view> optional = {
+	    "stretch_enabled",      "readback_storage_images",
+	    "flush_draws",          "occlusion_queries_enabled",
+	    "relaxed_shader_float", "native_rt",
+	    "shader_cache_enabled", "psn_emulation_enabled",
+	    "pro_enabled",          "pssr_upscaler",
+	    "dlss_folder",          "dlss_preset",
+	    "fsr_folder",           "guest_tsc_enabled"};
+	const auto fields = GameConfigurationFields();
+	Check(fields.size() == names.size(), "48 Game_Configuration fields");
+	for (const auto& field: fields) {
+		const bool expected =
+		    std::find(optional.begin(), optional.end(), field.name) != optional.end();
+		Check(field.optional == expected,
+		      std::string(field.name) + (expected ? " is optional" : " is not optional"));
+	}
 	for (size_t i = 0; i < names.size(); i++) {
 		Check(fields[i].name == names[i], "field " + std::to_string(i) + " is " +
 		                                      std::string(names[i]) + ", got " +
@@ -173,20 +207,33 @@ void TestTable() {
 	}
 	Check(FindGameConfigurationField("red_zone_protection_enabled") == nullptr,
 	      "red_zone_protection_enabled is not a field (Requirement 3.4)");
+	Check(FindGameConfigurationField("shader_optimization_type") == nullptr,
+	      "shader_optimization_type is not a field (the emulator drops its option)");
 	Check(FindGameConfigurationField("name") == nullptr &&
 	          FindGameConfigurationField("game_path") == nullptr &&
 	          FindGameConfigurationField("controller_color") == nullptr &&
 	          FindGameConfigurationField("") == nullptr,
 	      "entry keys and global-only fields are not Game_Configuration fields");
 
-	Check(Field("screen_resolution").kind == FieldKind::Enum, "enum kind");
+	Check(Field("present_mode").kind == FieldKind::Enum, "enum kind");
+	Check(Field("screen_resolution").kind == FieldKind::String,
+	      "the screen resolution is its \"<width>x<height>\" text");
 	Check(Field("user_name").kind == FieldKind::String, "string kind");
 	Check(Field("user_id").kind == FieldKind::Int, "int kind");
 	Check(Field("hdr_enabled").kind == FieldKind::Bool, "bool kind");
 	Check(Field("host_input_mapping").kind == FieldKind::StringList, "list kind");
-	Check(Field("screen_resolution").enum_keys.size() == 4 &&
-	          Field("present_mode").enum_keys.size() == 3 && Field("user_id").enum_keys.empty(),
+	Check(Field("screen_resolution").enum_keys.empty() &&
+	          Field("present_mode").enum_keys.size() == 3 &&
+	          Field("pssr_upscaler").enum_keys.size() == 3 &&
+	          Field("dlss_preset").enum_keys.size() == 16 && Field("user_id").enum_keys.empty(),
 	      "enum keys");
+	Check(Field("flush_draws").kind == FieldKind::Int &&
+	          Field("dlss_folder").kind == FieldKind::String &&
+	          Field("fsr_folder").kind == FieldKind::String &&
+	          Field("pssr_upscaler").kind == FieldKind::Enum &&
+	          Field("dlss_preset").kind == FieldKind::Enum &&
+	          Field("shader_cache_enabled").kind == FieldKind::Bool,
+	      "the kinds of the new fields");
 
 	const auto global = GlobalOnlyFields();
 	Check(global.size() == 4 && global[0].name == "controller_color" &&
@@ -201,7 +248,7 @@ void TestTable() {
 // Every field: format(get) parses back to the same value and set() stores it.
 void TestFieldRoundTrip() {
 	GameConfiguration c;
-	c.screen_resolution           = ScreenResolution::R3840X2160;
+	c.screen_resolution           = ScreenResolution {3440, 1440};
 	c.user_name                   = "Player, \"two\"";
 	c.user_id                     = 0;
 	c.audio_input_device          = "USB Audio";
@@ -212,7 +259,6 @@ void TestFieldRoundTrip() {
 	c.trophy_duration_seconds     = 10;
 	c.vblank_frequency            = 360;
 	c.console_language            = 29;
-	c.shader_optimization_type    = ShaderOptimizationType::None;
 	c.shader_log_direction        = LogDirection::File;
 	c.shader_log_folder           = "logs/shaders";
 	c.command_buffer_dump_enabled = true;
@@ -220,6 +266,14 @@ void TestFieldRoundTrip() {
 	c.elf                         = "bin/eboot_alt.bin";
 	c.input_mapping_custom        = true;
 	c.host_input_mapping          = {"Cross=J", "L3=Left Shift"};
+	c.flush_draws                 = kInt32Max;
+	c.shader_cache_enabled        = false;
+	c.pro_enabled                 = true;
+	c.pssr_upscaler               = kyty::core::PssrUpscaler::DLSS;
+	c.dlss_folder                 = "/models/dlss, \"v3\"";
+	c.dlss_preset                 = kyty::core::DlssPreset::O;
+	c.fsr_folder                  = "ffx";
+	c.guest_tsc_enabled           = true;
 	CheckValid(c, "the round-trip configuration");
 
 	GameConfiguration copy;
@@ -272,27 +326,6 @@ void TestEnumSpellings() {
 		std::optional<int64_t> index;
 	};
 	const std::vector<Case> cases = {
-	    {"screen_resolution", "R1280X720", 0},
-	    {"screen_resolution", "R1920X1080", 1},
-	    {"screen_resolution", "R2560X1440", 2},
-	    {"screen_resolution", "R3840X2160", 3},
-	    // Legacy text (Qt's TextToEnum) and integer indexes.
-	    {"screen_resolution", "1280x720", 0},
-	    {"screen_resolution", "1920x1080", 1},
-	    {"screen_resolution", "2560x1440", 2},
-	    {"screen_resolution", "3840x2160", 3},
-	    {"screen_resolution", "1920X1080", 1},
-	    {"screen_resolution", "0", 0},
-	    {"screen_resolution", "3", 3},
-	    {"screen_resolution", "003", 3},
-	    {"screen_resolution", "4", std::nullopt},
-	    {"screen_resolution", "-1", std::nullopt},
-	    {"screen_resolution", "R1280x720", std::nullopt},
-	    {"screen_resolution", "r1280x720", std::nullopt},
-	    {"screen_resolution", "1280x721", std::nullopt},
-	    {"screen_resolution", "1280", std::nullopt},
-	    {"screen_resolution", "R1280X720 ", std::nullopt},
-	    {"screen_resolution", "", std::nullopt},
 	    {"present_mode", "Fifo", 0},
 	    {"present_mode", "Mailbox", 1},
 	    {"present_mode", "Immediate", 2},
@@ -300,11 +333,6 @@ void TestEnumSpellings() {
 	    {"present_mode", "3", std::nullopt},
 	    {"present_mode", "mailbox", std::nullopt},
 	    {"present_mode", "MAILBOX", std::nullopt},
-	    {"shader_optimization_type", "None", 0},
-	    {"shader_optimization_type", "Size", 1},
-	    {"shader_optimization_type", "Performance", 2},
-	    {"shader_optimization_type", "1", 1},
-	    {"shader_optimization_type", "Speed", std::nullopt},
 	    {"shader_log_direction", "Silent", 0},
 	    {"shader_log_direction", "Console", 1},
 	    {"shader_log_direction", "File", 2},
@@ -312,6 +340,23 @@ void TestEnumSpellings() {
 	    {"shader_log_direction", "file", std::nullopt},
 	    {"printf_direction", "File", 2},
 	    {"printf_direction", "Off", std::nullopt},
+	    // The upstream launcher's PssrUpscaler keys.
+	    {"pssr_upscaler", "Linear", 0},
+	    {"pssr_upscaler", "DLSS", 1},
+	    {"pssr_upscaler", "FSR", 2},
+	    {"pssr_upscaler", "2", 2},
+	    {"pssr_upscaler", "3", std::nullopt},
+	    {"pssr_upscaler", "dlss", std::nullopt},
+	    {"pssr_upscaler", "Bilinear", std::nullopt},
+	    {"dlss_preset", "Default", 0},
+	    {"dlss_preset", "A", 1},
+	    {"dlss_preset", "K", 11},
+	    {"dlss_preset", "O", 15},
+	    {"dlss_preset", "15", 15},
+	    {"dlss_preset", "16", std::nullopt},
+	    {"dlss_preset", "P", std::nullopt},
+	    {"dlss_preset", "a", std::nullopt},
+	    {"dlss_preset", "", std::nullopt},
 	};
 	for (const auto& c: cases) {
 		const auto parsed = Field(c.field).parse(c.text);
@@ -322,11 +367,123 @@ void TestEnumSpellings() {
 			Check(!parsed.has_value(), what + " is rejected");
 		}
 	}
-	Check(Field("screen_resolution").format(FieldValue(int64_t {1})) == "R1920X1080" &&
-	          Field("present_mode").format(FieldValue(int64_t {0})) == "Fifo" &&
-	          Field("shader_optimization_type").format(FieldValue(int64_t {1})) == "Size" &&
+	Check(Field("present_mode").format(FieldValue(int64_t {0})) == "Fifo" &&
+	          Field("shader_log_direction").format(FieldValue(int64_t {1})) == "Console" &&
 	          Field("printf_direction").format(FieldValue(int64_t {2})) == "File",
 	      "enums are written as their key names");
+}
+
+// The upstream launcher's free-form "<width>x<height>" resolution and the old forms it still reads.
+void TestScreenResolution() {
+	using Size = std::optional<ScreenResolution>;
+
+	const std::vector<std::pair<std::string_view, Size>> cases = {
+	    // The upstream launcher's form, as it writes it.
+	    {"1280x720", ScreenResolution {1280, 720}},
+	    {"3440x1440", ScreenResolution {3440, 1440}},
+	    {"320x320", ScreenResolution {320, 320}},
+	    {"16384x16384", ScreenResolution {16384, 16384}},
+	    // What its expression ^\s*R?(\d+)\s*[xX]\s*(\d+)\s*$ also reads: the old keys, an
+	    // upper-case X, ASCII spaces around the numbers, leading zeros.
+	    {"R1280X720", ScreenResolution {1280, 720}},
+	    {"R1920X1080", ScreenResolution {1920, 1080}},
+	    {"R2560X1440", ScreenResolution {2560, 1440}},
+	    {"R3840X2160", ScreenResolution {3840, 2160}},
+	    {"R1280x720", ScreenResolution {1280, 720}},
+	    {"1920X1080", ScreenResolution {1920, 1080}},
+	    {" 3440 x 1440 ", ScreenResolution {3440, 1440}},
+	    {"\t5120X2160\r\n", ScreenResolution {5120, 2160}},
+	    {"  R2560x1080", ScreenResolution {2560, 1080}},
+	    {"01280x0720", ScreenResolution {1280, 720}},
+	    // Sizes outside the range still parse; IsValidScreenResolution and the field rule reject
+	    // them.
+	    {"100x100", ScreenResolution {100, 100}},
+	    {"20000x720", ScreenResolution {20000, 720}},
+	    {"0x0", ScreenResolution {0, 0}},
+	    // The old enum's integer index.
+	    {"0", ScreenResolution {1280, 720}},
+	    {"1", ScreenResolution {1920, 1080}},
+	    {"2", ScreenResolution {2560, 1440}},
+	    {"3", ScreenResolution {3840, 2160}},
+	    {"003", ScreenResolution {3840, 2160}},
+	    // Not a resolution.
+	    {"4", std::nullopt},
+	    {"-1", std::nullopt},
+	    {"1280", std::nullopt},
+	    {"", std::nullopt},
+	    {"   ", std::nullopt},
+	    {"r1280x720", std::nullopt},
+	    {"R 1280x720", std::nullopt},
+	    {"RR1280x720", std::nullopt},
+	    {"1280x", std::nullopt},
+	    {"x720", std::nullopt},
+	    {"1280x720x2", std::nullopt},
+	    {"1280*720", std::nullopt},
+	    {"-1280x720", std::nullopt},
+	    {"+1280x720", std::nullopt},
+	    {"1280.5x720", std::nullopt},
+	    {"2147483648x720", std::nullopt},
+	    {"1280x99999999999999999999", std::nullopt},
+	    {"1280\xC2\xA0x720", std::nullopt}, // U+00A0 is not an ASCII space
+	};
+	const auto& field = Field("screen_resolution");
+	for (const auto& [text, expected]: cases) {
+		const auto what   = "screen resolution '" + std::string(text) + "'";
+		const auto parsed = kyty::core::ParseScreenResolution(text);
+		Check(parsed == expected, what + ": ParseScreenResolution");
+		// The field's text form is upstream's form of the parsed size; the rule has the range.
+		const auto value = field.parse(text);
+		Check(value.has_value() == expected.has_value(), what + ": the field parses it");
+		if (!expected) {
+			continue;
+		}
+		Check(*value == FieldValue(kyty::core::FormatScreenResolution(*expected)),
+		      what + ": the field's value is " + kyty::core::FormatScreenResolution(*expected));
+		Check(field.check(*value).has_value() != kyty::core::IsValidScreenResolution(*expected),
+		      what + ": the field rule is the range");
+		GameConfiguration c;
+		Check(field.set(c, *value) && c.screen_resolution == *expected, what + ": set()");
+	}
+
+	for (const auto& [resolution, valid]:
+	     std::vector<std::pair<ScreenResolution, bool>> {{{320, 320}, true},
+	                                                     {{16384, 16384}, true},
+	                                                     {{319, 720}, false},
+	                                                     {{1280, 319}, false},
+	                                                     {{16385, 720}, false},
+	                                                     {{1280, 16385}, false},
+	                                                     {{0, 0}, false},
+	                                                     {{-1280, 720}, false}}) {
+		const auto what = kyty::core::FormatScreenResolution(resolution);
+		Check(kyty::core::IsValidScreenResolution(resolution) == valid,
+		      what + ": IsValidScreenResolution");
+		GameConfiguration c;
+		c.screen_resolution = resolution;
+		if (valid) {
+			CheckValid(c, "the resolution " + what);
+		} else {
+			CheckInvalid(c, "screen_resolution", "the resolution " + what);
+		}
+	}
+	Check(field.check(FieldValue(std::string("abc"))).has_value() &&
+	          field.check(FieldValue(int64_t {1})).has_value(),
+	      "the rule rejects other text and other kinds");
+	GameConfiguration unchanged;
+	Check(!field.set(unchanged, FieldValue(std::string("abc"))) &&
+	          !field.set(unchanged, FieldValue(int64_t {1})) &&
+	          unchanged.screen_resolution == ScreenResolution {},
+	      "set() refuses other text and other kinds");
+	Check(field.get(GameConfiguration {}) == FieldValue(std::string("1280x720")) &&
+	          field.format(field.get(GameConfiguration {})) == "1280x720",
+	      "the default is written as 1280x720");
+
+	const auto shown = kyty::core::ScreenResolutionPresets();
+
+	const std::vector<ScreenResolution> presets = {{1280, 720},  {1920, 1080}, {2560, 1440},
+	                                               {3840, 2160}, {2560, 1080}, {3440, 1440},
+	                                               {3840, 1600}, {5120, 2160}};
+	Check(std::vector<ScreenResolution>(shown.begin(), shown.end()) == presets,
+	      "the upstream launcher's presets, ultrawide included");
 }
 
 void TestBoolAndIntText() {
@@ -447,6 +604,11 @@ void TestIntegerBoundaries() {
 	    {"console_language", 0, true},
 	    {"console_language", 29, true},
 	    {"console_language", 30, false},
+	    {"flush_draws", -1, false},
+	    {"flush_draws", 0, true},
+	    {"flush_draws", 1, true},
+	    {"flush_draws", kInt32Max, true},
+	    {"flush_draws", kInt32Min, false},
 	};
 	for (const auto& c: cases) {
 		GameConfiguration configuration;
@@ -664,9 +826,18 @@ void TestEnumsOutOfRange() {
 	CheckInvalid(c, "present_mode", "a present mode without a key");
 	Check(Validate(c)->message.find("Fifo, Mailbox, or Immediate") != std::string::npos,
 	      "the message lists the keys");
-	c                   = {};
-	c.screen_resolution = static_cast<ScreenResolution>(-1);
-	CheckInvalid(c, "screen_resolution", "a resolution without a key");
+	c               = {};
+	c.pssr_upscaler = static_cast<kyty::core::PssrUpscaler>(3);
+	CheckInvalid(c, "pssr_upscaler", "an upscaler without a key");
+	c             = {};
+	c.dlss_preset = static_cast<kyty::core::DlssPreset>(16);
+	CheckInvalid(c, "dlss_preset", "a DLSS preset without a key");
+	// An empty DLSS folder is valid, also with Pro mode and DLSS (the emulator then does not use
+	// DLSS); only the settings editor asks for one.
+	c               = {};
+	c.pro_enabled   = true;
+	c.pssr_upscaler = kyty::core::PssrUpscaler::DLSS;
+	CheckValid(c, "Pro mode with DLSS and no model folder");
 }
 
 // Validate() names the first invalid field in table order.
@@ -756,6 +927,7 @@ int main() {
 	TestTable();
 	TestFieldRoundTrip();
 	TestEnumSpellings();
+	TestScreenResolution();
 	TestBoolAndIntText();
 	TestUserName();
 	TestIntegerBoundaries();

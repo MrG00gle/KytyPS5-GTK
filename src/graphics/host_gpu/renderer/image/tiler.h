@@ -54,6 +54,13 @@ public:
 	                                const D16Layout& layout);
 	[[nodiscard]] Result TransformColor(Result input, ColorTransform transform, bool to_host);
 	void TransformColor(Result input, Result output, ColorTransform transform, bool to_host);
+	// Color-clear keys are multiples of 0x20, so key >> 5 selects one of these slots.
+	static constexpr uint32_t ColorClearSlots = 8;
+	// metadata spans `slices` equal runs `stride` bytes apart. Returns the buffer whose dword
+	// slice * ColorClearSlots + (key >> 5) is set when every byte of that run equals a key whose
+	// bit `keys` selects; a hit expands to 0xff when `expand` is set.
+	[[nodiscard]] vk::Buffer CheckColorClear(Result metadata, uint64_t stride, uint32_t slices,
+	                                         uint32_t keys, bool expand);
 
 private:
 	friend struct TileManagerTestAccess;
@@ -73,7 +80,6 @@ private:
 		uint32_t slice_bytes;
 		uint32_t tiled_slice_bytes;
 		uint32_t blocks_per_row;
-		uint32_t surface_z;
 		uint32_t tail_x;
 		uint32_t tail_y;
 		uint32_t num_texels;
@@ -111,12 +117,14 @@ private:
 	                                             uint64_t alignment, uint64_t max_range,
 	                                             uint32_t max_groups) noexcept;
 	[[nodiscard]] Tiling Prepare(bool tile, uint64_t tiled_capacity, uint64_t linear_capacity,
-	                             const ImageInfo& info, uint32_t levels, uint64_t source_base,
-	                             uint64_t target_base);
+	                             const ImageInfo& info, uint32_t levels, uint64_t source_offset,
+	                             uint64_t target_offset);
 	void                 Record(vk::Buffer source, uint64_t source_offset, uint64_t source_capacity,
 	                            vk::Buffer target, uint64_t target_offset, uint64_t target_capacity,
-	                            const Tiling& tiling, bool clear_target);
+	                            const Tiling& tiling);
 	[[nodiscard]] vk::Pipeline GetPipeline(uint32_t slot);
+	[[nodiscard]] vk::Pipeline CreatePipeline(std::span<const uint32_t>     code,
+	                                          const vk::SpecializationInfo* specialization) const;
 
 	GraphicContext&                         m_graphics;
 	CommandScheduler&                       m_scheduler;
@@ -130,6 +138,8 @@ private:
 	vk::Pipeline                            m_d24_to_d16      = nullptr;
 	vk::Pipeline                            m_d32_to_d16      = nullptr;
 	vk::Pipeline                            m_color_transform = nullptr;
+	vk::Pipeline                            m_color_clear     = nullptr;
+	std::unique_ptr<Buffer>                 m_clear_predicates;
 };
 
 } // namespace Libs::Graphics

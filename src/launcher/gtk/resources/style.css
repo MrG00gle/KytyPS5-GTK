@@ -44,6 +44,23 @@
 	margin: 1px;
 }
 
+/* The PS5 Pro badge over a game icon, in upstream KytyPS5's colors (light text on violet, which
+ * reads on both color schemes); smaller over the list's icons. */
+.game-pro-badge {
+	background-color: #534ab7;
+	color: #eeedfe;
+	border-radius: 4px;
+	padding: 0 4px;
+	font-size: 0.8em;
+	font-weight: bold;
+}
+
+.game-pro-badge.compact {
+	border-radius: 3px;
+	padding: 0 2px;
+	font-size: 0.6em;
+}
+
 .game-grid-item {
 	padding: 6px;
 }

@@ -10,8 +10,9 @@
 // game_path are left alone: they identify the elements. LoadSettings must give each deleted or
 // corrupted field its default and every other field its stored value (unknown keys included), and
 // report exactly corrupted ∪ (deleted − optional) in defaulted_keys (plan D20), where the optional
-// keys are LauncherWindow/*, SettingsWindow/*, GameConfigurations/N/input_mapping_custom, and the
-// preserved MainDialog/theme and MainDialog/geometry. In a third of the cases the store is a legacy
+// keys are LauncherWindow/*, SettingsWindow/*, GameConfigurations/N/input_mapping_custom, the
+// optional fields (FieldDescriptor::optional) in both groups, and the preserved MainDialog/theme
+// and MainDialog/geometry. In a third of the cases the store is a legacy
 // one (review-u6 finding 4): game_dirs is dropped, the Game_Folders are in game_dir (kept or
 // corrupted), and Launcher/addons_dir, grid_view, and grid_icon_width are each deleted with a
 // probability of at least 1/2; in a legacy store they are optional too, so a missing one gets its
@@ -119,7 +120,8 @@ struct Corruption {
 		};
 		for (const auto& [field, action]: actions) {
 			const auto key      = prefix + std::string(field->name);
-			const bool optional = field->name == kyty::core::kInputMappingCustomField;
+			const bool optional =
+			    field->name == kyty::core::kInputMappingCustomField || field->optional;
 			auto       invalid  = InvalidStoredValue(field->name, field->kind);
 			// An empty output path is invalid only while its output is on: only when the output
 			// field keeps its stored value and that value is on.

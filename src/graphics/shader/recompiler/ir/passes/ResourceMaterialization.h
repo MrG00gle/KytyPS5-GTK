@@ -26,11 +26,14 @@ struct ResourceSpecialization {
 		uint32_t                      mip_count     = 1;
 		Prospero::BufferFormat        conversion_format          = Prospero::BufferFormat::kInvalid;
 		uint32_t                      shader_swizzle             = ShaderImageIdentitySwizzle;
+		Prospero::BufferFormat        srgb_decode                = Prospero::BufferFormat::kInvalid;
 		uint32_t                      indirect_root              = ImageResource::NoIndirectImage;
 		uint32_t                      indirect_mapping_offset    = 0;
 		uint32_t                      indirect_search_iterations = 0;
 		bool                          cube                       = false;
+		bool                          skip_degamma               = false;
 		bool                          fmask                      = false;
+		bool                          heap                       = false;
 		bool                          operator==(const Image&) const = default;
 	};
 
@@ -52,12 +55,24 @@ struct ResourceSpecialization {
 // its values and is independent of the translated shader CFG.
 ResourcePlan ExtractResourcePlan(const Program& program);
 
+// Shader cache record of a plan; loading it into a default-constructed plan rebuilds the walker
+// and scratch state like extraction. A failed load leaves a plan that must not be used.
+std::vector<uint8_t> SaveResourcePlan(const ResourcePlan& plan);
+bool                 LoadResourcePlan(std::span<const uint8_t> bytes, ResourcePlan& plan);
+
 // Refreshes cached resources and specialization in place. A failed refresh must not be used.
 bool MaterializeResources(const ResourcePlan& program, const SrtRuntime& runtime,
                           ResourceSnapshot& snapshot, ResourceSpecialization& specialization);
 
 // Applies an already-derived specialization to native IR before layout and emission.
 void ApplyResourceSpecialization(Program& program, const ResourceSpecialization& specialization);
+
+// Kind of an image heap entry as root sees it, or 0 (and a zeroed value) when root reads it as
+// null. Entries of one kind specialize identically.
+uint32_t ImageHeapKind(const ImageResource& root, DescriptorValue& value);
+// The sampled resource that root resolves entries of kind as; kind 0 gives the identity of
+// root's view of a heap.
+ImageResource ImageHeapResource(const ImageResource& root, uint32_t kind);
 
 } // namespace Libs::Graphics::ShaderRecompiler::IR
 

@@ -1,7 +1,8 @@
 // Feature: linux-gtk-modernization, Property 33: Remote cheat fetch limits and matching
 //
 // Validates Requirement 11.17. Each case scripts one FakeHttpClient response, on a FakeScheduler
-// virtual clock, for either one of the three file list indexes (CheatCatalog) or a cheat file
+// virtual clock, for either one of the four file lists (CheatCatalog: the KytyPS5-Modules catalog
+// or one of the collection's three indexes) or a cheat file
 // (RemoteCheats): a body far below or within a few bytes of the limit (2 MiB for an index, 8 MiB
 // for a file), split into random chunks; a latency and chunk interval far from or right at the
 // 30 s limit; HTTP status 200, another 2xx, or a failure status; or a network failure. A cheat
@@ -178,16 +179,26 @@ KYTY_PROPERTY(33, "Remote cheat fetch limits and matching") {
 		Outcome                   outcome    = Outcome::Accepted;
 
 		if (OneIn(2)) {
-			// One index of the file list.
-			const auto  format = Pick(std::vector<std::string> {"json", "mc4", "shn"});
-			std::string lines;
-			const int   count = Choose(1, 4);
+			// One list of the file list: the KytyPS5-Modules catalog or an index.
+			const auto  format  = Pick(std::vector<std::string> {"modules", "json", "mc4", "shn"});
+			const bool  modules = format == "modules";
+			std::string lines   = modules ? R"({"cheats":{"PPSA01234":[)" : "";
+			const int   count   = Choose(1, 4);
+			const auto  name    = [&](int i) {
+				return modules ? "n" + std::to_string(i)
+				               : ContentGen::CheatFileName("PPSA01234", "01.000",
+				                                           "n" + std::to_string(i), format);
+			};
 			for (int i = 0; i < count; i++) {
-				lines += ContentGen::CheatIndexLine(
-				             ContentGen::CheatFileName("PPSA01234", "01.000",
-				                                       "n" + std::to_string(i), format),
-				             "Title " + std::to_string(i)) +
-				         "\n";
+				lines +=
+				    modules
+				        ? std::string(i == 0 ? "" : ",") + R"({"path":"cheats/json/n)" +
+				              std::to_string(i) + R"(.json","title":")" + name(i) +
+				              R"(","version":"01.000"})"
+				        : ContentGen::CheatIndexLine(name(i), "Title " + std::to_string(i)) + "\n";
+			}
+			if (modules) {
+				lines += "]}}";
 			}
 			const auto size     = BodySize(kyty::core::kMaxCheatIndexBytes,
 			                               lines.size() + Choose<std::size_t>(0, 40), near_limit);
@@ -198,9 +209,11 @@ KYTY_PROPERTY(33, "Remote cheat fetch limits and matching") {
 			         << response.status << ", latency " << response.latency.count()
 			         << " ms, interval " << response.chunk_interval.count()
 			         << " ms: " << OutcomeName(outcome) << "\n";
-			for (const auto& other: kyty::core::kCheatFormats) {
-				http.AddResponse(kyty::core::CheatIndexUrl(other),
-				                 other == format ? response : ContentGen::ResponseOf("\n"));
+			for (const auto& other: kyty::core::kCheatSources) {
+				const auto clean =
+				    other == kyty::core::kModulesCheatSource ? R"({"patches":{}})" : "\n";
+				http.AddResponse(kyty::core::CheatSourceUrl(other),
+				                 other == format ? response : ContentGen::ResponseOf(clean));
 			}
 
 			std::vector<kyty::core::CheatCatalogResult> results;
@@ -215,17 +228,15 @@ KYTY_PROPERTY(33, "Remote cheat fetch limits and matching") {
 				RC_ASSERT(request.total_timeout == milliseconds {kLimitMs});
 				RC_ASSERT(request.stall_timeout == milliseconds {0});
 			}
-			std::string upper = format;
-			std::transform(upper.begin(), upper.end(), upper.begin(), [](char c) {
-				return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
+			std::string upper = modules ? "Modules" : format;
+			std::transform(upper.begin(), upper.end(), upper.begin(), [modules](char c) {
+				return !modules && c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
 			});
 			if (outcome == Outcome::Accepted) {
 				RC_ASSERT(results[0].error.empty());
 				RC_ASSERT(results[0].files.size() == static_cast<std::size_t>(count));
 				for (int i = 0; i < count; i++) {
-					RC_ASSERT(results[0].files[i].name ==
-					          ContentGen::CheatFileName("PPSA01234", "01.000",
-					                                    "n" + std::to_string(i), format));
+					RC_ASSERT(results[0].files[i].name == name(i));
 				}
 			} else {
 				RC_ASSERT(results[0].files.empty());

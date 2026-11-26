@@ -22,7 +22,6 @@ kyty_add_test_executable(scalar_provenance_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/ScalarProvenanceTests.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/guest_gpu/gpu_format.cpp"
-	"${KYTY_SOURCE_DIR}/graphics/host_gpu/hostMemory.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/ReadLaneElimination.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/ResourceMaterialization.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/SrtWalker.cpp"
@@ -38,6 +37,12 @@ kyty_add_test_executable(page_manager_tests
 )
 target_include_directories(page_manager_tests PRIVATE ${inc_headers})
 
+# Fails to compile unless the global flags target x86-64-v3, and fails at run time when they let the
+# compiler contract a * b + c.
+kyty_add_test_executable(build_flags_tests
+	SOURCES "${KYTY_TESTS_DIR}/BuildFlagsTests.cpp"
+)
+
 kyty_add_test_executable(archive_file_tests
 	SOURCES "${KYTY_TESTS_DIR}/ArchiveFileTests.cpp"
 	LINK common ZArchive::zarchive
@@ -46,7 +51,7 @@ target_include_directories(archive_file_tests PRIVATE ${inc_headers})
 
 kyty_add_test_executable(trophy_system_tests
 	SOURCES "${KYTY_TESTS_DIR}/TrophySystemTests.cpp"
-	LINK common
+	LINK common Vulkan::Headers
 )
 target_include_directories(trophy_system_tests PRIVATE ${inc_headers})
 
@@ -77,6 +82,11 @@ kyty_add_test_executable(lru_cache_tests
 )
 target_include_directories(lru_cache_tests PRIVATE ${inc_headers})
 
+kyty_add_test_executable(slot_vector_tests
+	SOURCES "${KYTY_TESTS_DIR}/SlotVectorTests.cpp"
+)
+target_include_directories(slot_vector_tests PRIVATE ${inc_headers})
+
 kyty_add_test_executable(ime_dialog_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/ImeDialogTests.cpp"
@@ -97,7 +107,6 @@ target_include_directories(memory_tracker_tests PRIVATE ${inc_headers})
 kyty_add_test_executable(shader_vertex_metadata_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/ShaderVertexMetadataTests.cpp"
-	"${KYTY_SOURCE_DIR}/graphics/host_gpu/hostMemory.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/shaderVertexMetadata.cpp"
 )
 target_include_directories(shader_vertex_metadata_tests PRIVATE ${inc_headers})
@@ -106,7 +115,6 @@ kyty_add_test_executable(resource_materialization_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/ResourceMaterializationTests.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/guest_gpu/gpu_format.cpp"
-	"${KYTY_SOURCE_DIR}/graphics/host_gpu/hostMemory.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/ResourceMaterialization.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/SrtWalker.cpp"
 	LINK fmt::fmt xbyak::xbyak
@@ -117,7 +125,6 @@ kyty_add_test_executable(resource_tracking_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/ResourceTrackingTests.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/guest_gpu/gpu_format.cpp"
-	"${KYTY_SOURCE_DIR}/graphics/host_gpu/hostMemory.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/shaderPixelParameter.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/SrtWalker.cpp"
 	"${KYTY_SOURCE_DIR}/graphics/shader/recompiler/ir/passes/ResourceTracking.cpp"
@@ -150,6 +157,14 @@ kyty_add_test_executable(ngs2_sampler_tests
 )
 target_include_directories(ngs2_sampler_tests PRIVATE ${inc_headers})
 
+kyty_add_test_executable(ajm_resample_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/AjmResampleTests.cpp"
+	"${KYTY_SOURCE_DIR}/loader/timer.cpp"
+	LINK common fmt::fmt FFmpeg::ffmpeg LibAtrac9 opus
+)
+target_include_directories(ajm_resample_tests PRIVATE ${inc_headers})
+
 kyty_add_test_executable(pad_haptics_tests
 	SOURCES "${KYTY_TESTS_DIR}/PadHapticsTests.cpp"
 	LINK common fmt::fmt SDL3::SDL3-static opus
@@ -157,7 +172,9 @@ kyty_add_test_executable(pad_haptics_tests
 target_include_directories(pad_haptics_tests PRIVATE ${inc_headers})
 
 kyty_add_test_executable(controller_settings_tests
-	SOURCES "${KYTY_TESTS_DIR}/ControllerSettingsTests.cpp"
+	SOURCES
+	"${KYTY_TESTS_DIR}/ControllerSettingsTests.cpp"
+	"${KYTY_SOURCE_DIR}/libs/padVr.cpp"
 	LINK common fmt::fmt SDL3::SDL3-static
 )
 target_include_directories(controller_settings_tests PRIVATE ${inc_headers})
@@ -179,6 +196,24 @@ kyty_add_test_executable(png_enc_tests
 	LINK common fmt::fmt
 )
 target_include_directories(png_enc_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(jpeg_dec_tests
+	SOURCES "${KYTY_TESTS_DIR}/JpegDecTests.cpp"
+	LINK common fmt::fmt
+)
+target_include_directories(jpeg_dec_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(jpeg_enc_tests
+	SOURCES "${KYTY_TESTS_DIR}/JpegEncTests.cpp"
+	LINK common fmt::fmt
+)
+target_include_directories(jpeg_enc_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(occlusion_queries_tests
+	SOURCES "${KYTY_TESTS_DIR}/OcclusionQueriesTests.cpp"
+	LINK common fmt::fmt Vulkan::Headers
+)
+target_include_directories(occlusion_queries_tests PRIVATE ${inc_headers})
 
 kyty_add_test_executable(ces_tests
 	SOURCES "${KYTY_TESTS_DIR}/CesTests.cpp"
@@ -210,6 +245,9 @@ add_kyty_full_emulator_test(kernel_file_system_tests
 	"${KYTY_TESTS_DIR}/KernelFileSystemTests.cpp")
 target_link_libraries(kernel_file_system_tests ZArchive::zarchive)
 
+add_kyty_full_emulator_test(kernel_module_info_tests "${KYTY_TESTS_DIR}/KernelModuleInfoTests.cpp")
+target_link_libraries(kernel_module_info_tests kyty_test_gtest)
+
 kyty_add_test_executable(sync_on_address_tests
 	SOURCES
 	"${KYTY_TESTS_DIR}/SyncOnAddressTests.cpp"
@@ -227,29 +265,125 @@ target_include_directories(image_page_table_tests PRIVATE ${inc_headers})
 add_kyty_full_emulator_test(shader_recompiler_compute_tests "${KYTY_TESTS_DIR}/ShaderRecompilerComputeTests.cpp")
 
 set(gpu_test_generated_dir "${PROJECT_BINARY_DIR}/gpu_test_shaders")
-set(gpu_test_ms_depth_source
-	"${gpu_tiler_shader_dir}/gpu_test_ms_depth.comp")
-set(gpu_test_ms_depth_spv
-	"${gpu_test_generated_dir}/gpu_test_ms_depth.spv")
-set(gpu_test_ms_depth_header
-	"${gpu_test_generated_dir}/gpu_test_ms_depth_spv.h")
-add_custom_command(
-	OUTPUT "${gpu_test_ms_depth_header}"
-	COMMAND ${CMAKE_COMMAND} -E make_directory "${gpu_test_generated_dir}"
-	COMMAND "${KYTY_GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 -Os
-	        -o "${gpu_test_ms_depth_spv}" "${gpu_test_ms_depth_source}"
-	COMMAND ${CMAKE_COMMAND} -DINPUT=${gpu_test_ms_depth_spv}
-	        -DOUTPUT=${gpu_test_ms_depth_header} -DSYMBOL=GPU_TEST_MS_DEPTH_SPV
-	        -P "${KYTY_SOURCE_DIR}/embed_spirv.cmake"
-	DEPENDS "${gpu_test_ms_depth_source}"
-	VERBATIM
-)
-target_sources(shader_recompiler_compute_tests PRIVATE
-	"${gpu_test_ms_depth_header}")
+foreach(test_shader gpu_test_ms_depth gpu_test_ray_query)
+	set(test_shader_spv "${gpu_test_generated_dir}/${test_shader}.spv")
+	set(test_shader_header "${gpu_test_generated_dir}/${test_shader}_spv.h")
+	string(TOUPPER "${test_shader}_SPV" test_shader_symbol)
+	add_custom_command(
+		OUTPUT "${test_shader_header}"
+		COMMAND ${CMAKE_COMMAND} -E make_directory "${gpu_test_generated_dir}"
+		COMMAND "${KYTY_GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 -Os
+		        -o "${test_shader_spv}" "${gpu_tiler_shader_dir}/${test_shader}.comp"
+		COMMAND ${CMAKE_COMMAND} -DINPUT=${test_shader_spv}
+		        -DOUTPUT=${test_shader_header} -DSYMBOL=${test_shader_symbol}
+		        -P "${KYTY_SOURCE_DIR}/embed_spirv.cmake"
+		DEPENDS "${gpu_tiler_shader_dir}/${test_shader}.comp"
+		VERBATIM
+	)
+	target_sources(shader_recompiler_compute_tests PRIVATE "${test_shader_header}")
+endforeach()
 
 add_kyty_full_emulator_test(virtual_memory_allocation_tests "${KYTY_TESTS_DIR}/VirtualMemoryAllocationTests.cpp")
 target_compile_definitions(virtual_memory_allocation_tests PRIVATE
 	KYTY_VIRTUAL_MEMORY_ALLOCATION_TESTS=1)
+
+# googletest from the fmt submodule, for the tests written with it. Built only for those tests and
+# never installed.
+add_library(kyty_test_gtest STATIC EXCLUDE_FROM_ALL
+	"${KYTY_THIRD_PARTY_DIR}/fmt/test/gtest/gmock-gtest-all.cc")
+target_include_directories(kyty_test_gtest PUBLIC "${KYTY_THIRD_PARTY_DIR}/fmt/test/gtest")
+target_sources(virtual_memory_allocation_tests PRIVATE "${KYTY_TESTS_DIR}/TrinityTests.cpp")
+target_link_libraries(virtual_memory_allocation_tests kyty_test_gtest)
+
+add_kyty_full_emulator_test(net_resolver_tests "${KYTY_TESTS_DIR}/NetResolverTests.cpp")
+target_link_libraries(net_resolver_tests kyty_test_gtest)
+
+kyty_add_test_executable(dlss_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/DlssTests.cpp"
+	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/upscaler/dlss.cpp"
+	LINK common Vulkan::Headers SDL3::SDL3-static kyty_test_gtest
+)
+target_include_directories(dlss_tests PRIVATE ${inc_headers})
+
+# Upstream builds these only on Windows. On Linux the upscaler finds no FidelityFX DLL and stays
+# off, which the tests expect.
+kyty_add_test_executable(fsr_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/FsrTests.cpp"
+	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/upscaler/dlss.cpp"
+	"${KYTY_SOURCE_DIR}/graphics/host_gpu/renderer/upscaler/fsr.cpp"
+	LINK common Vulkan::Headers SDL3::SDL3-static kyty_test_gtest
+)
+target_include_directories(fsr_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(psml_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/PsmlTests.cpp"
+	"${KYTY_SOURCE_DIR}/libs/libPsml.cpp"
+	"${KYTY_SOURCE_DIR}/loader/symbolDatabase.cpp"
+	"${KYTY_SOURCE_DIR}/loader/timer.cpp"
+	LINK common kyty_test_gtest
+)
+target_include_directories(psml_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(common_tests
+	SOURCES "${KYTY_TESTS_DIR}/CommonTests.cpp"
+	LINK common kyty_test_gtest
+)
+
+kyty_add_test_executable(rtc_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/RtcTests.cpp"
+	"${KYTY_SOURCE_DIR}/libs/libRtc.cpp"
+	"${KYTY_SOURCE_DIR}/loader/symbolDatabase.cpp"
+	"${KYTY_SOURCE_DIR}/loader/timer.cpp"
+	LINK common kyty_test_gtest
+)
+target_include_directories(rtc_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(playgo_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/PlayGoTests.cpp"
+	"${KYTY_SOURCE_DIR}/libs/libPlayGo.cpp"
+	"${KYTY_SOURCE_DIR}/loader/symbolDatabase.cpp"
+	"${KYTY_SOURCE_DIR}/loader/systemContent.cpp"
+	"${KYTY_SOURCE_DIR}/loader/timer.cpp"
+	LINK common nlohmann_json::nlohmann_json kyty_test_gtest
+)
+target_include_directories(playgo_tests PRIVATE ${inc_headers})
+
+kyty_add_test_executable(vr_tracker2_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/VrTracker2Tests.cpp"
+	"${KYTY_SOURCE_DIR}/libs/libVrTracker2.cpp"
+	"${KYTY_SOURCE_DIR}/loader/symbolDatabase.cpp"
+	"${KYTY_SOURCE_DIR}/loader/timer.cpp"
+	LINK common kyty_test_gtest
+)
+target_include_directories(vr_tracker2_tests PRIVATE ${inc_headers})
+
+# libFont finds its fallback font through Emulator::FindAssetFile; the test reads the font directly.
+kyty_add_test_executable(font_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/FontTests.cpp"
+	"${KYTY_SOURCE_DIR}/libs/libFont.cpp"
+	"${KYTY_SOURCE_DIR}/loader/symbolDatabase.cpp"
+	"${KYTY_SOURCE_DIR}/loader/timer.cpp"
+	LINK common SDL3::SDL3-static FFmpeg::ffmpeg kyty_emulator_options kyty_test_gtest
+)
+target_include_directories(font_tests PRIVATE ${inc_headers})
+target_compile_definitions(font_tests PRIVATE KYTY_NOTO_SANS_DIR="${KYTY_NOTO_SANS_DIR}")
+
+# Checks the task shader that the top-level CMakeLists.txt compiles for indirect mesh draws.
+kyty_add_test_executable(gpu_blit_shader_tests
+	SOURCES
+	"${KYTY_TESTS_DIR}/GpuBlitShaderTests.cpp"
+	"${gpu_blit_generated_dir}/gpu_mesh_indirect_spv.h"
+	LINK kyty_test_gtest Vulkan::Headers
+)
+target_include_directories(gpu_blit_shader_tests PRIVATE ${inc_headers})
+add_dependencies(gpu_blit_shader_tests kyty_emulator_generated_headers)
 
 kyty_add_test_executable(sse4a_emulation_tests
 	SOURCES
@@ -282,12 +416,14 @@ kyty_add_test(NAME scalar_provenance COMMAND $<TARGET_FILE:scalar_provenance_tes
 kyty_add_test(NAME image_page_table COMMAND $<TARGET_FILE:image_page_table_tests>)
 kyty_add_test(NAME memory_tracker COMMAND $<TARGET_FILE:memory_tracker_tests>)
 kyty_add_test(NAME page_manager COMMAND $<TARGET_FILE:page_manager_tests>)
+kyty_add_test(NAME build_flags COMMAND $<TARGET_FILE:build_flags_tests>)
 kyty_add_test(NAME archive_file COMMAND $<TARGET_FILE:archive_file_tests>)
 kyty_add_test(NAME trophy_system COMMAND $<TARGET_FILE:trophy_system_tests>)
 kyty_add_test(NAME avplayer_file COMMAND $<TARGET_FILE:avplayer_file_tests>)
 kyty_add_test(NAME vdecsw COMMAND $<TARGET_FILE:vdecsw_tests>)
 kyty_add_test(NAME bit_array COMMAND $<TARGET_FILE:bit_array_tests>)
 kyty_add_test(NAME lru_cache COMMAND $<TARGET_FILE:lru_cache_tests>)
+kyty_add_test(NAME slot_vector COMMAND $<TARGET_FILE:slot_vector_tests>)
 kyty_add_test(NAME shader_vertex_metadata COMMAND $<TARGET_FILE:shader_vertex_metadata_tests>)
 kyty_add_test(NAME resource_materialization COMMAND $<TARGET_FILE:resource_materialization_tests>)
 kyty_add_test(NAME resource_tracking COMMAND $<TARGET_FILE:resource_tracking_tests>)
@@ -303,11 +439,15 @@ kyty_add_test(NAME sync_on_address COMMAND $<TARGET_FILE:sync_on_address_tests>)
 kyty_add_test(NAME audio_out2_port COMMAND $<TARGET_FILE:audio_out2_port_tests>)
 kyty_add_test(NAME audio_out_timing COMMAND $<TARGET_FILE:audio_out_timing_tests>)
 kyty_add_test(NAME ngs2_sampler COMMAND $<TARGET_FILE:ngs2_sampler_tests>)
+kyty_add_test(NAME ajm_resample COMMAND $<TARGET_FILE:ajm_resample_tests>)
 kyty_add_test(NAME pad_haptics COMMAND $<TARGET_FILE:pad_haptics_tests>)
 kyty_add_test(NAME controller_settings COMMAND $<TARGET_FILE:controller_settings_tests>)
 kyty_add_test(NAME host_input COMMAND $<TARGET_FILE:host_input_tests>)
 kyty_add_test(NAME save_data_memory COMMAND $<TARGET_FILE:save_data_memory_tests>)
 kyty_add_test(NAME png_enc COMMAND $<TARGET_FILE:png_enc_tests>)
+kyty_add_test(NAME jpeg_dec COMMAND $<TARGET_FILE:jpeg_dec_tests>)
+kyty_add_test(NAME jpeg_enc COMMAND $<TARGET_FILE:jpeg_enc_tests>)
+kyty_add_test(NAME occlusion_queries COMMAND $<TARGET_FILE:occlusion_queries_tests>)
 kyty_add_test(NAME ces COMMAND $<TARGET_FILE:ces_tests>)
 kyty_add_test(NAME save_data_dialog COMMAND $<TARGET_FILE:save_data_dialog_tests>)
 kyty_add_test(NAME http_uri_parse COMMAND $<TARGET_FILE:http_uri_parse_tests>)
@@ -319,8 +459,29 @@ kyty_add_test(NAME shader_recompiler_compute COMMAND $<TARGET_FILE:shader_recomp
 	LABELS gpu SKIP_RETURN_CODE 77 TIMEOUT 600)
 kyty_add_test(NAME shader_recompiler_tessellation
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --tessellation-only)
+kyty_add_test(NAME shader_recompiler_tessellation_wave_sizes
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --tessellation-wave-sizes-only
+	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME shader_recompiler_float_min_max
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --float-min-max-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_relaxed_float
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --relaxed-float-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_vop3_conversions
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --vop3-conversions-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_quadmask
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --quadmask-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_integer16_ternary
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --integer16-ternary-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_mad_u16
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --mad-u16-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME shader_recompiler_mul_hi24
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --mul-hi24-only
 	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME shader_recompiler_alignbyte
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --alignbyte-only
@@ -332,6 +493,22 @@ kyty_add_test(NAME graphics_draw_offsets
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --draw-offset-only)
 kyty_add_test(NAME virtual_memory_allocation
 	COMMAND $<TARGET_FILE:virtual_memory_allocation_tests>)
+kyty_add_test(NAME trinity_mode
+	COMMAND $<TARGET_FILE:virtual_memory_allocation_tests> --trinity-only)
+kyty_add_test(NAME psml COMMAND $<TARGET_FILE:psml_tests>)
+kyty_add_test(NAME common COMMAND $<TARGET_FILE:common_tests>)
+kyty_add_test(NAME rtc COMMAND $<TARGET_FILE:rtc_tests>)
+kyty_add_test(NAME playgo COMMAND $<TARGET_FILE:playgo_tests>)
+kyty_add_test(NAME vr_tracker2 COMMAND $<TARGET_FILE:vr_tracker2_tests>)
+kyty_add_test(NAME font COMMAND $<TARGET_FILE:font_tests>)
+kyty_add_test(NAME kernel_module_info COMMAND $<TARGET_FILE:kernel_module_info_tests>)
+kyty_add_test(NAME dlss COMMAND $<TARGET_FILE:dlss_tests>)
+kyty_add_test(NAME fsr COMMAND $<TARGET_FILE:fsr_tests>)
+kyty_add_test(NAME net_resolver COMMAND $<TARGET_FILE:net_resolver_tests>)
+kyty_add_test(NAME gpu_blit_shader COMMAND $<TARGET_FILE:gpu_blit_shader_tests>)
+kyty_add_test(NAME pssr
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --pssr-only
+	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME guest_red_zone_patcher
 	COMMAND $<TARGET_FILE:virtual_memory_allocation_tests> --red-zone-patcher-only)
 kyty_add_test(NAME command_scheduler_timeline
@@ -342,6 +519,32 @@ kyty_add_test(NAME stream_buffer_ring
 	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME gpu_command_lane
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --gpu-command-lane-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+# These three modes create a hidden window (WindowContext::CreateVulkan), so they run inside a private
+# headless Wayland session, as kernel_file_system does.
+kyty_add_test(NAME pm4_flip
+	COMMAND "${KYTY_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh" wayland --
+	        $<TARGET_FILE:shader_recompiler_compute_tests> --flip-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME video_out_flip_rate
+	COMMAND "${KYTY_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh" wayland --
+	        $<TARGET_FILE:shader_recompiler_compute_tests> --flip-rate-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME device_creation
+	COMMAND "${KYTY_TESTS_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/ui/with-display.sh" wayland --
+	        $<TARGET_FILE:shader_recompiler_compute_tests> --device-creation-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME video_out_hdr10_to_sdr
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --video-out-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME depth_bits
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --depth-bits-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME srgb_texture
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --srgb-texture-only
+	LABELS gpu SKIP_RETURN_CODE 77)
+kyty_add_test(NAME msaa_storage
+	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --msaa-storage-only
 	LABELS gpu SKIP_RETURN_CODE 77)
 kyty_add_test(NAME pm4_context_state
 	COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --context-state-only
@@ -488,6 +691,7 @@ kyty_add_test(NAME install_layout_tree
 	COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
 	        "-DCONFIG=$<CONFIG>" "-DLAYOUT=${KYTY_INSTALL_LAYOUT}" "-DFLATPAK=${KYTY_FLATPAK_BUILD}"
 	        "-DLAUNCHER=${KYTY_BUILD_LAUNCHER}" "-DAPP_ID=${KYTY_APP_ID}"
+	        "-DFONTS_DIR=${KYTY_NOTO_SANS_DIR}"
 	        "-DWORK_DIR=${kyty_selftests_dir}/install_layout_tree"
 	        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/InstallLayoutTest.cmake"
 	TIMEOUT 120)
@@ -512,6 +716,13 @@ kyty_add_test(NAME junit_check_tool
 	TIMEOUT 120
 	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1 "KYTY_CMAKE=${CMAKE_COMMAND}" "KYTY_CTEST=${CMAKE_CTEST_COMMAND}"
 	            "KYTY_CMAKE_GENERATOR=${CMAKE_GENERATOR}" "KYTY_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}")
+# The upstream merge tools (tools/upstream/platform_merge.py and sync_status.py): their unit tests on
+# scratch git repositories. The cases that run the real unifdef are skipped when it is not
+# installed. They need no build output, so they are registered with KYTY_BUILD_LAUNCHER OFF too.
+kyty_add_test(NAME upstream_tools
+	COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/upstream/tests" -v
+	TIMEOUT 300
+	ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 # Flatpak packaging checks (task 26.6, tools/checks/flatpak_checks.py): the manifest's pins against
 # the registry entries active with BUILD_TESTING=OFF (read through
 # tools/checks/dependency_registry.cmake), the manifest's structure and permission set, and the
@@ -710,6 +921,15 @@ target_compile_options(kyty_test_support PRIVATE -frtti)
 
 kyty_add_test_directory(tests/launcher_core LINK kyty_launcher_core kyty_test_support
 	ENVIRONMENT_MODIFICATION ${kyty_no_display})
+# The shipped kyty_emulator accepts the arguments the launcher builds: a mode of the Emulator_Arguments
+# tests that runs the real binary. P21 (emulator_launch_tests) checks the in-process parser.
+if(TARGET launcher_core_emulator_arguments_tests)
+	kyty_add_test(NAME emulator_accepts_launcher_arguments
+		COMMAND $<TARGET_FILE:launcher_core_emulator_arguments_tests> --check-emulator
+		        $<TARGET_FILE:kyty_emulator>
+		TIMEOUT 30
+		ENVIRONMENT_MODIFICATION ${kyty_no_display})
+endif()
 # jsonErrorCapture.h is internal to Launcher_Core: it includes nlohmann/json.hpp, which
 # kyty_launcher_core links PRIVATE. Its test includes it too, so it needs the header-only library.
 target_link_libraries(launcher_core_json_error_capture_tests nlohmann_json::nlohmann_json)

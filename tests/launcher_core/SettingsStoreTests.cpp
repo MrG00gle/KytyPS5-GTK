@@ -10,6 +10,7 @@
 // ResolveEffectiveConfiguration.
 
 #include "launcher/core/atomicFile.h"
+#include "launcher/core/configurationFields.h"
 #include "launcher/core/gameConfiguration.h"
 #include "launcher/core/gameMetadata.h"
 #include "launcher/core/iniFile.h"
@@ -48,7 +49,6 @@ using kyty::core::LoadReport;
 using kyty::core::LogDirection;
 using kyty::core::PresentMode;
 using kyty::core::ScreenResolution;
-using kyty::core::ShaderOptimizationType;
 using kyty::core::ValidationScope;
 using KytyTests::TempDir;
 
@@ -130,6 +130,19 @@ void CheckQtGlobalExtras(const LauncherSettings& settings, const std::string& wh
 	      what + ": unknown GlobalConfiguration/custom_settings");
 }
 
+// shader_optimization_type is no longer a field (the emulator drops its option): the Qt value is an
+// unknown key, and a save writes it back unchanged.
+constexpr const char* kRetiredGlobalKey = "GlobalConfiguration/shader_optimization_type";
+
+void CheckRetiredGlobalKey(const LauncherSettings& settings, const std::string& value,
+                           const std::string& what) {
+	Check(settings.unknown.GetString(kRetiredGlobalKey) == std::optional<std::string>(value),
+	      what + ": unknown " + kRetiredGlobalKey + "=" + value);
+	const auto saved = IniFile::Parse(kyty::core::SerializeSettings(settings));
+	Check(saved.GetString(kRetiredGlobalKey) == std::optional<std::string>(value),
+	      what + ": the re-save keeps " + kRetiredGlobalKey + "=" + value);
+}
+
 // ---- The Qt fixtures
 
 void TestPortable() {
@@ -146,8 +159,9 @@ void TestPortable() {
 	Check(s.global == GameConfiguration {}, "portable global configuration is the default");
 	Check(s.controller == ControllerSettings {}, "portable controller defaults");
 	Check(s.games.empty(), "portable has no game configuration");
-	Check(s.unknown.Entries().size() == 4, "portable unknown keys");
+	Check(s.unknown.Entries().size() == 5, "portable unknown keys");
 	CheckQtGlobalExtras(s, "portable");
+	CheckRetiredGlobalKey(s, "Performance", "portable");
 }
 
 void TestUserStore() {
@@ -169,14 +183,18 @@ void TestUserStore() {
 	Check(s.games.size() == 1, "user-store has one game");
 	const auto& game = s.games[0];
 	Check(game.name == "Astro Bot" && game.basedir == "/home/user/Games/PS5/PPSA01234" &&
-	          game.game_path == "/home/user/Games/PS5/PPSA01234" && game.unknown.empty(),
+	          game.game_path == "/home/user/Games/PS5/PPSA01234",
 	      "user-store game identity");
+	Check(game.unknown.size() == 1 &&
+	          game.unknown.at("shader_optimization_type") == IniValue::FromString("Performance"),
+	      "user-store game: shader_optimization_type is its only unknown key");
 	GameConfiguration custom;
-	custom.screen_resolution  = ScreenResolution::R1920X1080;
+	custom.screen_resolution  = ScreenResolution {1920, 1080};
 	custom.vblank_frequency   = 120;
 	custom.host_input_mapping = kMapping;
 	Check(game.configuration == custom, "user-store game configuration");
-	Check(s.unknown.Entries().size() == 4, "user-store unknown keys");
+	Check(s.unknown.Entries().size() == 5, "user-store unknown keys");
+	CheckRetiredGlobalKey(s, "Performance", "user-store");
 }
 
 void TestGlobalAllFields() {
@@ -202,10 +220,9 @@ void TestGlobalAllFields() {
 	g.readback_linear_images      = true;
 	g.readback_tiled_images       = true;
 	g.renderdoc_enabled           = true;
-	g.screen_resolution           = ScreenResolution::R3840X2160;
+	g.screen_resolution           = ScreenResolution {3840, 2160};
 	g.shader_log_direction        = LogDirection::File;
 	g.shader_log_folder           = "logs/shaders";
-	g.shader_optimization_type    = ShaderOptimizationType::Size;
 	g.shader_validation_enabled   = true;
 	g.skip_notice_screen          = true;
 	g.sync_raw_image_buffers      = true;
@@ -227,10 +244,11 @@ void TestGlobalAllFields() {
 	          s.geometry.has_value(),
 	      "all-fields main dialog");
 	Check(s.games.empty(), "all-fields has no game");
-	Check(s.unknown.Entries().size() == 5 &&
+	Check(s.unknown.Entries().size() == 6 &&
 	          s.unknown.Find("ConfigurationEditDialog/geometry") != nullptr,
 	      "all-fields keeps the settings editor geometry as an unknown key");
 	CheckQtGlobalExtras(s, "all-fields");
+	CheckRetiredGlobalKey(s, "Size", "all-fields");
 }
 
 void TestGameEntries() {
@@ -242,7 +260,7 @@ void TestGameEntries() {
 	zar.console_language     = 0;
 	zar.printf_direction     = LogDirection::File;
 	zar.printf_output_file   = "demons-souls.log";
-	zar.screen_resolution    = ScreenResolution::R2560X1440;
+	zar.screen_resolution    = ScreenResolution {2560, 1440};
 	zar.shader_log_direction = LogDirection::Console;
 	Check(s.games[0].name == "Demon's Souls" &&
 	          s.games[0].game_path == "/home/user/Games/PS5/Demons Souls.zar" &&
@@ -254,8 +272,7 @@ void TestGameEntries() {
 	astro.gpu_index                = 0;
 	astro.hdr_enabled              = true;
 	astro.present_mode             = PresentMode::Fifo;
-	astro.screen_resolution        = ScreenResolution::R1920X1080;
-	astro.shader_optimization_type = ShaderOptimizationType::None;
+	astro.screen_resolution        = ScreenResolution {1920, 1080};
 	astro.trophy_duration_seconds  = 7;
 	astro.vblank_frequency         = 120;
 	astro.host_input_mapping       = kMapping;
@@ -285,10 +302,21 @@ void TestGameEntries() {
 	Check(s.game_folders == std::vector<std::string> {"/home/user/Games/PS5"} &&
 	          s.addons_dir == "/home/user/Games/PS5-Addons",
 	      "game-entries launcher");
-	for (const auto& game: s.games) {
-		Check(!game.configuration.input_mapping_custom && game.unknown.empty(),
-		      "Qt entries have no input_mapping_custom and no unknown key");
+	// Each Qt entry's shader_optimization_type is its only unknown key, and a save keeps it.
+	const auto saved = IniFile::Parse(kyty::core::SerializeSettings(s));
+	for (std::size_t i = 0; i < s.games.size(); i++) {
+		const auto& game  = s.games[i];
+		const auto  value = i == 1 ? "None" : "Performance";
+		Check(!game.configuration.input_mapping_custom && game.unknown.size() == 1 &&
+		          game.unknown.at("shader_optimization_type") == IniValue::FromString(value),
+		      "Qt entry " + std::to_string(i + 1) +
+		          ": no input_mapping_custom, and shader_optimization_type is unknown");
+		const auto key =
+		    "GameConfigurations/" + std::to_string(i + 1) + "/shader_optimization_type";
+		Check(saved.GetString(key) == std::optional<std::string>(value),
+		      "the re-save keeps " + key);
 	}
+	CheckRetiredGlobalKey(s, "Performance", "game-entries");
 }
 
 void TestSpecialValues() {
@@ -402,6 +430,12 @@ void TestResaveKeepsKeys() {
 			if (key.starts_with("GameConfigurations/") && key.ends_with("/custom_settings")) {
 				Check(file.GetString(key) == std::optional<std::string>("true"),
 				      name + ": " + key + " is written as true");
+			} else if (key.ends_with("/screen_resolution")) {
+				// Written in the upstream launcher's form: "R1280X720" becomes "1280x720".
+				const auto text = original.GetString(key);
+				const auto size = text ? kyty::core::ParseScreenResolution(*text) : std::nullopt;
+				Check(size && file.GetString(key) == kyty::core::FormatScreenResolution(*size),
+				      name + ": the re-save writes " + key + " in the upstream form");
 			} else {
 				Check(*saved == value, name + ": the re-save keeps the value of " + key);
 			}
@@ -415,7 +449,13 @@ void TestResaveKeepsKeys() {
 			const bool mapping_custom =
 			    key.starts_with("GameConfigurations/") && key.ends_with("/input_mapping_custom");
 			const bool migrated = legacy && key.starts_with("Launcher/");
-			Check(window || mapping_custom || migrated,
+			// The fields that came with the upstream launcher's later settings, at their defaults.
+			const auto* field =
+			    kyty::core::FindGameConfigurationField(key.substr(key.rfind('/') + 1));
+			const bool newer = field != nullptr && field->optional &&
+			                   value == IniValue::FromString(field->format(
+			                                field->get(kyty::core::GameConfiguration {})));
+			Check(window || mapping_custom || migrated || newer,
 			      name + ": the re-save adds only new keys, " + "not " + key);
 		}
 		const auto again = kyty::core::ParseSettings(resaved);
@@ -427,14 +467,28 @@ void TestResaveKeepsKeys() {
 	}
 
 	// The portable store re-saves byte for byte, plus the new [LauncherWindow] and [SettingsWindow]
-	// groups.
+	// groups and the newer fields at their defaults (in Qt's key order, as IniFile writes it), with
+	// the resolution in the upstream launcher's form.
 	const std::string portable = ReadBytes(FixturePath("qt6-portable.ini"));
 	std::string       expected = portable;
 	const auto        at       = expected.find("[MainDialog]");
 	Check(at != std::string::npos, "portable has [MainDialog]");
 	expected.insert(at, "[LauncherWindow]\nheight=720\nmaximized=false\nwidth=1100\n\n");
 	expected += "\n[SettingsWindow]\nheight=700\nmaximized=false\nwidth=900\n";
-	Check(kyty::core::SerializeSettings(kyty::core::ParseSettings(portable).settings) == expected,
+	auto with_newer = IniFile::Parse(expected);
+	for (const auto& field: kyty::core::GameConfigurationFields()) {
+		if (field.optional) {
+			Check(with_newer.SetString("GlobalConfiguration/" + std::string(field.name),
+			                           field.format(field.get(GameConfiguration {}))),
+			      "add the newer field " + std::string(field.name));
+		}
+	}
+	Check(with_newer.GetString("GlobalConfiguration/screen_resolution") ==
+	              std::optional<std::string>("R1280X720") &&
+	          with_newer.SetString("GlobalConfiguration/screen_resolution", "1280x720"),
+	      "portable holds the old resolution key R1280X720");
+	Check(kyty::core::SerializeSettings(kyty::core::ParseSettings(portable).settings) ==
+	          with_newer.Serialize(),
 	      "portable re-save bytes");
 }
 
@@ -463,7 +517,9 @@ void TestUnknownKeysKept() {
 	      "the Global_Configuration does not read input_mapping_custom");
 	Check(s.unknown.Find("GameConfigurations/2/name") == nullptr,
 	      "an element above size is dropped, as Qt drops it");
-	Check(s.games.size() == 1 && s.games[0].unknown.size() == 2 &&
+	Check(s.games.size() == 1 && s.games[0].unknown.size() == 3 &&
+	          s.games[0].unknown.at("shader_optimization_type") ==
+	              IniValue::FromString("Performance") &&
 	          s.games[0].unknown.at("red_zone_protection_enabled") ==
 	              IniValue::FromString("true") &&
 	          s.games[0].unknown.at("future/nested") == IniValue::FromString("y"),
@@ -592,22 +648,94 @@ void TestInvalidValuesDefaulted() {
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/elf", "/bin/sh"); },
 	     {"GlobalConfiguration/elf"},
 	     [](const LauncherSettings& s) { return s.global.elf == "eboot.bin"; }},
-	    {"legacy resolution",
+	    {"upstream resolution",
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "1920x1080"); },
 	     {},
 	     [](const LauncherSettings& s) {
-		     return s.global.screen_resolution == ScreenResolution::R1920X1080;
+		     return s.global.screen_resolution == ScreenResolution {1920, 1080};
+	     }},
+	    {"custom resolution",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "3440x1440"); },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {3440, 1440};
+	     }},
+	    {"old resolution key",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "R2560X1440"); },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {2560, 1440};
 	     }},
 	    {"resolution index",
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "3"); },
 	     {},
 	     [](const LauncherSettings& s) {
-		     return s.global.screen_resolution == ScreenResolution::R3840X2160;
+		     return s.global.screen_resolution == ScreenResolution {3840, 2160};
+	     }},
+	    {"resolution below the range",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "319x720"); },
+	     {"GlobalConfiguration/screen_resolution"},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {1280, 720};
+	     }},
+	    {"resolution above the range",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "1280x16385"); },
+	     {"GlobalConfiguration/screen_resolution"},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {1280, 720};
+	     }},
+	    {"not a resolution",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/screen_resolution", "wide"); },
+	     {"GlobalConfiguration/screen_resolution"},
+	     [](const LauncherSettings& s) {
+		     return s.global.screen_resolution == ScreenResolution {1280, 720};
 	     }},
 	    {"unknown present mode",
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/present_mode", "Vsync"); },
 	     {"GlobalConfiguration/present_mode"},
 	     [](const LauncherSettings& s) { return s.global.present_mode == PresentMode::Mailbox; }},
+	    // The upstream launcher's later keys, as it writes them.
+	    {"upstream keys",
+	     [](IniFile& f) {
+		     f.SetString("GlobalConfiguration/shader_cache_enabled", "false");
+		     f.SetString("GlobalConfiguration/stretch_enabled", "true");
+		     f.SetString("GlobalConfiguration/flush_draws", "64");
+		     f.SetString("GlobalConfiguration/pro_enabled", "true");
+		     f.SetString("GlobalConfiguration/pssr_upscaler", "FSR");
+		     f.SetString("GlobalConfiguration/dlss_folder", "/models/dlss");
+		     f.SetString("GlobalConfiguration/fsr_folder", "/ffx");
+		     f.SetString("GlobalConfiguration/guest_tsc_enabled", "true");
+		     f.SetString("GlobalConfiguration/psn_emulation_enabled", "true");
+	     },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return !s.global.shader_cache_enabled && s.global.stretch_enabled &&
+		            s.global.flush_draws == 64 && s.global.pro_enabled &&
+		            s.global.pssr_upscaler == kyty::core::PssrUpscaler::FSR &&
+		            s.global.dlss_folder == "/models/dlss" && s.global.fsr_folder == "/ffx" &&
+		            s.global.guest_tsc_enabled && s.global.psn_emulation_enabled &&
+		            s.global.dlss_preset == kyty::core::DlssPreset::Default;
+	     }},
+	    {"this launcher's dlss_preset",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/dlss_preset", "K"); },
+	     {},
+	     [](const LauncherSettings& s) {
+		     return s.global.dlss_preset == kyty::core::DlssPreset::K;
+	     }},
+	    {"negative flush_draws",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/flush_draws", "-1"); },
+	     {"GlobalConfiguration/flush_draws"},
+	     [](const LauncherSettings& s) { return s.global.flush_draws == 0; }},
+	    {"unknown upscaler",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/pssr_upscaler", "XeSS"); },
+	     {"GlobalConfiguration/pssr_upscaler"},
+	     [](const LauncherSettings& s) {
+		     return s.global.pssr_upscaler == kyty::core::PssrUpscaler::Linear;
+	     }},
+	    {"invalid shader cache text",
+	     [](IniFile& f) { f.SetString("GlobalConfiguration/shader_cache_enabled", "1"); },
+	     {"GlobalConfiguration/shader_cache_enabled"},
+	     [](const LauncherSettings& s) { return s.global.shader_cache_enabled; }},
 	    {"bool text",
 	     [](IniFile& f) { f.SetString("GlobalConfiguration/hdr_enabled", "yes"); },
 	     {"GlobalConfiguration/hdr_enabled"},
@@ -866,12 +994,13 @@ void TestGameElements() {
 	});
 	Check(r.settings.games.size() == 2 && r.settings.games[1].game_path == "/other",
 	      "a second element with only game_path");
-	// name, basedir, custom_settings, and 34 fields (input_mapping_custom is optional).
-	Check(r.defaulted_keys.size() == 37 &&
+	// name, basedir, custom_settings, and 33 fields (input_mapping_custom and the 14 fields that
+	// came with the upstream launcher's later settings are optional).
+	Check(r.defaulted_keys.size() == 36 &&
 	          std::all_of(
 	              r.defaulted_keys.begin(), r.defaulted_keys.end(),
 	              [](const std::string& key) { return key.starts_with("GameConfigurations/2/"); }),
-	      "its other 37 keys are reported: " + Join(r.defaulted_keys));
+	      "its other 36 keys are reported: " + Join(r.defaulted_keys));
 }
 
 // ---- Files and injected faults (Requirement 12.8)
@@ -1125,7 +1254,9 @@ void TestCustomSettingsLifecycle() {
 	astro_config.hdr_enabled = false;
 	Check(kyty::core::SaveCustomSettings(settings, astro, astro_config).has_value(), "overwrite");
 	Check(settings.games[1].configuration == astro_config &&
-	          settings.games[1].name == "Astro Bot 2" && settings.games[1].unknown.size() == 1,
+	          settings.games[1].name == "Astro Bot 2" && settings.games[1].unknown.size() == 2 &&
+	          settings.games[1].unknown.at("shader_optimization_type") ==
+	              IniValue::FromString("None"),
 	      "an overwrite keeps the position and the unknown keys");
 
 	// A legacy relative element is found through legacy_relative_path and saved as absolute.
@@ -1275,6 +1406,65 @@ void TestResolveEffectiveConfiguration() {
 	    "an empty add-ons folder");
 }
 
+// [AdditionalContent] (upstream KytyPS5's launcher): each game's user add-ons by title ID, in
+// QSettings' string list form; the whole group is the schema's; the game's list goes into the
+// EffectiveConfiguration.
+void TestUserAddOns() {
+	const std::vector<std::string> alpha  = {"LICENSE000000001", "SEASONPASS000001=/dlc/season"};
+	const auto                     report = LoadEdited("qt6-portable.ini", [](IniFile& file) {
+		// As upstream's QSettings writes them: a list, and a one-element list as a string.
+		file.SetRaw("AdditionalContent/PPSA01234",
+		            "LICENSE000000001, \"SEASONPASS000001=/dlc/season\"");
+		file.SetRaw("AdditionalContent/PPSA05678", "\"COSTUMEPACK00002=/dlc/costume\"");
+		file.SetRaw("AdditionalContent/PPSA09999", "@Invalid()");
+		file.SetRaw("AdditionalContent/PPSA00001", "@ByteArray(x)");
+		file.SetString("AdditionalContent/PPSA02222/below", "BELOWKEY00000001");
+	});
+	const auto&                    s      = report.settings;
+	Check(s.user_addons ==
+	          std::map<std::string, std::vector<std::string>> {
+	              {"PPSA01234", alpha}, {"PPSA05678", {"COSTUMEPACK00002=/dlc/costume"}}},
+	      "the lists of two games; an empty list is no add-on");
+	CheckDefaulted(report, {"AdditionalContent/PPSA00001"}, "an opaque value is reported");
+	Check(std::none_of(
+	          s.unknown.Entries().begin(), s.unknown.Entries().end(),
+	          [](const auto& entry) { return entry.first.starts_with("AdditionalContent"); }),
+	      "no key of the group is unknown");
+
+	const auto saved = IniFile::Parse(kyty::core::SerializeSettings(s));
+	Check(
+	    saved.GetRaw("AdditionalContent/PPSA01234") ==
+	            std::optional<std::string>("LICENSE000000001, \"SEASONPASS000001=/dlc/season\"") &&
+	        saved.GetRaw("AdditionalContent/PPSA05678") ==
+	            std::optional<std::string>("\"COSTUMEPACK00002=/dlc/costume\"") &&
+	        !saved.Find("AdditionalContent/PPSA09999") &&
+	        !saved.Find("AdditionalContent/PPSA00001") &&
+	        !saved.Find("AdditionalContent/PPSA02222/below"),
+	    "the save writes the two lists in QSettings' form, and only them");
+	Check(kyty::core::ParseSettings(kyty::core::SerializeSettings(s)).settings == s,
+	      "the save loads back");
+
+	auto changed                     = s;
+	changed.user_addons["PPSA05678"] = {};
+	changed.user_addons.erase("PPSA01234");
+	const auto empty = IniFile::Parse(kyty::core::SerializeSettings(changed));
+	Check(std::none_of(
+	          empty.Entries().begin(), empty.Entries().end(),
+	          [](const auto& entry) { return entry.first.starts_with("AdditionalContent"); }),
+	      "a game without add-ons has no key, and no game leaves no group");
+
+	auto game     = Entry("/games/PPSA01234");
+	game.title_id = " ppsa01234 ";
+	Check(kyty::core::ResolveEffectiveConfiguration(s, game, std::nullopt).user_addons == alpha,
+	      "the game's list by its normalized title ID");
+	game.title_id = "PPSA07777";
+	Check(kyty::core::ResolveEffectiveConfiguration(s, game, std::nullopt).user_addons.empty(),
+	      "a game without a list");
+	game.title_id = "  ";
+	Check(kyty::core::ResolveEffectiveConfiguration(s, game, std::nullopt).user_addons.empty(),
+	      "a game without a title ID");
+}
+
 } // namespace
 
 int main() {
@@ -1297,6 +1487,7 @@ int main() {
 	TestInvalidStoredMapping();
 	TestMigrateLegacyGamePaths();
 	TestResolveEffectiveConfiguration();
+	TestUserAddOns();
 	std::puts("SettingsStoreTests: all tests passed");
 	return 0;
 }

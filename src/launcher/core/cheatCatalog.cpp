@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <iterator>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <set>
 #include <span>
@@ -15,8 +16,12 @@ namespace kyty::core {
 
 namespace {
 
+using Json = nlohmann::json;
+
 constexpr std::string_view kByteOrderMark = "\xEF\xBB\xBF";
 constexpr std::size_t      kTitleIdLength = 9; // [A-Z]{4}[0-9]{5}
+constexpr std::string_view kModulesHost   = "kytyps5.github.io";
+constexpr std::string_view kModulesPath   = "/KytyPS5-Modules/";
 
 bool IsFormat(std::string_view format) {
 	return std::find(kCheatFormats.begin(), kCheatFormats.end(), format) != kCheatFormats.end();
@@ -93,6 +98,123 @@ std::string Upper(std::string_view text) {
 	return upper;
 }
 
+std::string Lower(std::string_view text) {
+	std::string lower(text);
+	for (auto& c: lower) {
+		if (c >= 'A' && c <= 'Z') {
+			c = static_cast<char>(c - 'A' + 'a');
+		}
+	}
+	return lower;
+}
+
+// ---- KytyPS5-Modules URLs (RFC 3986)
+
+bool IsAlpha(char c) {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+bool IsHex(char c) {
+	return IsDigit(c) || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+}
+
+int HexValue(char c) {
+	if (IsDigit(c)) {
+		return c - '0';
+	}
+	return c >= 'a' ? c - 'a' + 10 : c - 'A' + 10;
+}
+
+bool IsUnreserved(char c) {
+	return IsAlpha(c) || IsDigit(c) || c == '-' || c == '.' || c == '_' || c == '~';
+}
+
+// The characters a path or a query holds as they are: pchar without '%', and '/' and '?'.
+bool IsUrlChar(char c) {
+	static constexpr std::string_view kOther = "!$&'()*+,;=:@/?";
+	return IsUnreserved(c) || kOther.find(c) != std::string_view::npos;
+}
+
+bool IsEscape(std::string_view text, std::size_t i) {
+	return text[i] == '%' && i + 2 < text.size() && IsHex(text[i + 1]) && IsHex(text[i + 2]);
+}
+
+// Percent-encoded unreserved characters decoded (section 6.2.2.2).
+std::string DecodeUnreserved(std::string_view text) {
+	std::string decoded;
+	for (std::size_t i = 0; i < text.size(); i++) {
+		if (IsEscape(text, i)) {
+			const auto c = static_cast<char>(HexValue(text[i + 1]) * 16 + HexValue(text[i + 2]));
+			if (IsUnreserved(c)) {
+				decoded += c;
+				i += 2;
+				continue;
+			}
+		}
+		decoded += text[i];
+	}
+	return decoded;
+}
+
+// Every byte that a URL cannot hold as it is, percent-encoded; escapes stay as they are.
+std::string EncodeUrlPart(std::string_view text) {
+	static constexpr std::string_view kDigits = "0123456789ABCDEF";
+	std::string                       encoded;
+	for (std::size_t i = 0; i < text.size(); i++) {
+		const char c = text[i];
+		if (IsUrlChar(c) || IsEscape(text, i)) {
+			encoded += c;
+		} else {
+			const auto byte = static_cast<unsigned char>(c);
+			encoded += '%';
+			encoded += kDigits[byte >> 4u];
+			encoded += kDigits[byte & 0xFu];
+		}
+	}
+	return encoded;
+}
+
+// Section 5.2.4.
+std::string RemoveDotSegments(std::string_view input) {
+	std::string output;
+	const auto  drop_last_segment = [&output]() {
+		const auto slash = output.rfind('/');
+		output.erase(slash == std::string::npos ? 0 : slash);
+	};
+	while (!input.empty()) {
+		if (input.starts_with("../")) {
+			input.remove_prefix(3);
+		} else if (input.starts_with("./") || input.starts_with("/./")) {
+			input.remove_prefix(2);
+		} else if (input == "/.") {
+			input = "/";
+		} else if (input.starts_with("/../")) {
+			input.remove_prefix(3);
+			drop_last_segment();
+		} else if (input == "/..") {
+			input = "/";
+			drop_last_segment();
+		} else if (input == "." || input == "..") {
+			input = {};
+		} else {
+			const auto end = input.find('/', 1);
+			output.append(input.substr(0, end));
+			input = end == std::string_view::npos ? std::string_view() : input.substr(end);
+		}
+	}
+	return output;
+}
+
+// The string member key of value; "" when value is not an object or the member is absent or not a
+// string (QJsonValue::toString).
+std::string StringOf(const Json& value, const char* key) {
+	if (!value.is_object()) {
+		return {};
+	}
+	const auto found = value.find(key);
+	return found != value.end() && found->is_string() ? found->get<std::string>() : std::string();
+}
+
 } // namespace
 
 std::string CheatIndexUrl(std::string_view format) {
@@ -102,16 +224,78 @@ std::string CheatIndexUrl(std::string_view format) {
 	return std::string(kCheatRepositoryBaseUrl) + std::string(format) + ".txt";
 }
 
+std::string CheatSourceUrl(std::string_view source) {
+	if (source == kModulesCheatSource) {
+		return kModulesCatalogUrl;
+	}
+	return CheatIndexUrl(source);
+}
+
 std::string RemoteCheatFileUrl(const RemoteCheatFile& file) {
+	if (!IsFormat(file.format)) {
+		return {};
+	}
+	if (!file.url.empty()) {
+		return file.url;
+	}
 	const auto match = MatchName(file.name);
-	if (!IsFormat(file.format) || !match || match->extension != file.format) {
+	if (!match || match->extension != file.format) {
 		return {};
 	}
 	return std::string(kCheatRepositoryBaseUrl) + file.format + "/" + file.name;
 }
 
+std::string ResolveModulesUrl(std::string_view reference) {
+	if (const auto hash = reference.find('#'); hash != std::string_view::npos) {
+		reference = reference.substr(0, hash);
+	}
+	// scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ), before the first ':'.
+	std::optional<std::string> scheme;
+	if (const auto colon = reference.find(':');
+	    colon != std::string_view::npos && colon > 0 && IsAlpha(reference[0])) {
+		bool valid = true;
+		for (std::size_t i = 1; i < colon; i++) {
+			const char c = reference[i];
+			valid        = valid && (IsAlpha(c) || IsDigit(c) || c == '+' || c == '-' || c == '.');
+		}
+		if (valid) {
+			scheme = Lower(reference.substr(0, colon));
+			reference.remove_prefix(colon + 1);
+		}
+	}
+	std::optional<std::string> authority;
+	if (reference.starts_with("//")) {
+		reference.remove_prefix(2);
+		const auto end = reference.find_first_of("/?");
+		authority      = Lower(reference.substr(0, end));
+		reference      = end == std::string_view::npos ? std::string_view() : reference.substr(end);
+	}
+	const auto question = reference.find('?');
+	auto       path     = DecodeUnreserved(reference.substr(0, question));
+	const auto query =
+	    question == std::string_view::npos ? std::string_view() : reference.substr(question);
+	if ((scheme && (*scheme != "https" || !authority)) ||
+	    (authority && *authority != kModulesHost)) {
+		return {};
+	}
+	if (!authority) {
+		if (path.empty()) {
+			// The catalog's folder itself, as for an empty reference.
+			return {};
+		}
+		if (!path.starts_with('/')) {
+			path = std::string(kModulesPath) + path;
+		}
+	}
+	path = RemoveDotSegments(path);
+	if (!path.starts_with(kModulesPath) || path.size() == kModulesPath.size()) {
+		return {};
+	}
+	return "https://" + std::string(kModulesHost) + EncodeUrlPart(path) + EncodeUrlPart(query);
+}
+
 bool IsSupportedRemoteCheatFile(const RemoteCheatFile& file) {
-	return file.format == "json" && !RemoteCheatFileUrl(file).empty();
+	return !RemoteCheatFileUrl(file).empty();
 }
 
 CheatIndex ParseCheatIndex(std::string_view bytes, std::string_view format,
@@ -141,9 +325,11 @@ CheatIndex ParseCheatIndex(std::string_view bytes, std::string_view format,
 				invalid++;
 			} else if (match->title_id == id && !seen.contains(name)) {
 				seen.emplace(name);
-				index.files.push_back({std::string(name),
-				                       std::string(TrimWhitespace(line.substr(separator + 1))),
-				                       std::string(match->version), std::string(format)});
+				RemoteCheatFile file {std::string(name),
+				                      std::string(TrimWhitespace(line.substr(separator + 1))),
+				                      std::string(match->version), std::string(format)};
+				file.url = RemoteCheatFileUrl(file);
+				index.files.push_back(std::move(file));
 			}
 		}
 		if (end == std::string_view::npos) {
@@ -157,6 +343,44 @@ CheatIndex ParseCheatIndex(std::string_view bytes, std::string_view format,
 		index.skipped = invalid;
 	}
 	return index;
+}
+
+CheatIndex ParseModulesCatalog(std::string_view bytes, std::string_view title_id) {
+	CheatIndex catalog;
+	const auto root = Json::parse(bytes.begin(), bytes.end(), nullptr, false);
+	if (root.is_discarded() || !root.is_object() || root.empty()) {
+		catalog.error   = "Invalid module catalog.";
+		catalog.problem = CheatIndexProblem::Invalid;
+		return catalog;
+	}
+	const auto  id      = NormalizeTitleId(title_id);
+	std::size_t invalid = 0;
+	for (const auto& [category, kind]: {std::pair {"patches", RemoteCheatKind::Patch},
+	                                    std::pair {"cheats", RemoteCheatKind::Cheat}}) {
+		const auto group = root.find(category);
+		if (group == root.end() || !group->is_object()) {
+			continue;
+		}
+		const auto list = group->find(id);
+		if (list == group->end() || !list->is_array()) {
+			continue;
+		}
+		for (const auto& entry: *list) {
+			auto url = ResolveModulesUrl(StringOf(entry, "path"));
+			if (url.empty()) {
+				invalid++;
+				continue;
+			}
+			catalog.files.push_back({StringOf(entry, "title"), StringOf(entry, "gameName"),
+			                         StringOf(entry, "version"), "json", kind, std::move(url)});
+		}
+	}
+	if (invalid != 0) {
+		catalog.error   = "Skipped " + std::to_string(invalid) + " invalid module catalog entries.";
+		catalog.problem = CheatIndexProblem::SkippedEntries;
+		catalog.skipped = invalid;
+	}
+	return catalog;
 }
 
 HttpRequest CheatRequest(std::string url, uint64_t max_bytes) {
@@ -252,9 +476,9 @@ struct CheatCatalog::State {
 	HttpClient&                                   http;
 	LoadedFn                                      on_loaded;
 	uint64_t                                      generation = 0;
-	std::array<RequestId, kCheatFormats.size()>         requests {};
-	std::array<std::string, kCheatFormats.size()>       errors;
-	std::array<CheatIndexFailure, kCheatFormats.size()> failures;
+	std::array<RequestId, kCheatSources.size()>         requests {};
+	std::array<std::string, kCheatSources.size()>       errors;
+	std::array<CheatIndexFailure, kCheatSources.size()> failures;
 	std::vector<RemoteCheatFile>                        files;
 	std::string                                         title_id;
 	std::size_t                                         pending = 0;
@@ -273,10 +497,12 @@ struct CheatCatalog::State {
 	void IndexDone(std::size_t index, const std::string& body, CheatFetchError fetch) {
 		requests[index] = 0;
 		auto& failure   = failures[index];
-		failure         = CheatIndexFailure {std::string(kCheatFormats[index]), {}, {}, 0};
+		const auto source    = kCheatSources[index];
+		failure              = CheatIndexFailure {std::string(source), {}, {}, 0};
 		std::string error;
 		if (fetch.failure == HttpFailure::None) {
-			auto parsed = ParseCheatIndex(body, kCheatFormats[index], title_id);
+			auto parsed = source == kModulesCheatSource ? ParseModulesCatalog(body, title_id)
+			                                            : ParseCheatIndex(body, source, title_id);
 			files.insert(files.end(), std::make_move_iterator(parsed.files.begin()),
 			             std::make_move_iterator(parsed.files.end()));
 			error           = std::move(parsed.error);
@@ -306,7 +532,10 @@ struct CheatCatalog::State {
 		for (std::size_t i = 0; i < errors.size(); i++) {
 			if (!errors[i].empty()) {
 				result.error +=
-				    (result.error.empty() ? "" : "\n") + Upper(kCheatFormats[i]) + ": " + errors[i];
+				    (result.error.empty() ? "" : "\n") +
+				    (kCheatSources[i] == kModulesCheatSource ? std::string("Modules")
+				                                             : Upper(kCheatSources[i])) +
+				    ": " + errors[i];
 				result.failures.push_back(failures[i]);
 			}
 		}
@@ -332,12 +561,12 @@ void CheatCatalog::Load(std::string_view title_id) {
 	state.errors                          = {};
 	state.failures                        = {};
 	state.title_id                        = std::string(title_id);
-	state.pending                         = kCheatFormats.size();
+	state.pending                         = kCheatSources.size();
 	const std::weak_ptr<State> weak       = m_state;
 	const auto                 generation = state.generation;
-	for (std::size_t i = 0; i < kCheatFormats.size(); i++) {
+	for (std::size_t i = 0; i < kCheatSources.size(); i++) {
 		state.requests[i] = StartCheatDownload(
-		    state.http, CheatIndexUrl(kCheatFormats[i]), kMaxCheatIndexBytes,
+		    state.http, CheatSourceUrl(kCheatSources[i]), kMaxCheatIndexBytes,
 		    [weak, generation, i](const std::string& body, CheatFetchError error) {
 			    const auto locked = weak.lock();
 			    if (locked && locked->generation == generation) {

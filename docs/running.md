@@ -34,6 +34,9 @@ searches every game folder recursively and lists:
 - each directory that contains `eboot.bin`;
 - each ZArchive (`.zar`) file whose archive root contains `eboot.bin`.
 
+A game whose `sce_sys/param.json` says that it supports PS5 Pro mode shows a **PRO** badge on its
+icon in the list and **PS5 PRO** in the grid.
+
 **Refresh game list** in the main menu scans the folders again. Folders that cannot be read are
 listed in a message, and the rest of the list stays usable. In the Flatpak, a folder chosen in the
 folder chooser stays readable after the launcher restarts and after a reboot, until you remove it
@@ -43,6 +46,16 @@ same way.
 Select a game and press **Run**, press Enter, or double-click it. The game menu also opens the
 game's folder, its trophies, its additional content, its cheats (for `PPSA` titles), and its own
 settings and input mapping, and it can compress the game to a ZArchive or remove its save data.
+For a game that can start in one of its activities, **Launch into activity** lists them, and
+choosing one starts the game in that activity (`--launch-activity`) for that run.
+**Additional content…** lists the game's add-ons in the add-ons folder and the game's own add-ons,
+which you add there by entitlement label or content ID, with the folder of the add-on's data or
+without a folder for a license only.
+**Cheats and patches (experimental)…** lists the game's patches and cheats from KytyPS5-Modules
+and its cheat files in the HEN Cheats Collection, in the JSON, MC4, and SHN formats, and shows the
+cheats of the one you select. **Import to Local** saves it as the game's cheat file in the data
+directory, with its cheats off. When the game has a cheat file already, you can replace it or keep
+its other cheats.
 
 ## ZArchive games
 
@@ -110,10 +123,11 @@ invalid value, or a `--game` path that does not exist or cannot be read. `--help
 the usage text and exits with status 0.
 
 `--game`, `--game-patch`, and `--addcont-dir` may be given once. For the other options that take a
-value, the last one wins, and `--keymap` may be repeated. Relative paths are relative to the
-emulator's working directory. Inside the Flatpak, `--game`, `--game-patch`, and `--addcont-dir` are
-taken relative to the directory the emulator was started from, and the relative log, shader, and
-dump paths are taken relative to the data directory.
+value, the last one wins, and `--keymap` and `--addcont` may be repeated. Relative paths are
+relative to the emulator's working directory. Inside the Flatpak, `--game`, `--game-patch`,
+`--addcont-dir`, the `--addcont` folders, `--dlss-folder`, and `--fsr-folder` are taken relative to
+the directory the emulator was started from, and the relative log, shader, and dump paths are taken
+relative to the data directory.
 
 To use another Vulkan loader, set `SDL_VULKAN_LIBRARY`:
 
@@ -124,13 +138,14 @@ SDL_VULKAN_LIBRARY=/path/to/libvulkan.so.1 ./kyty_emulator --game "/games/Exampl
 ## Emulator options
 
 Every option of `kyty_emulator --help`. A flag takes no value; its default is off unless the table
-says otherwise. Enumerated values are case-sensitive.
+says otherwise. Enumerated values are case-insensitive: `mailbox` and `Mailbox` are the same value.
 
 | Option | Value format | Accepted values or range | Default | Effect |
 |---|---|---|---|---|
 | `--game` | `<dir\|elf\|zar>`: a path | An existing, readable game directory, ELF file, or `.zar` file whose root contains `eboot.bin` | none (required) | The game to load. |
 | `--game-patch` | `<json>`: a path | An existing ETAHen cheat file | none | Applies the cheats of this file. |
 | `--addcont-dir` | `<dir>`: a path | Any folder | none | The add-ons (DLC) folder. |
+| `--addcont` | `<label>[=<dir>]`: an entitlement label, optionally with a path | A label of 16 characters, each `A`–`Z` or `0`–`9`; with `=<dir>`, an existing folder | none | Adds one add-on (DLC) by its entitlement label, with its data in `<dir>`, or as a license only without `<dir>`. It replaces a package with the same label in the `--addcont-dir` folder. May be repeated. |
 | `--screen-width` | `<num>`: an integer | 1 or more | 1280 | Window width. |
 | `--screen-height` | `<num>`: an integer | 1 or more | 720 | Window height. |
 | `--user-name` | `<name>`: text | 1–16 bytes | `Kyty` | Local user name exposed to games. |
@@ -145,17 +160,29 @@ says otherwise. Enumerated values are case-sensitive.
 | `--fullscreen` | flag | – | off | Runs in borderless desktop fullscreen. |
 | `--hdr` | flag | – | off | Enables HDR10 output when supported. |
 | `--hide-cursor` | flag | – | off | Hides the cursor after 2 seconds without mouse activity. |
+| `--stretch` | flag | – | off | Stretches the image to the window. |
 | `--no-splash` | flag | – | splash on | Disables the startup splash screen. |
 | `--vr` | flag | – | off | Enables the virtual VR headset. |
+| `--trinity` | flag | – | off | Enables the experimental PS5 Pro mode for supported titles. |
+| `--pssr-upscaler` | `<value>` | `Linear`, `DLSS`, `FSR` | `Linear` | With `--trinity`, the upscaler for PSSR. `DLSS` loads the NVIDIA driver's NGX library (`libnvidia-ngx.so.1`) and the model in `--dlss-folder`; it is untested on this project's CI. `FSR` has no effect on Linux. |
+| `--dlss-folder` | `<folder>`: a path | Any folder | none | The DLSS model folder for `--pssr-upscaler DLSS`. Untested on this project's CI. |
+| `--dlss-preset` | `<A-O>` | One capital letter from `A` to `O` | the model's own preset | The DLSS preset. Untested on this project's CI. |
+| `--fsr-folder` | `<folder>`: a path | Any folder | none | Accepted but has no effect on Linux. |
 | `--amd-cpu` | flag | – | off | Applies AMD CPU instruction patches. |
+| `--guest-tsc` | flag | – | off | Runs the guest time stamp counter at the PS5's 1.6 GHz. |
 | `--vblank-frequency` | `<num>`: an integer | 30–360 (other values are clamped to that range) | 60 | Virtual vblank frequency in Hz. |
 | `--console-language` | `<0-29>`: an integer | 0–29 | 1 (English, United States) | Console language. |
 | `--vulkan-validation` | flag | – | off | Enables the Vulkan validation layers. |
 | `--network-connected` | flag | – | off | Lets games use the host's local network. |
+| `--emulate-psn` | flag | – | off | Simulates PSN sign-in for compatibility. |
 | `--gpu-assisted-validation` | flag | – | off | Bounds-checks shader accesses on the GPU. Implies `--vulkan-validation`; very slow. |
 | `--shader-validation` | flag | – | off | Enables shader validation. |
+| `--shader-cache` | flag | – | off | Keeps compiled shaders and pipelines between boots, in `_PipelineCache/<TITLE_ID>.shaders` in the working directory, which is the data directory when the launcher or the Flatpak starts the emulator. Release builds only; `--graphics-debug-dump` turns it off. |
 | `--tessellation` | flag | – | off | Draws tessellation patches, which are skipped by default. |
-| `--shader-optimization-type` | `<value>` | `None`, `Size`, `Performance` | `None` | Shader optimization. The launcher's own default is `Performance`. |
+| `--occlusion-queries` | flag | – | off | Counts occlusion query samples on the GPU. |
+| `--relaxed-shader-float` | flag | – | off | Uses native GPU float operations in shaders: faster, but can be inaccurate. |
+| `--native-rt` | flag | – | off | Uses native ray tracing on the GPU. |
+| `--lod-stats` | flag | – | off | Reports bound textures in mip statistics. |
 | `--shader-log-direction` | `<value>` | `Silent`, `Console`, `File` | `Silent` | Where shader logs go. |
 | `--shader-log-folder` | `<path>` | Any folder | `_Shaders` | Shader log folder for `File`. |
 | `--command-buffer-dump` | flag | – | off | Enables command buffer dumps. |
@@ -167,12 +194,15 @@ says otherwise. Enumerated values are case-sensitive.
 | `--spirv-debug-printf` | flag | – | off | Enables SPIR-V debug printf. |
 | `--readback-linear-images` | flag | – | off | Reads back writable linear images on submit. |
 | `--readback-tiled-images` | flag | – | off | Reads back small writable tiled images on submit. |
+| `--readback-storage-images` | flag | – | off | Reads back storage images on GL2 writebacks. |
 | `--sync-raw-image-buffers` | flag | – | off | Synchronizes raw reads of GPU images. |
+| `--flush-draws` | `<num>`: an integer | 0–4,294,967,295 | 0 (off) | Submits the GPU work every `<num>` draws. |
 | `--no-trophy-notifications` | flag | – | notifications on | Disables trophy unlock notifications and their sound. |
 | `--trophy-duration` | `<seconds>`: an integer | 5–10 (other values are clamped to that range) | 6 | How long a trophy notification stays on screen. |
 | `--perf-overlay` | flag | – | off | Shows the performance panel (toggle with F2). |
-| `--playgo-hack` | flag | – | off | Uses the supplied PlayGo stub fallback. |
+| `--playgo-hack` | flag | – | off | For a package without PlayGo chunk metadata, reports 1000 chunks instead of the one installed chunk. |
 | `--skip-notice-screen` | flag | – | off | Skips startup logos and notices in supported games. |
+| `--launch-activity` | `<id>`: text | 1–32 printable ASCII characters | none | Starts the game in this activity: the game receives one launch-activity game intent with this ID. |
 | `--keymap` | `<Control=Input>` | A DualSense control and a host input, both non-empty | the built-in mapping | Maps one DualSense control; may be repeated. |
 | `--rd` | flag | – | off | Enables RenderDoc capture. |
 | `--guest-exec` | `<elf> [args...]`: a path and arguments | A guest ELF; every argument after it goes to that ELF | `eboot.bin` of the game | Runs this guest ELF instead of `eboot.bin`. It must be the last option. |

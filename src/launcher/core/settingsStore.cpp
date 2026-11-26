@@ -1,6 +1,7 @@
 #include "launcher/core/settingsStore.h"
 
 #include "launcher/core/configurationFields.h"
+#include "launcher/core/titleId.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -22,6 +23,8 @@ constexpr std::string_view kSettingsWindow     = "SettingsWindow/";
 constexpr std::string_view kGlobal             = "GlobalConfiguration/";
 constexpr std::string_view kGameConfigurations = "GameConfigurations";
 constexpr std::string_view kElementPrefix      = "GameConfigurations/";
+constexpr std::string_view kAdditionalContent  = "AdditionalContent";
+constexpr std::string_view kUserAddOnPrefix    = "AdditionalContent/";
 
 std::string Key(std::string_view prefix, std::string_view name) {
 	std::string key(prefix);
@@ -96,6 +99,8 @@ void RemoveSchemaKeys(IniFile& file) {
 	for (const auto& element: elements) {
 		file.Remove(element);
 	}
+	// Every key of the group is a title's list (upstream's launcher rewrites the whole group).
+	file.Remove(kAdditionalContent);
 }
 
 // Reads typed values from a parsed Kyty.ini and records the keys that get their default.
@@ -177,7 +182,7 @@ public:
 			if (mapping_custom && !per_game) {
 				continue;
 			}
-			Field(field, Key(prefix, field.name), mapping_custom, configuration);
+			Field(field, Key(prefix, field.name), mapping_custom || field.optional, configuration);
 		}
 		const GameConfiguration defaults;
 		for (const auto& field: GameConfigurationFields()) {
@@ -323,6 +328,26 @@ void LoadGames(const IniFile& file, Loader& loader, LauncherSettings& settings) 
 	}
 }
 
+// [AdditionalContent]: each key directly in the group is a title ID with its list (QSettings'
+// childKeys); keys below one are not read (and go on the next save).
+void LoadUserAddOns(const IniFile& file, Loader& loader, LauncherSettings& settings) {
+	for (const auto& [key, value]: file.Entries()) {
+		if (!key.starts_with(kUserAddOnPrefix)) {
+			continue;
+		}
+		const auto title = std::string_view(key).substr(kUserAddOnPrefix.size());
+		if (title.empty() || title.find('/') != std::string_view::npos) {
+			continue;
+		}
+		auto entries = file.GetStringList(key);
+		if (!entries) {
+			loader.Report(key);
+		} else if (!entries->empty()) {
+			settings.user_addons[std::string(title)] = std::move(*entries);
+		}
+	}
+}
+
 template <typename Target>
 void WriteField(IniFile& out, const BasicFieldDescriptor<Target>& field, const std::string& key,
                 const Target& target) {
@@ -378,6 +403,7 @@ LoadReport ParseSettings(std::string_view bytes) {
 	LoadWindow(loader, kSettingsWindow, settings.settings_window);
 	LoadGlobal(loader, settings);
 	LoadGames(file, loader, settings);
+	LoadUserAddOns(file, loader, settings);
 	settings.unknown = file;
 	RemoveSchemaKeys(settings.unknown);
 	return report;
@@ -424,6 +450,11 @@ std::string SerializeSettings(const LauncherSettings& settings) {
 		WriteConfiguration(out, prefix, true, entry.configuration);
 	}
 	out.SetArraySize(kGameConfigurations, static_cast<int>(settings.games.size()));
+	for (const auto& [title, entries]: settings.user_addons) {
+		if (!entries.empty()) {
+			out.SetStringList(Key(kUserAddOnPrefix, title), entries);
+		}
+	}
 	return out.Serialize();
 }
 
@@ -591,6 +622,12 @@ ResolveEffectiveConfiguration(const LauncherSettings& settings, const GameEntry&
 	}
 	result.controller = settings.controller;
 	result.addons_dir = settings.addons_dir;
+	if (const auto title_id = NormalizeTitleId(entry.title_id); !title_id.empty()) {
+		if (const auto found = settings.user_addons.find(title_id);
+		    found != settings.user_addons.end()) {
+			result.user_addons = found->second;
+		}
+	}
 	result.cheat_plan = std::move(cheat_plan);
 	return result;
 }

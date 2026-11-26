@@ -2,13 +2,14 @@
 //
 // Validates Requirements 3.8, 5.5, 5.9, and 15.13. Each case builds an argument list from valid
 // options of Emulator::Options(): --game once (an existing directory or ELF), other options at
-// random with valid values (--keymap up to three times), now and then --help or -h, and now and
-// then --guest-exec with guest arguments at the end. Then at most one fault is injected: an
-// unknown option (--redzone, another --name, or -x), a value option without its value at the
-// end, a malformed or out-of-range value, a --game path that does not exist, or a --game path
-// that exists but is not readable. With a fault, ParseOptions returns Error and the message names
-// the option or the path; without one, it returns Help when --help or -h is present and Run
-// otherwise. UsageText() names every option of the table.
+// random with valid values (enumerated values in any letter case, --keymap and --addcont up to
+// three times), now and then --help or -h, and now and then --guest-exec with guest arguments at
+// the end. Then at most one fault is injected: an unknown option (--redzone, another --name, or
+// -x), a value option without its value at the end, a malformed or out-of-range value, a --game
+// path that does not exist, or a --game path that exists but is not readable. With a fault,
+// ParseOptions returns Error and the message names the option or the path; without one, it
+// returns Help when --help or -h is present and Run otherwise. UsageText() names every option of
+// the table.
 //
 // Unreadable paths cannot be made with chmod when the tests run as root (the CI container does),
 // so this file interposes access(): a call for a path below the marked prefix with a mode other
@@ -110,8 +111,17 @@ std::string AnyText() {
 	return ConfigGen::AnyText(12);
 }
 
-std::string OneOf(const std::vector<std::string>& values) {
-	return PickOf(values);
+// An enumerator name in any letter case ("mAilBox"): the parser ignores case.
+std::string OneOfAnyCase(const std::vector<std::string>& values) {
+	auto value = PickOf(values);
+	if (OneIn(2)) {
+		for (auto& c: value) {
+			if (OneIn(2)) {
+				c = static_cast<char>(c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c - 'A' + 'a');
+			}
+		}
+	}
+	return value;
 }
 
 // A value that the option accepts, or nothing for an option this property does not know (a new
@@ -125,8 +135,34 @@ std::optional<std::string> ValidValue(std::string_view name) {
 		return paths.patch;
 	}
 	if (name == "--addcont-dir" || name == "--mic" || name == "--shader-log-folder" ||
-	    name == "--command-buffer-dump-folder" || name == "--printf-output-file") {
+	    name == "--command-buffer-dump-folder" || name == "--printf-output-file" ||
+	    name == "--dlss-folder" || name == "--fsr-folder") {
 		return AnyText();
+	}
+	if (name == "--addcont") {
+		static const std::string label_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+		std::string              label;
+		for (int i = 0; i < 16; i++) {
+			label += label_chars[Choose<size_t>(0, label_chars.size())];
+		}
+		return OneIn(2) ? label : label + "=" + paths.game_dir;
+	}
+	if (name == "--pssr-upscaler") {
+		return OneOfAnyCase({"Linear", "DLSS", "FSR"});
+	}
+	if (name == "--dlss-preset") {
+		return std::string(1, static_cast<char>(Choose<int>('A', 'O' + 1)));
+	}
+	if (name == "--flush-draws") {
+		return Decimal(0, std::numeric_limits<uint32_t>::max());
+	}
+	if (name == "--launch-activity") {
+		std::string id;
+		const int   length = Choose(1, 33);
+		for (int i = 0; i < length; i++) {
+			id += static_cast<char>(Choose(0x20, 0x7F));
+		}
+		return id;
 	}
 	if (name == "--screen-width" || name == "--screen-height") {
 		return Decimal(1, std::numeric_limits<uint32_t>::max());
@@ -161,7 +197,7 @@ std::optional<std::string> ValidValue(std::string_view name) {
 		return Decimal(0, Config::MAX_PLAYERS);
 	}
 	if (name == "--present-mode") {
-		return OneOf({"Fifo", "Mailbox", "Immediate"});
+		return OneOfAnyCase({"Fifo", "Mailbox", "Immediate"});
 	}
 	if (name == "--gpu") {
 		return std::to_string(Choose<int64_t>(std::numeric_limits<int32_t>::min(),
@@ -173,11 +209,8 @@ std::optional<std::string> ValidValue(std::string_view name) {
 	if (name == "--console-language") {
 		return Decimal(0, Config::MAX_CONSOLE_LANGUAGE);
 	}
-	if (name == "--shader-optimization-type") {
-		return OneOf({"None", "Size", "Performance"});
-	}
 	if (name == "--shader-log-direction" || name == "--printf-direction") {
-		return OneOf({"Silent", "Console", "File"});
+		return OneOfAnyCase({"Silent", "Console", "File"});
 	}
 	if (name == "--keymap") {
 		std::string control = "Pad:Cross";
@@ -219,7 +252,7 @@ std::vector<std::string> InvalidValues(std::string_view name) {
 		return {"5", "-1", "x", ""};
 	}
 	if (name == "--present-mode") {
-		return {"mailbox", "FIFO", "", "3", "Vsync"};
+		return {"", "3", "Vsync", " Fifo", "Mailboxes"};
 	}
 	if (name == "--gpu") {
 		return {"x", "2147483648", "-2147483649", "", "1.0"};
@@ -230,17 +263,36 @@ std::vector<std::string> InvalidValues(std::string_view name) {
 	if (name == "--console-language") {
 		return {"30", "-1", "x", ""};
 	}
-	if (name == "--shader-optimization-type") {
-		return {"Fast", "none", ""};
-	}
 	if (name == "--shader-log-direction" || name == "--printf-direction") {
-		return {"Loud", "file", ""};
+		return {"Loud", "", "Files"};
 	}
 	if (name == "--keymap") {
 		return {"NoEquals", "=x", "x=", "", "="};
 	}
 	if (name == "--game-patch") {
 		return {Paths().missing};
+	}
+	if (name == "--addcont") {
+		return {"",
+		        "ABCDEFGHIJ01234",
+		        "ABCDEFGHIJ0123456",
+		        "abcdefghij012345",
+		        "ABCDEFGHIJ01234_",
+		        "=" + Paths().game_dir,
+		        "ABCDEFGHIJ012345=" + Paths().missing,
+		        "ABCDEFGHIJ012345=" + Paths().patch};
+	}
+	if (name == "--pssr-upscaler") {
+		return {"", "Bilinear", "DLSS2", " FSR", "2"};
+	}
+	if (name == "--dlss-preset") {
+		return {"", "P", "Z", "a", "AB", "0", "@"};
+	}
+	if (name == "--flush-draws") {
+		return {"-1", "abc", "4294967296", "", "1.5"};
+	}
+	if (name == "--launch-activity") {
+		return {"", std::string(33, 'a'), "tab\there", "caf\xC3\xA9", "del\x7F", "line\n"};
 	}
 	return {};
 }
@@ -315,10 +367,11 @@ KYTY_PROPERTY(23, "Emulator option parser outcomes") {
 					}
 					break;
 				case Emulator::OptionKind::Value: {
-					const int count = option_name == "--game"     ? 1
-					                  : option_name == "--keymap" ? Choose(0, 4)
-					                  : OneIn(3)                  ? 1
-					                                              : 0;
+					const bool repeatable = option_name == "--keymap" || option_name == "--addcont";
+					const int  count      = option_name == "--game" ? 1
+					                        : repeatable            ? Choose(0, 4)
+					                        : OneIn(3)              ? 1
+					                                                : 0;
 					for (int i = 0; i < count; i++) {
 						const auto value = ValidValue(option_name);
 						if (!value) {

@@ -102,6 +102,10 @@ std::string Upper(std::string_view text) {
 // The rule texts of the fields with their own rule (FieldDescriptor::check), and of the output
 // paths and the input mapping, by key; nullptr for another key.
 const char* FieldRuleMsgid(std::string_view key) {
+	if (key == "screen_resolution") {
+		// TRANSLATORS: WIDTHxHEIGHT is the form of the value, for example 1920x1080.
+		return N_("The screen resolution must be WIDTHxHEIGHT, each between 320 and 16384.");
+	}
 	if (key == "user_name") {
 		return N_("The user name must contain 1 to 16 UTF-8 bytes after leading and trailing "
 		          "spaces are removed.");
@@ -112,6 +116,9 @@ const char* FieldRuleMsgid(std::string_view key) {
 	}
 	if (key == "gpu_index") {
 		return N_("The GPU must be Automatic or a device index from 0.");
+	}
+	if (key == "flush_draws") {
+		return N_("The draws per GPU submit must be 0 (off) or more.");
 	}
 	if (key == "trophy_duration_seconds") {
 		return N_("The trophy notification duration must be between 5 and 10 seconds.");
@@ -134,6 +141,9 @@ const char* FieldRuleMsgid(std::string_view key) {
 	}
 	if (key == "printf_output_file") {
 		return N_("The printf output file must not be empty while printf output goes to a file.");
+	}
+	if (key == "dlss_folder") {
+		return N_("The DLSS model folder must not be empty while PS5 Pro mode uses DLSS.");
 	}
 	if (key == "host_input_mapping") {
 		return N_("Each input mapping entry must have the form Name=Value with a non-empty name "
@@ -407,13 +417,14 @@ CoreText CheatProblemText(const core::CheatProblem& problem) {
 			    Text(N_("This JSON uses module-specific cheats, which are not supported yet."));
 			break;
 		case CheatProblemKind::AddressingFeatures:
-			reason =
-			    Text(N_("This JSON uses memory addressing features that are not supported yet."));
+			reason = Text(
+			    N_("This cheat file uses memory addressing features that are not supported yet."));
 			break;
 		case CheatProblemKind::UnsupportedMemory:
 			// TRANSLATORS: %s is the name of a cheat.
 			reason = Text(N_("Unsupported memory entries in cheat \"%s\"."), {problem.detail});
 			break;
+		case CheatProblemKind::InvalidXml: reason = Text(N_("Invalid cheat XML.")); break;
 	}
 	if (problem.file.empty()) {
 		return reason;
@@ -478,18 +489,28 @@ CoreText CheatFetchErrorText(const core::CheatFetchError& error) {
 }
 
 CoreText CheatIndexFailureText(const core::CheatIndexFailure& failure) {
-	CoreText reason;
+	const bool modules = failure.source == core::kModulesCheatSource;
+	const auto skipped = Number(static_cast<uint64_t>(failure.skipped));
+	CoreText   reason;
 	if (failure.fetch.failure != core::HttpFailure::None) {
 		reason = CheatFetchErrorText(failure.fetch);
 	} else if (failure.problem == core::CheatIndexProblem::SkippedEntries) {
-		reason = Plural(NGettextNoop("Skipped %llu invalid cheat index entry.",
-		                             "Skipped %llu invalid cheat index entries."),
-		                failure.skipped, {Number(static_cast<uint64_t>(failure.skipped))});
+		reason = modules ? Plural(NGettextNoop("Skipped %llu invalid module catalog entry.",
+		                                       "Skipped %llu invalid module catalog entries."),
+		                          failure.skipped, {skipped})
+		                 : Plural(NGettextNoop("Skipped %llu invalid cheat index entry.",
+		                                       "Skipped %llu invalid cheat index entries."),
+		                          failure.skipped, {skipped});
+	} else if (modules) {
+		reason = Text(N_("Invalid module catalog."));
 	} else {
 		reason = Text(N_("Invalid cheat index."));
 	}
-	// TRANSLATORS: a cheat file format ("JSON", "MC4", "SHN"), then what went wrong with its list.
-	return Text(N_("%s: %s"), {Upper(failure.format), Render(reason)});
+	// TRANSLATORS: the KytyPS5-Modules catalog in the list of the remote cheat lists that failed.
+	const std::string source = modules ? Render(Text(N_("Modules"))) : Upper(failure.source);
+	// TRANSLATORS: where a remote list comes from ("Modules", or a cheat file format: "JSON",
+	// "MC4", "SHN"), then what went wrong with it.
+	return Text(N_("%s: %s"), {source, Render(reason)});
 }
 
 std::string CheatCatalogErrorText(const core::CheatCatalogResult& result) {

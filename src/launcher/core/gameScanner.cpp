@@ -171,6 +171,8 @@ private:
 		entry.game_version         = std::move(metadata.game_version);
 		entry.firmware_version     = std::move(metadata.firmware_version);
 		entry.metadata_available   = metadata.metadata_available;
+		entry.pro_supported        = metadata.pro_supported;
+		entry.activity_intent      = metadata.activity_intent;
 		entry.legacy_relative_path = RelativeTo(path, folder);
 		m_entries.emplace(key, std::move(entry));
 		return true;

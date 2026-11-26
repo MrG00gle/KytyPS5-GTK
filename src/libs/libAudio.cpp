@@ -75,6 +75,52 @@ static int32_t KYTY_SYSV_ABI AudioPropagationRoomCreate(AudioPropagationHandle /
 	return 0;
 }
 
+static int32_t KYTY_SYSV_ABI AudioPropagationSourceCreate(
+    AudioPropagationHandle /*system_handle*/, AudioPropagationHandle* out_source_handle) {
+	PRINT_NAME();
+
+	if (out_source_handle != nullptr) {
+		*out_source_handle = AudioPropagationNextHandle();
+	}
+
+	return 0;
+}
+
+static int32_t KYTY_SYSV_ABI
+AudioPropagationSourceSetAttributes(AudioPropagationHandle /*source_handle*/,
+                                    const void* /*attributes*/, uint32_t /*num_attributes*/) {
+	PRINT_NAME();
+
+	return 0;
+}
+
+static int32_t KYTY_SYSV_ABI
+AudioPropagationSourceGetAudioPath(AudioPropagationHandle /*source_handle*/, uint32_t /*id*/,
+                                   AudioPropagationHandle* out_path_handle) {
+	PRINT_NAME();
+
+	if (out_path_handle != nullptr) {
+		*out_path_handle = AudioPropagationNextHandle();
+	}
+
+	return 0;
+}
+
+static int32_t KYTY_SYSV_ABI AudioPropagationSourceSetAudioPath(
+    AudioPropagationHandle /*path_handle*/, const void* /*path*/, float /*gain*/) {
+	PRINT_NAME();
+
+	return 0;
+}
+
+static int32_t KYTY_SYSV_ABI AudioPropagationSourceRender(AudioPropagationHandle /*system_handle*/,
+                                                          void* /*render_info*/,
+                                                          uint32_t /*num_sources*/) {
+	PRINT_NAME();
+
+	return 0;
+}
+
 static int32_t KYTY_SYSV_ABI AudioPropagationSystemRegisterMaterial(
     AudioPropagationHandle /*system_handle*/, const void* /*material*/,
     AudioPropagationHandle* out_material_handle) {
@@ -110,6 +156,11 @@ LIB_DEFINE(InitAudio_1_AudioPropagation) {
 	LIB_FUNC("7xyAxrusLko", LibAudioPropagation::AudioPropagationSystemQueryMemory);
 	LIB_FUNC("aNEqtSHdUSo", LibAudioPropagation::AudioPropagationSystemCreate);
 	LIB_FUNC("8bI5h8req30", LibAudioPropagation::AudioPropagationRoomCreate);
+	LIB_FUNC("d84otraxt2s", LibAudioPropagation::AudioPropagationSourceCreate);
+	LIB_FUNC("-wsUTr31yeg", LibAudioPropagation::AudioPropagationSourceSetAttributes);
+	LIB_FUNC("eEeKqFeNI3o", LibAudioPropagation::AudioPropagationSourceGetAudioPath);
+	LIB_FUNC("tKSmk2JsMAA", LibAudioPropagation::AudioPropagationSourceSetAudioPath);
+	LIB_FUNC("hhz9pITnC8k", LibAudioPropagation::AudioPropagationSourceRender);
 	LIB_FUNC("CPLV6G-eXmk", LibAudioPropagation::AudioPropagationSystemRegisterMaterial);
 	LIB_FUNC("kIdb+iQUzCs", LibAudioPropagation::AudioPropagationSystemSetAttributes);
 	LIB_FUNC("ht-QXT3zGxo", LibAudioPropagation::AudioPropagationSystemGetRays);
@@ -523,6 +574,22 @@ LIB_DEFINE(InitAudio_1_Voice) {
 
 } // namespace LibVoice
 
+namespace LibVoiceChat {
+
+LIB_VERSION("VoiceChat", 1, "VoiceChat", 1, 1);
+
+static int KYTY_SYSV_ABI VoiceChatStub() {
+	return OK;
+}
+
+LIB_DEFINE(InitAudio_1_VoiceChat) {
+	LIB_FUNC("spdS-hedavE", VoiceChatStub);
+	LIB_FUNC("Ptmkf9UnWBg", VoiceChatStub);
+	LIB_FUNC("CscDZAFA5+c", VoiceChatStub);
+}
+
+} // namespace LibVoiceChat
+
 namespace LibAjm {
 
 LIB_VERSION("Ajm", 1, "Ajm", 1, 1);
@@ -562,6 +629,7 @@ LIB_DEFINE(InitAudio_1_Ajm) {
 	LIB_FUNC("jVCWcthifr8", Ajm::AjmBatchJobRun);
 	LIB_FUNC("Z9NVCesiP0Q", Ajm::AjmBatchJobRunSplit);
 	LIB_FUNC("1t3ixYNXyuc", Ajm::AjmDecAt9ParseConfigData);
+	LIB_FUNC("eDFeTyi+G3Y", Ajm::AjmDecMp3ParseFrame);
 }
 
 } // namespace LibAjm
@@ -579,6 +647,7 @@ LIB_DEFINE(InitAudio_1_Acm) {
 	LIB_FUNC("8fe55ktlNVo", Acm::AcmBatchStartBuffers);
 	LIB_FUNC("RLN3gRlXJLE", Acm::AcmBatchWait);
 	LIB_FUNC("r7z5YQFZo+U", Acm::AcmBatchJobNotification);
+	LIB_FUNC("GTfJ64qFCPw", Acm::AcmBatchJobPriority);
 	LIB_FUNC("u70oWo92SYQ", Acm::AcmConvReverbSharedInput);
 	LIB_FUNC("9nLbWmRDpa8", Acm::AcmConvReverbSharedIr);
 	LIB_FUNC("KovqaFbmtsM", Acm::AcmFft);
@@ -1161,6 +1230,8 @@ LIB_DEFINE(InitAudio_1_Ngs2) {
 	LIB_FUNC("AbYvTOZ8Pts", Ngs2::Ngs2VoiceRunCommands);
 	LIB_FUNC("-TOuuAQ-buE", Ngs2::Ngs2VoiceGetState);
 	LIB_FUNC("rEh728kXk3w", Ngs2::Ngs2VoiceGetStateFlags);
+	LIB_FUNC("9eic4AmjGVI", Ngs2::Ngs2VoiceQueryInfo);
+	LIB_FUNC("WCayTgob7-o", Ngs2::Ngs2VoiceGetPortInfo);
 	LIB_FUNC("i0VnXM-C9fc", Ngs2::Ngs2SystemRender);
 	LIB_FUNC("l4Q2dWEH6UM", Ngs2::Ngs2SystemSetGrainSamples);
 	LIB_FUNC("hyVLT2VlOYk", Ngs2::Ngs2ParseWaveformData);
@@ -1181,6 +1252,7 @@ LIB_DEFINE(InitAudio_1) {
 	LibAudioIn::InitAudio_1_AudioIn(s);
 	LibVoiceQoS::InitAudio_1_VoiceQoS(s);
 	LibVoice::InitAudio_1_Voice(s);
+	LibVoiceChat::InitAudio_1_VoiceChat(s);
 	LibAjm::InitAudio_1_Ajm(s);
 	LibAcm::InitAudio_1_Acm(s);
 	LibAvPlayer::InitAudio_1_AvPlayer(s);

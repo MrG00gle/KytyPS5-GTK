@@ -470,6 +470,56 @@ void TestNoTrophyData() {
 	      "the no-package text");
 }
 
+// The activities of upstream KytyPS5's "Launch activity": the names of the activity enums of
+// sce_sys/uds/uds00.ucp (Common::Trophies::LoadActivityIds), sorted and unique, of a directory
+// entry and of an archive entry, without the IDs that --launch-activity refuses.
+void TestActivityIds() {
+	for (const std::string_view id:
+	     {"a", "story", "boss_rush", "Act 1: The ~End~", "12345678901234567890123456789012"}) {
+		Check(kyty::core::IsLaunchActivityId(id), "accepted: " + std::string(id));
+	}
+	for (const std::string_view id: {"", "123456789012345678901234567890123", "tab\there",
+	                                 "new\nline", "\x7f", "caf\xC3\xA9"}) {
+		Check(!kyty::core::IsLaunchActivityId(id), "refused: '" + std::string(id) + "'");
+	}
+
+	const KytyTests::TempDir temp("kyty_activity_ids");
+	const std::string        enums   = R"({"enumArray":[
+		{"sourceId":"activity_pattern1","enumValueArray":[{"name":"story"},{"name":"boss_rush"}]},
+		{"sourceId":"difficulty","enumValueArray":[{"name":"hard"}]},
+		{"sourceId":"activity","enumValueArray":[{"name":"finale"},{"name":"story"},{"id":3},
+			{"name":"123456789012345678901234567890123"},{"name":"tab\there"},{"name":""}]},
+		{"sourceId":1,"enumValueArray":[{"name":"numeric"}]}]})";
+	const auto               package = Common::Trophies::UdsPackagePath(0);
+	temp.WriteFile(fs::path("game") / package,
+	               ContentGen::UcpBytes({{"enum_definition.json", enums}}));
+	temp.WriteFile("game/eboot.bin", "ELF");
+	const std::vector<std::string> expected = {"boss_rush", "finale", "story"};
+
+	GameEntry directory;
+	directory.path = temp.Path() / "game";
+	Check(kyty::core::LoadActivityIds(directory) == expected,
+	      "a directory's activities: activity enums only, sorted, unique, usable IDs");
+
+	const auto archive = temp.Path() / "Game.zar";
+	Check(Common::PackArchive(temp.Path() / "game", archive,
+	                          [](std::uint64_t, std::uint64_t) { return true; }),
+	      "pack Game.zar");
+	GameEntry packed;
+	packed.path = archive;
+	packed.kind = GameEntry::Kind::Archive;
+	Check(kyty::core::LoadActivityIds(packed) == expected, "an archive's activities");
+
+	temp.WriteFile(fs::path("other") / package,
+	               ContentGen::UcpBytes({{"stats_extraction.json", "{}"}}));
+	temp.WriteFile("garbage/sce_sys/uds/uds00.ucp", "garbage");
+	for (const char* name: {"other", "garbage", "missing"}) {
+		GameEntry none;
+		none.path = temp.Path() / name;
+		Check(kyty::core::LoadActivityIds(none).empty(), std::string(name) + ": no activities");
+	}
+}
+
 } // namespace
 
 int main() {
@@ -483,6 +533,7 @@ int main() {
 	TestLoadArchive();
 	TestConsoleLanguage();
 	TestNoTrophyData();
+	TestActivityIds();
 	std::printf("TrophyModelTests: all tests passed\n");
 	return 0;
 }

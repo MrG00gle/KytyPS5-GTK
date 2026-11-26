@@ -14,8 +14,11 @@
 //   every recording device, as read when it opened.
 // - settings_validation (9.4): each invalid value names its field as "<Label> (<key>): <rule>",
 //   keeps the editor open on the field's page with the field marked, and leaves Kyty.ini
-//   byte-identical; the spin rows keep the ranged fields inside their ranges.
-// - settings_dependent_fields (LFI-19): the output path rows follow their direction or switch.
+//   byte-identical; the spin rows keep the ranged fields inside their ranges; the screen
+//   resolution's preset choice and its width and height rows follow each other.
+// - settings_dependent_fields (LFI-19): the output path rows follow their direction or switch, the
+//   PS5 Pro mode rows follow Pro mode and the upscaler, a stored FSR shows as Linear, and the DLSS
+//   model folder's button fills the row from the folder chooser.
 // - settings_close_without_saving (9.14): Cancel, Escape, and closing the window write nothing.
 // - settings_reset (LFI-18), settings_per_game (9.2, 9.13), settings_geometry (LFI-47),
 //   settings_paths_display (12.5), settings_game_configs_import_export (LFI-17, 9.8-9.10, 9.15),
@@ -91,20 +94,27 @@ constexpr ShownField kShownFields[] = {
     {"fullscreen_enabled", "Run in fullscreen", "general"},
     {"hdr_enabled", "Enable HDR display support", "general"},
     {"hide_cursor_enabled", "Auto-hide cursor", "general"},
+    {"stretch_enabled", "Stretch to window", "general"},
     {"readback_linear_images", "Enable readback", "general"},
     {"readback_tiled_images", "Enable tiled readback", "general"},
+    {"readback_storage_images", "Enable storage readback", "general"},
     {"sync_raw_image_buffers", "Accurate texture synchronization", "debug"},
+    {"flush_draws", "Submit GPU work every N draws (0 = off)", "debug"},
     {"tessellation_enabled", "Enable tessellation support (experimental)", "general"},
+    {"occlusion_queries_enabled", "Enable occlusion queries", "general"},
+    {"relaxed_shader_float", "Relaxed shader float math", "general"},
+    {"native_rt", "Native ray tracing (experimental)", "general"},
+    {"shader_cache_enabled", "Cache shaders", "general"},
     {"trophy_enabled", "Enable trophy notifications", "general"},
     {"trophy_duration_seconds", "Trophy notification duration (seconds)", "general"},
     {"perf_overlay_enabled", "Show performance panel", "general"},
     {"skip_notice_screen", "Skip boot logos", "general"},
     {"network_connected", "Enable network connection", "network"},
+    {"psn_emulation_enabled", "Emulate PSN (compatibility)", "network"},
     {"vblank_frequency", "Vblank frequency", "general"},
     {"console_language", "Console language", "general"},
     {"vulkan_validation_enabled", "Vulkan validation", "debug"},
     {"shader_validation_enabled", "Shader validation", "debug"},
-    {"shader_optimization_type", "Shader optimization", "general"},
     {"shader_log_direction", "Shader logging", "debug"},
     {"shader_log_folder", "Shader log folder", "debug"},
     {"command_buffer_dump_enabled", "Command buffer dump", "debug"},
@@ -113,11 +123,17 @@ constexpr ShownField kShownFields[] = {
     {"printf_output_file", "Printf output file", "debug"},
     {"profiler_enabled", "Tracy profiler", "debug"},
     {"renderdoc_enabled", "RenderDoc capture", "debug"},
-    {"amd_cpu_enabled", "AMD CPU patch (experimental)", "general"},
+    {"pro_enabled", "PS5 Pro mode (experimental)", "general"},
+    {"pssr_upscaler", "PSSR upscaler", "general"},
+    {"dlss_folder", "DLSS model folder", "general"},
+    {"dlss_preset", "DLSS preset", "general"},
+    {"amd_cpu_enabled", "Intel CPU compatibility (experimental)", "general"},
+    {"guest_tsc_enabled", "PS5 TSC rate (experimental)", "general"},
 };
 
-// The fields the editors keep without a row (design.md).
-constexpr std::string_view kHiddenFields[] = {"elf", "input_mapping_custom", "host_input_mapping"};
+// The fields the editors keep without a row (design.md; fsr_folder: FSR has no effect on Linux).
+constexpr std::string_view kHiddenFields[] = {"elf", "input_mapping_custom", "host_input_mapping",
+                                              "fsr_folder"};
 
 // The fake devices of the GPU and microphone rows (Requirement 9.5).
 const std::vector<std::string> kGpus        = {"Fake GPU A", "Fake GPU B"};
@@ -205,10 +221,50 @@ void CheckDeviceRows(KytyUi::UiContext& ui, GtkWidget* root, std::pair<int, int>
 	}
 }
 
+// The screen resolution: its preset choice (row) and, in the same group, its width and height rows.
+struct ResolutionRows {
+	GtkWidget* preset = nullptr;
+	GtkWidget* width  = nullptr;
+	GtkWidget* height = nullptr;
+};
+
+ResolutionRows ResolutionRowsOf(GtkWidget* preset) {
+	GtkWidget* group =
+	    preset != nullptr ? gtk_widget_get_ancestor(preset, ADW_TYPE_PREFERENCES_GROUP) : nullptr;
+	if (group == nullptr) {
+		return {};
+	}
+	return {preset, KytyUi::RowTitled(group, "Screen width"),
+	        KytyUi::RowTitled(group, "Screen height")};
+}
+
+int32_t SpinValue(GtkWidget* spin) {
+	adw_spin_row_update(ADW_SPIN_ROW(spin));
+	return static_cast<int32_t>(std::llround(adw_spin_row_get_value(ADW_SPIN_ROW(spin))));
+}
+
+// The size the width and height rows show, as the field's "<width>x<height>" value.
+std::string ShownResolution(const ResolutionRows& rows) {
+	if (rows.width == nullptr || rows.height == nullptr || !ADW_IS_SPIN_ROW(rows.width) ||
+	    !ADW_IS_SPIN_ROW(rows.height)) {
+		return "(no width and height rows)";
+	}
+	return core::FormatScreenResolution({SpinValue(rows.width), SpinValue(rows.height)});
+}
+
+void SetResolution(const ResolutionRows& rows, const core::ScreenResolution& resolution) {
+	adw_spin_row_set_value(ADW_SPIN_ROW(rows.width), resolution.width);
+	adw_spin_row_set_value(ADW_SPIN_ROW(rows.height), resolution.height);
+}
+
 // The value a row shows, as the field's value: a switch's state, a spin row's number, an entry's
 // text, and a choice's index; the GPU row's device index (-1 for Automatic; the fake devices are
-// listed in their index order) and the microphone row's device name ("" for None).
+// listed in their index order), the microphone row's device name ("" for None), and the screen
+// resolution's width and height rows as "<width>x<height>".
 core::FieldValue RowValue(GtkWidget* row, std::string_view key) {
+	if (key == "screen_resolution") {
+		return ShownResolution(ResolutionRowsOf(row));
+	}
 	if (ADW_IS_SWITCH_ROW(row)) {
 		return adw_switch_row_get_active(ADW_SWITCH_ROW(row)) != FALSE;
 	}
@@ -233,9 +289,18 @@ core::FieldValue RowValue(GtkWidget* row, std::string_view key) {
 }
 
 // Changes what the row shows to another valid value (a switch flips, a spin row takes its lowest
-// value plus 1 or 2, a choice its last item or its first, an entry a new text) and returns the new
-// value.
+// value plus 1 or 2, a choice its last item or its first, an entry a new text, the screen
+// resolution a custom size typed into its width and height rows) and returns the new value.
 core::FieldValue ChangeRow(GtkWidget* row, std::string_view key) {
+	if (key == "screen_resolution") {
+		const auto rows = ResolutionRowsOf(row);
+		if (rows.width != nullptr && rows.height != nullptr) {
+			SetResolution(rows, ShownResolution(rows) == "1600x900"
+			                        ? core::ScreenResolution {1366, 768}
+			                        : core::ScreenResolution {1600, 900});
+		}
+		return RowValue(row, key);
+	}
 	if (ADW_IS_SWITCH_ROW(row)) {
 		adw_switch_row_set_active(ADW_SWITCH_ROW(row),
 		                          adw_switch_row_get_active(ADW_SWITCH_ROW(row)) != FALSE ? FALSE
@@ -341,6 +406,30 @@ std::string StoredUserName(KytyUi::UiContext& ui, const core::GameEntry& entry) 
 	return core::EnableCustomSettings(KytyUi::StoredSettings(ui), entry).user_name;
 }
 
+// Scrolls the editor page that holds widget so that widget is near its top, for a capture.
+void ScrollTo(GtkWidget* widget, const std::string& what) {
+	GtkWidget* scrolled =
+	    widget != nullptr ? gtk_widget_get_ancestor(widget, GTK_TYPE_SCROLLED_WINDOW) : nullptr;
+	if (!Check(scrolled != nullptr, what + " is on a scrolled page")) {
+		return;
+	}
+	KytyUi::WaitForPaintedFrame(scrolled);
+	GtkWidget*             viewport = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
+	const graphene_point_t origin   = GRAPHENE_POINT_INIT(0, 0);
+	graphene_point_t       at {};
+	if (Check(viewport != nullptr && gtk_widget_compute_point(widget, viewport, &origin, &at),
+	          "the position of " + what)) {
+		GtkAdjustment* adjustment =
+		    gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scrolled));
+		gtk_adjustment_set_value(adjustment, gtk_adjustment_get_value(adjustment) + at.y - 12);
+	}
+}
+
+GtkWidget* GroupOf(GtkWidget* root, const char* row_title) {
+	GtkWidget* row = KytyUi::RowTitled(root, row_title);
+	return row != nullptr ? gtk_widget_get_ancestor(row, ADW_TYPE_PREFERENCES_GROUP) : nullptr;
+}
+
 } // namespace
 
 // ---- 9.1: every field
@@ -352,7 +441,7 @@ KYTY_UI_CASE(settings_global_fields) {
 	if (games.empty()) {
 		return;
 	}
-	// The editor's field list is the core's, less the three fields it keeps without a row.
+	// The editor's field list is the core's, less the four fields it keeps without a row.
 	std::size_t core_fields = 0;
 	for (const auto& field: core::GameConfigurationFields()) {
 		const bool hidden = std::find(std::begin(kHiddenFields), std::end(kHiddenFields),
@@ -362,11 +451,11 @@ KYTY_UI_CASE(settings_global_fields) {
 			                                return s.key == field.name;
 		                                 }) != std::end(kShownFields);
 		Check(hidden != shown, "the field " + std::string(field.name) +
-		                           " is either shown (with a row) or one of the hidden three");
+		                           " is either shown (with a row) or one of the hidden four");
 		core_fields++;
 	}
 	Check(core_fields == std::size(kShownFields) + std::size(kHiddenFields),
-	      "32 shown and 3 hidden fields are the core's " + std::to_string(core_fields));
+	      "44 shown and 4 hidden fields are the core's " + std::to_string(core_fields));
 
 	const fs::path  more_games = ui.Root() / "more-games";
 	const fs::path  addons     = ui.Root() / "addons";
@@ -532,6 +621,10 @@ KYTY_UI_CASE(settings_validation) {
 		const std::string printf_rule =
 		    "Printf output file (printf_output_file): The printf output file must not be empty "
 		    "while printf output goes to a file.";
+		// As in the upstream launcher's editor (Kyty.ini and imports may leave it empty).
+		const std::string dlss_rule = "DLSS model folder (dlss_folder): The DLSS model folder must "
+		                              "not be empty while PS5 Pro mode uses DLSS.";
+		const char*       pro       = "PS5 Pro mode (experimental)";
 		const std::vector<Invalid> cases = {
 		    {"an empty user name", "User name", "general", user_name_rule,
 		     set_text("User name", ""), set_text("User name", "Kyty")},
@@ -564,6 +657,17 @@ KYTY_UI_CASE(settings_validation) {
 			     set_text("Printf output file", "")();
 		     },
 		     choose("Printf output", 0)},
+		    {"an empty DLSS model folder with PS5 Pro mode on DLSS", "DLSS model folder", "general",
+		     dlss_rule,
+		     [=]() {
+			     turn(pro, true)();
+			     choose("PSSR upscaler", 1)();
+			     set_text("DLSS model folder", "")();
+		     },
+		     [=]() {
+			     choose("PSSR upscaler", 0)();
+			     turn(pro, false)();
+		     }},
 		};
 		bool captured = false;
 		for (const auto& invalid: cases) {
@@ -603,7 +707,11 @@ KYTY_UI_CASE(settings_validation) {
 		     {std::tuple<const char*, double, double> {"Vblank frequency", 30, 360},
 		      std::tuple<const char*, double, double> {"Trophy notification duration (seconds)", 5,
 		                                               10},
-		      std::tuple<const char*, double, double> {"User ID", 0, core::kMaxUserId}}) {
+		      std::tuple<const char*, double, double> {"User ID", 0, core::kMaxUserId},
+		      std::tuple<const char*, double, double> {"Submit GPU work every N draws (0 = off)", 0,
+		                                               2147483647},
+		      std::tuple<const char*, double, double> {"Screen width", 320, 16384},
+		      std::tuple<const char*, double, double> {"Screen height", 320, 16384}}) {
 			GtkWidget* row = KytyUi::RowTitled(root, label);
 			if (!Check(row != nullptr && ADW_IS_SPIN_ROW(row), std::string("the row ") + label)) {
 				continue;
@@ -614,6 +722,33 @@ KYTY_UI_CASE(settings_validation) {
 			adw_spin_row_set_value(ADW_SPIN_ROW(row), high + 1);
 			Check(adw_spin_row_get_value(ADW_SPIN_ROW(row)) == high,
 			      std::string(label) + " stops at " + std::to_string(high));
+		}
+		// The screen resolution: the upstream launcher's presets (ultrawide included) and Custom.
+		// A preset sets the width and the height; a typed size selects its preset, or Custom.
+		const auto resolution = ResolutionRowsOf(KytyUi::RowTitled(root, "Screen resolution"));
+		if (Check(resolution.preset != nullptr && ADW_IS_COMBO_ROW(resolution.preset) &&
+		              resolution.width != nullptr && resolution.height != nullptr,
+		          "the screen resolution, width, and height rows")) {
+			const std::vector<std::string> presets = {"1280 × 720",  "1920 × 1080", "2560 × 1440",
+			                                          "3840 × 2160", "2560 × 1080", "3440 × 1440",
+			                                          "3840 × 1600", "5120 × 2160", "Custom"};
+			Check(ComboTexts(resolution.preset) == presets,
+			      "the resolution presets: " + Joined(ComboTexts(resolution.preset)));
+			auto* preset = ADW_COMBO_ROW(resolution.preset);
+			adw_combo_row_set_selected(preset, 5);
+			Check(ShownResolution(resolution) == "3440x1440",
+			      "the preset 3440 × 1440 sets the width and the height (" +
+			          ShownResolution(resolution) + ")");
+			SetResolution(resolution, {1600, 900});
+			Check(adw_combo_row_get_selected(preset) == 8 &&
+			          ShownResolution(resolution) == "1600x900",
+			      "a typed size that is no preset selects Custom");
+			SetResolution(resolution, {2560, 1080});
+			Check(adw_combo_row_get_selected(preset) == 4,
+			      "a typed preset size selects its preset (2560 × 1080)");
+			adw_combo_row_set_selected(preset, 8);
+			Check(ShownResolution(resolution) == "2560x1080",
+			      "Custom keeps the width and the height");
 		}
 		CancelAndClose(settings, "the global settings");
 
@@ -645,9 +780,14 @@ KYTY_UI_CASE(settings_dependent_fields) {
 		    settings.global.shader_log_direction        = core::LogDirection::File;
 		    settings.global.printf_direction            = core::LogDirection::Console;
 		    settings.global.command_buffer_dump_enabled = true;
+		    // An upstream Kyty.ini can hold FSR, which the editor does not offer.
+		    settings.global.pssr_upscaler = core::PssrUpscaler::FSR;
 	    })) {
 		return;
 	}
+	const fs::path  models = ui.Root() / "dlss-models";
+	std::error_code ec;
+	fs::create_directories(models, ec);
 	struct Dependent {
 		const char* control;   // the direction or switch row
 		const char* dependent; // the output path row
@@ -682,6 +822,39 @@ KYTY_UI_CASE(settings_dependent_fields) {
 			}
 		}
 	};
+	// PS5 Pro mode, as the upstream launcher lays it out: the upscaler only with Pro mode on, the
+	// DLSS model folder and preset only with DLSS. The stored FSR shows as Linear.
+	const char* const pro_label = "PS5 Pro mode (experimental)";
+	const auto        check_pro = [&](GtkWindow* window, const std::string& editor) {
+		GtkWidget* root     = GTK_WIDGET(window);
+		GtkWidget* pro      = KytyUi::RowTitled(root, pro_label);
+		GtkWidget* upscaler = KytyUi::RowTitled(root, "PSSR upscaler");
+		if (!Check(pro != nullptr && ADW_IS_SWITCH_ROW(pro) && upscaler != nullptr &&
+		               ADW_IS_COMBO_ROW(upscaler),
+		           editor + ": the PS5 Pro mode switch and the PSSR upscaler choice")) {
+			return;
+		}
+		Check(ComboTexts(upscaler) == std::vector<std::string> {"Linear", "DLSS"},
+		      editor + ": the upscaler offers Linear and DLSS (" + Joined(ComboTexts(upscaler)) +
+		          ")");
+		Check(adw_combo_row_get_selected(ADW_COMBO_ROW(upscaler)) == 0,
+		      editor + ": the stored FSR shows as Linear");
+		const auto rows = [&](bool upscaler_on, bool dlss_on, const std::string& what) {
+			Check(sensitive(root, "PSSR upscaler") == upscaler_on &&
+			          sensitive(root, "DLSS model folder") == dlss_on &&
+			          sensitive(root, "DLSS preset") == dlss_on,
+			      editor + ": " + what);
+		};
+		rows(false, false, "with Pro mode off, the upscaler and the DLSS rows are off");
+		adw_switch_row_set_active(ADW_SWITCH_ROW(pro), TRUE);
+		rows(true, false, "with Pro mode on and Linear, only the upscaler is on");
+		adw_combo_row_set_selected(ADW_COMBO_ROW(upscaler), 1);
+		rows(true, true, "with DLSS, the model folder and the preset are on");
+		adw_switch_row_set_active(ADW_SWITCH_ROW(pro), FALSE);
+		rows(false, false, "Pro mode off turns the DLSS rows off again, with DLSS still chosen");
+		adw_switch_row_set_active(ADW_SWITCH_ROW(pro), TRUE);
+		rows(true, true, "and on again");
+	};
 	const std::string before = KytyUi::ReadText(ui.SettingsFile());
 	KytyUi::RunWithLibrary(ui, [&](KytyApplication* application, KytyMainWindow* window) {
 		GtkWindow* settings = OpenGlobalSettings(application);
@@ -692,6 +865,40 @@ KYTY_UI_CASE(settings_dependent_fields) {
 			      "the editor opens with the stored directions: shader log folder on (File), "
 			      "printf output file off (Console), command buffer folder on (dump on)");
 			check_rows(settings, "global");
+			check_pro(settings, "global");
+			// The DLSS model folder's button opens the folder chooser, and the chosen folder goes
+			// into the row.
+			GtkWidget* folder = KytyUi::RowTitled(root, "DLSS model folder");
+			ui.Services().file_chooser.folder_answers.push_back({models});
+			Check(KytyUi::Activate(KytyUi::FindByAccessibleLabel(root, "Select DLSS model folder")),
+			      "a click on the DLSS model folder's chooser button");
+			KytyUi::WaitFor(
+			    [&]() {
+				    return folder != nullptr &&
+				           models.string() == gtk_editable_get_text(GTK_EDITABLE(folder));
+			    },
+			    3000, "the chosen folder in the DLSS model folder row");
+			const auto& calls = ui.Services().file_chooser.calls;
+			Check(!calls.empty() && calls.back() == "SelectFolders Select DLSS model folder",
+			      "the chooser is titled Select DLSS model folder");
+			// The groups with the upstream launcher's newer settings, as the user sees them (Pro
+			// mode on with DLSS and the chosen folder).
+			struct Shown {
+				const char* page;
+				const char* row; // a row of the group to show
+				const char* name;
+			};
+			for (const auto& [page, row, name]:
+			     {Shown {"general", "Screen resolution", "graphics"},
+			      Shown {"general", pro_label, "pro-mode"},
+			      Shown {"general", "Intel CPU compatibility (experimental)", "compatibility"},
+			      Shown {"network", "Emulate PSN (compatibility)", "network"},
+			      Shown {"debug", "Accurate texture synchronization", "performance"}}) {
+				kyty_settings_window_show_page(KYTY_SETTINGS_WINDOW(settings), page);
+				ScrollTo(GroupOf(root, row), std::string("the group of ") + row);
+				Check(KytyUi::Capture(settings, name),
+				      std::string("the ") + name + " group renders");
+			}
 			CancelAndClose(settings, "the global settings");
 		}
 		GtkWindow* game = OpenGameSettings(application, window, kAlphaTitle);
@@ -701,6 +908,7 @@ KYTY_UI_CASE(settings_dependent_fields) {
 			      "the game's editor opens with the global directions (the game has no own "
 			      "settings)");
 			check_rows(game, "per game");
+			check_pro(game, "per game");
 			CancelAndClose(game, "the game settings");
 		}
 	});

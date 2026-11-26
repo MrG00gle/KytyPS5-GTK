@@ -22,7 +22,8 @@
 // library_view_persisted (7.17), library_sort_columns (7.12), library_refresh_keeps_sort_search
 // (7.4), library_search_semantics (7.13), library_scan_responsive (7.7: a 10 ms probe and a key
 // during a rescan of 5,000 games), library_placeholder_icon (7.16), library_metadata_unavailable
-// (7.9, and the emblems at the icon's corner, W4-07), library_local_edit (--local, W4-06).
+// (7.9, and the emblems at the icon's corner, W4-07), library_pro_badge (upstream KytyPS5's PS5
+// Pro badge), library_local_edit (--local, W4-06).
 
 #include "launcher/core/cancelToken.h"
 #include "launcher/core/compatibility.h"
@@ -1186,6 +1187,92 @@ KYTY_UI_CASE(library_metadata_unavailable) {
 		                               "stop", nullptr);
 		KytyUi::WaitFor([window]() { return !kyty::gtk::MainWindowGameRunning(window); }, 8000,
 		                "the game to stop");
+	});
+}
+
+namespace {
+
+// The PS5 Pro badge at the top end of the drawn icon of cell: inside the icon, at most a few
+// pixels from its top and end, and narrower than it.
+bool BadgeAtTopEnd(GtkWidget* cell, const char* text, const std::string& what) {
+	auto*           game_cell = KYTY_GAME_CELL(cell);
+	GtkWidget*      badge     = kyty_game_cell_get_pro_badge(game_cell);
+	graphene_rect_t icon {};
+	if (!Check(badge != nullptr && gtk_widget_get_mapped(badge) != FALSE &&
+	               kyty_game_cell_get_icon_bounds(game_cell, &icon),
+	           what + ": the badge is shown over the drawn icon")) {
+		return false;
+	}
+	Check(KytyUi::WidgetText(badge) == text &&
+	          KytyUi::AccessibleName(badge) == "Supports PS5 Pro mode" &&
+	          g_strcmp0(gtk_widget_get_tooltip_text(badge), "Supports PS5 Pro mode") == 0,
+	      what + ": the badge says " + text + " and has its accessible name");
+	const graphene_rect_t bounds = BoundsIn(badge, cell);
+	const double          right  = bounds.origin.x + bounds.size.width;
+	const double          end    = icon.origin.x + icon.size.width;
+	return Check(right <= end + 0.5 && right >= end - 4.5 &&
+	                 bounds.origin.y >= icon.origin.y - 0.5 &&
+	                 bounds.origin.y <= icon.origin.y + 4.5 && bounds.size.width < icon.size.width,
+	             what + ": the badge sits at the icon's top end (" +
+	                 std::to_string(bounds.origin.x) + ", " + std::to_string(bounds.origin.y) +
+	                 ", " + std::to_string(bounds.size.width) + " wide; the icon ends at " +
+	                 std::to_string(end) + ", its top is " + std::to_string(icon.origin.y) + ")");
+}
+
+} // namespace
+
+// Upstream KytyPS5's PS5 Pro badge (attribute3 bit 22 of param.json): "PRO" over the list's icon
+// and "PS5 PRO" over the grid's, at the icon's top end, with an accessible name and a tooltip
+// line; a game without the bit has none.
+KYTY_UI_CASE(library_pro_badge) {
+	KytyUi::UiContext ui;
+	const auto        games = KytyUi::PrepareLibrary(ui);
+	const fs::path    pro   = games / "Pro Game";
+	if (games.empty() ||
+	    !KytyUi::WriteGameWithParam(
+	        pro, R"({"localizedParameters":{"defaultLanguage":"en-US","en-US":{"titleName":)"
+	             R"("Pro Game"}},"titleId":"PPSA01009","appVersion":"01.000",)"
+	             R"("attribute3":4194305})") ||
+	    !KytyUi::WritePng(pro / "sce_sys" / "icon0.png", 512, 512, 5)) {
+		return;
+	}
+	KytyUi::RunWithLibrary(ui, [](KytyApplication* application, KytyMainWindow* window) {
+		auto&     library = KytyUi::ContextOf(application).library;
+		KytyGame* game    = KytyUi::GameByTitle(library, "Pro Game");
+		if (!Check(game != nullptr && kyty_game_get_entry(game).pro_supported,
+		           "Pro Game is listed with PS5 Pro mode")) {
+			return;
+		}
+		Check(kyty::gtk::GameTooltip(game).find("\nSupports PS5 Pro mode") != std::string::npos,
+		      "the tooltip says so");
+		ShowSelected(window, library, "Pro Game");
+		const auto cells = KytyUi::RowCells(KytyUi::ListViewOf(window), "Pro Game");
+		if (Check(cells.size() == 8, "Pro Game has a row")) {
+			BadgeAtTopEnd(cells[0], "PRO", "the list");
+		}
+		const auto alpha = KytyUi::RowCells(KytyUi::ListViewOf(window), kAlphaTitle);
+		if (Check(!alpha.empty(), "Alpha Game has a row")) {
+			GtkWidget* none = kyty_game_cell_get_pro_badge(KYTY_GAME_CELL(alpha[0]));
+			Check(none == nullptr || gtk_widget_get_visible(none) == FALSE,
+			      "Alpha Game has no badge in the list");
+		}
+		Check(KytyUi::Capture(GTK_WINDOW(window), "list-pro-badge"), "the list renders");
+		if (KytyUi::ShowGridView(application, window, true)) {
+			GtkGridView* grid = KytyUi::GridViewOf(window);
+			if (GtkWidget* tile = KytyUi::GridTile(grid, "Pro Game");
+			    Check(tile != nullptr, "Pro Game has a tile")) {
+				BadgeAtTopEnd(tile, "PS5 PRO", "the grid");
+			}
+			if (GtkWidget* tile = KytyUi::GridTile(grid, kAlphaTitle);
+			    Check(tile != nullptr, "Alpha Game has a tile")) {
+				GtkWidget* none = kyty_game_cell_get_pro_badge(KYTY_GAME_CELL(tile));
+				Check(none == nullptr || gtk_widget_get_visible(none) == FALSE,
+				      "Alpha Game has no badge in the grid");
+			}
+			ShowSelected(window, library, "Pro Game");
+			Check(KytyUi::Capture(GTK_WINDOW(window), "grid-pro-badge"), "the grid renders");
+			KytyUi::ShowGridView(application, window, false);
+		}
 	});
 }
 

@@ -124,7 +124,16 @@ inline std::string ParamJsonText(int index) {
 			       std::to_string(index) + "\"}},\"titleId\":\"PPSA0" +
 			       std::to_string(1000 + index) + "\",\"appVersion\":\"01.0" +
 			       std::to_string(index % 10) +
-			       "\",\"requiredSystemSoftwareVersion\":\"0x0150000000000000\"}";
+			       "\",\"requiredSystemSoftwareVersion\":\"0x0150000000000000\"" +
+			       // attribute3 with or without the PS5 Pro bit (22), or none.
+			       (index % 3 == 0   ? ",\"attribute3\":4194305"
+			        : index % 3 == 1 ? ",\"attribute3\":1"
+			                         : "") +
+			       // A launchActivity game intent, or none.
+			       (index % 2 == 0 ? ",\"gameIntent\":{\"permittedIntents\":[{\"intentType\":"
+			                         "\"launchActivity\"}]}"
+			                       : "") +
+			       "}";
 	}
 }
 

@@ -18,15 +18,9 @@ constexpr auto MakeRegisterNames() {
 	}
 
 	names[R_ZERO]           = "R_ZERO";
-	names[R_DRAW_RESET]     = "R_DRAW_RESET";
-	names[R_WAIT_FLIP_DONE] = "R_WAIT_FLIP_DONE";
 	names[R_DISPATCH_RESET] = "R_DISPATCH_RESET";
 	names[R_PUSH_MARKER]    = "R_PUSH_MARKER";
 	names[R_POP_MARKER]     = "R_POP_MARKER";
-	names[R_WRITE_DATA]     = "R_WRITE_DATA";
-	names[R_FLIP]           = "R_FLIP";
-	names[R_RELEASE_MEM]    = "R_RELEASE_MEM";
-	names[R_DMA_DATA]       = "R_DMA_DATA";
 	names[R_CONTEXT_STATE]  = "R_CONTEXT_STATE";
 	return names;
 }
@@ -54,7 +48,6 @@ constexpr auto MakeOpcodeNames() {
 	names[IT_DRAW_INDIRECT_MULTI]       = "IT_DRAW_INDIRECT_MULTI";
 	names[IT_DRAW_INDEX_AUTO]           = "IT_DRAW_INDEX_AUTO";
 	names[IT_NUM_INSTANCES]             = "IT_NUM_INSTANCES";
-	names[IT_INDIRECT_BUFFER_CNST]      = "IT_INDIRECT_BUFFER_CNST";
 	names[IT_DRAW_INDEX_OFFSET_2]       = "IT_DRAW_INDEX_OFFSET_2";
 	names[IT_WRITE_DATA]                = "IT_WRITE_DATA";
 	names[IT_MEM_SEMAPHORE]             = "IT_MEM_SEMAPHORE";
@@ -66,8 +59,6 @@ constexpr auto MakeOpcodeNames() {
 	names[IT_PFP_SYNC_ME]               = "IT_PFP_SYNC_ME";
 	names[IT_SURFACE_SYNC]              = "IT_SURFACE_SYNC";
 	names[IT_EVENT_WRITE]               = "IT_EVENT_WRITE";
-	names[IT_EVENT_WRITE_EOP]           = "IT_EVENT_WRITE_EOP";
-	names[IT_EVENT_WRITE_EOS]           = "IT_EVENT_WRITE_EOS";
 	names[IT_RELEASE_MEM]               = "IT_RELEASE_MEM";
 	names[IT_DMA_DATA]                  = "IT_DMA_DATA";
 	names[IT_ACQUIRE_MEM]               = "IT_ACQUIRE_MEM";
@@ -80,13 +71,7 @@ constexpr auto MakeOpcodeNames() {
 	names[IT_SET_QUEUE_REG]             = "IT_SET_QUEUE_REG";
 	names[IT_SET_UCONFIG_REG]           = "IT_SET_UCONFIG_REG";
 	names[IT_SET_UCONFIG_REG_INDEX]     = "IT_SET_UCONFIG_REG_INDEX";
-	names[IT_WRITE_CONST_RAM]           = "IT_WRITE_CONST_RAM";
-	names[IT_DUMP_CONST_RAM]            = "IT_DUMP_CONST_RAM";
-	names[IT_INCREMENT_CE_COUNTER]      = "IT_INCREMENT_CE_COUNTER";
-	names[IT_INCREMENT_DE_COUNTER]      = "IT_INCREMENT_DE_COUNTER";
-	names[IT_WAIT_ON_CE_COUNTER]        = "IT_WAIT_ON_CE_COUNTER";
-	names[IT_WAIT_ON_DE_COUNTER_DIFF]   = "IT_WAIT_ON_DE_COUNTER_DIFF";
-	names[IT_DISPATCH_DRAW_PREAMBLE]    = "IT_DISPATCH_DRAW_PREAMBLE";
+	names[IT_DRAW_INDEX_MULTI_INST]     = "IT_DRAW_INDEX_MULTI_INST";
 	names[IT_DISPATCH_DRAW]             = "IT_DISPATCH_DRAW";
 	names[IT_GET_LOD_STATS]             = "IT_GET_LOD_STATS";
 	names[IT_WAIT_REG_MEM_64]           = "IT_WAIT_REG_MEM_64";
@@ -101,8 +86,6 @@ constexpr auto g_opcode_names   = MakeOpcodeNames();
 
 void DumpPm4PacketStream(Common::File* file, const uint32_t* cmd_buffer, uint32_t start_dw,
                          uint32_t num_dw) {
-	// db_dump();
-
 	file->Printf("----- Buffer --- dwords: 0x%05" PRIx32 ", offset : %u, addr: %016" PRIx64
 	             " ----- \n",
 	             num_dw, start_dw, reinterpret_cast<uint64_t>(cmd_buffer));

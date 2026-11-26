@@ -16,6 +16,12 @@ Only Clang with the lld linker is supported. Configure with `-DCMAKE_C_COMPILER=
 when lld is missing. GCC builds are not tested, and the coverage build stops at configure unless the
 compiler is Clang. The project uses ccache automatically when it is installed.
 
+Builds target x86-64-v3: every program, test, and dependency that the build compiles gets
+`-march=x86-64-v3 -ffp-contract=off`, as upstream KytyPS5 builds them. The programs therefore need
+a processor with AVX2, BMI2, FMA, F16C, LZCNT, and MOVBE, both on the machine that runs the tests
+and on the machines that run the programs. The `build_flags` test checks that both flags are in
+effect.
+
 The GTK launcher needs at least GTK 4.14, libadwaita 1.5, libsoup 3.4, and GLib 2.80, the versions
 of Ubuntu 24.04. Older distributions can still build the emulator alone (see
 [Emulator only](#emulator-only)).

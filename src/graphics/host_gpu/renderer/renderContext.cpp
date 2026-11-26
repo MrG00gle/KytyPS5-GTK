@@ -10,13 +10,17 @@
 
 namespace Libs::Graphics {
 
-RenderContext::RenderContext(GraphicContext& graphics)
+RenderContext::RenderContext(GraphicContext& graphics, const std::filesystem::path& shader_store)
     : m_graphics(graphics), m_render_executor(*this), m_command_scheduler(*this, graphics),
       m_descriptor_heap(graphics, m_command_scheduler.GetMasterSemaphore()),
-      m_pipeline_cache(graphics), m_sampler_cache(graphics),
+      m_pipeline_cache(graphics, &m_image_heap, shader_store), m_sampler_cache(graphics),
       m_buffer_cache(graphics, m_command_scheduler, m_page_manager, m_texture_cache),
-      m_texture_cache(graphics, m_command_scheduler, m_page_manager, m_buffer_cache) {
+      m_texture_cache(graphics, m_command_scheduler, m_page_manager, m_buffer_cache),
+      m_image_heap(*this, m_page_manager), m_occlusion_queries(graphics, m_command_scheduler) {
 	EXIT_NOT_IMPLEMENTED(!Common::Thread::IsMainThread());
+	if (graphics.ray_query_enabled) {
+		m_ray_tracing = std::make_unique<RayTracing>(*this);
+	}
 }
 
 RenderContext::~RenderContext() {
@@ -61,21 +65,45 @@ bool RenderContext::HandleFault(PageFaultAccess access, uint64_t fault_vaddr) no
 	if (!IsMapped(fault_vaddr, fault_size)) {
 		return false;
 	}
+	// The access retries once the image write-backs over its page land.
+	if (WaitWriteBacks(fault_vaddr, fault_size)) {
+		return true;
+	}
 	if (access == PageFaultAccess::Write) {
 		m_buffer_cache.InvalidateMemory(fault_vaddr, fault_size);
 		m_texture_cache.InvalidateMemory(fault_vaddr, fault_size);
+		m_image_heap.InvalidateMemory(fault_vaddr, fault_size);
 	} else {
 		m_buffer_cache.ReadMemory(fault_vaddr, fault_size);
 	}
 	return true;
 }
 
+bool RenderContext::WaitWriteBacks(uint64_t vaddr, uint64_t size) {
+	const auto tick = m_texture_cache.WriteBackTick(vaddr, size);
+	if (tick == 0) {
+		return false;
+	}
+	// The GPU thread can fault inside a draw, so it submits without running deferred operations.
+	if (GuestGpu::IsGpuThread()) {
+		m_command_scheduler.Wait(tick);
+	} else if (tick == m_command_scheduler.CurrentTick()) {
+		GetGpu().SendCommandSync([this, tick] { m_command_scheduler.Wait(tick); });
+	}
+	m_command_scheduler.WaitPriorityOperations(tick);
+	return true;
+}
+
 bool RenderContext::InvalidateMemory(uint64_t vaddr, uint64_t size) {
+	// Host I/O into the range, even one running past its mapping, would fail on its inaccessible
+	// pages, and a later write-back would overwrite it.
+	(void)WaitWriteBacks(vaddr, size);
 	if (!IsMapped(vaddr, size)) {
 		return false;
 	}
 	m_buffer_cache.InvalidateMemory(vaddr, size);
 	m_texture_cache.InvalidateMemory(vaddr, size);
+	m_image_heap.InvalidateMemory(vaddr, size);
 	return true;
 }
 
@@ -112,6 +140,7 @@ void RenderContext::UnmapMemory(uint64_t vaddr, uint64_t size) {
 		}
 		m_buffer_cache.InvalidateMemory(vaddr, size);
 		m_texture_cache.UnmapMemory(vaddr, size);
+		m_image_heap.UnmapMemory(vaddr, size);
 		std::lock_guard lock(m_mapped_ranges_mutex);
 		m_mapped_ranges.Subtract(vaddr, size);
 	};
@@ -125,10 +154,10 @@ void RenderContext::UnmapMemory(uint64_t vaddr, uint64_t size) {
 }
 
 void RenderContext::PrepareBda() {
-	if (!m_bda_logged) {
+	[[maybe_unused]] static const bool logged = [] {
 		Log::WriteToConsoleAndLog("GPU: using buffer device address (BDA) shader memory access.\n");
-		m_bda_logged = true;
-	}
+		return true;
+	}();
 	std::shared_lock lock(m_mapped_ranges_mutex);
 	m_buffer_cache.SynchronizeBda(m_mapped_ranges);
 	m_fault_process_pending = true;
@@ -139,9 +168,13 @@ void RenderContext::RunGarbageCollector() {
 		m_fault_process_pending = false;
 		m_buffer_cache.ProcessFaultBuffer();
 	}
+	m_image_heap.RunGarbageCollector();
 	m_texture_cache.ProcessDownloadImages();
 	m_texture_cache.RunGarbageCollector();
 	m_buffer_cache.RunGarbageCollector();
+	if (m_ray_tracing) {
+		m_ray_tracing->RunGarbageCollector();
+	}
 }
 
 void RenderContext::AddInterruptEq(LibKernel::EventQueue::KernelEqueue eq, int event_id) {

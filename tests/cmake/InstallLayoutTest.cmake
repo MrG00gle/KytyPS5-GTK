@@ -2,13 +2,13 @@
 # build tree into WORK_DIR, then the first-party files of the configured KYTY_INSTALL_LAYOUT,
 # exactly:
 #   portable  kyty_emulator, assets/sounds/trophy-unlock.wav, assets/cursors/<every file of
-#             assets/cursors>, and with the launcher kyty_launcher and kyty_updater; with or without
-#             the launcher, LICENSE and LICENSES/<path> for every other path of
-#             BUILD_DIR/licenses-manifest.txt, from the file that BUILD_DIR/licenses-sources.txt
-#             names (no manifest);
+#             assets/cursors>, assets/fonts/<the four Noto Sans TTF files of FONTS_DIR>, and with
+#             the launcher kyty_launcher and kyty_updater; with or without the launcher, LICENSE
+#             and LICENSES/<path> for every other path of BUILD_DIR/licenses-manifest.txt, from the
+#             file that BUILD_DIR/licenses-sources.txt names (no manifest);
 #   fhs       bin/kyty_emulator, share/kyty/assets/sounds/trophy-unlock.wav,
-#             share/kyty/assets/cursors/<...>, and with the launcher bin/kyty_launcher,
-#             bin/kyty_updater, share/applications/<App_ID>.desktop,
+#             share/kyty/assets/cursors/<...>, share/kyty/assets/fonts/<...>, and with the launcher
+#             bin/kyty_launcher, bin/kyty_updater, share/applications/<App_ID>.desktop,
 #             share/metainfo/<App_ID>.metainfo.xml, share/icons/hicolor/scalable/apps/<App_ID>.svg,
 #             and share/icons/hicolor/256x256/apps/<App_ID>.png; with or without the launcher,
 #             share/licenses/<App_ID>/<path> for every path of BUILD_DIR/licenses-manifest.txt, from
@@ -16,16 +16,19 @@
 #             share/kyty/licenses-manifest.txt (cmake/KytyLicenses.cmake).
 # A Flatpak build (FLATPAK=ON, fhs only) installs no kyty_updater (Requirement 13.4). Each data file
 # equals its source byte for byte, and each executable is executable. A missing or an extra
-# first-party file fails the test. The files that the dependency and license rules install under
-# the top-level include/, lib/, lib64/, and licenses/ directories are listed, not checked.
+# first-party file fails the test, and so does any file under the top-level include/, lib/, or lib64/
+# directories: the package ships no headers, libraries, or CMake and pkg-config files of the
+# dependencies. The files that the license rules install under the top-level licenses/ directory are
+# listed, not checked.
 # Run as
 #   cmake -DBUILD_DIR=<build tree> -DSOURCE_DIR=<source tree> [-DCONFIG=<configuration>]
 #         -DLAYOUT=<portable|fhs> -DFLATPAK=<ON|OFF> -DLAUNCHER=<ON|OFF> -DAPP_ID=<App_ID>
-#         -DWORK_DIR=<scratch directory> -P InstallLayoutTest.cmake
+#         -DFONTS_DIR=<KYTY_NOTO_SANS_DIR of the build> -DWORK_DIR=<scratch directory>
+#         -P InstallLayoutTest.cmake
 # WORK_DIR is the install prefix. It is recreated at the start and removed when every check passes.
 cmake_minimum_required(VERSION 3.22)
 
-foreach(kyty_variable IN ITEMS BUILD_DIR SOURCE_DIR LAYOUT FLATPAK LAUNCHER APP_ID WORK_DIR)
+foreach(kyty_variable IN ITEMS BUILD_DIR SOURCE_DIR LAYOUT FLATPAK LAUNCHER APP_ID FONTS_DIR WORK_DIR)
 	if(NOT DEFINED ${kyty_variable} OR "${${kyty_variable}}" STREQUAL "")
 		message(FATAL_ERROR "InstallLayoutTest: ${kyty_variable} is not set")
 	endif()
@@ -58,6 +61,9 @@ if(NOT kyty_cursors)
 endif()
 foreach(kyty_cursor IN LISTS kyty_cursors)
 	list(APPEND kyty_expected "${kyty_assets}/cursors/${kyty_cursor}|${SOURCE_DIR}/assets/cursors/${kyty_cursor}")
+endforeach()
+foreach(kyty_font IN ITEMS NotoSans-Regular.ttf NotoSans-Bold.ttf NotoSans-Italic.ttf NotoSans-BoldItalic.ttf)
+	list(APPEND kyty_expected "${kyty_assets}/fonts/${kyty_font}|${FONTS_DIR}/${kyty_font}")
 endforeach()
 if(LAUNCHER)
 	list(APPEND kyty_expected "${kyty_bin}kyty_launcher|")
@@ -119,15 +125,17 @@ file(GLOB_RECURSE kyty_installed LIST_DIRECTORIES false RELATIVE "${WORK_DIR}" "
 list(SORT kyty_installed)
 set(kyty_third_party "")
 set(kyty_first_party "")
+set(kyty_failures "")
 foreach(kyty_path IN LISTS kyty_installed)
-	if(kyty_path MATCHES "^(include|lib|lib64|licenses)/")
+	if(kyty_path MATCHES "^licenses/")
 		list(APPEND kyty_third_party "${kyty_path}")
+	elseif(kyty_path MATCHES "^(include|lib|lib64)/")
+		string(APPEND kyty_failures "\n  dependency file: ${kyty_path}")
 	else()
 		list(APPEND kyty_first_party "${kyty_path}")
 	endif()
 endforeach()
 
-set(kyty_failures "")
 set(kyty_expected_paths "")
 foreach(kyty_entry IN LISTS kyty_expected)
 	string(FIND "${kyty_entry}" "|" kyty_separator)
@@ -164,8 +172,8 @@ list(JOIN kyty_first_party "\n  " kyty_first_party_text)
 list(JOIN kyty_third_party "\n  " kyty_third_party_text)
 message(STATUS "InstallLayoutTest: ${kyty_first_party_count} first-party file(s):\n  "
 	"${kyty_first_party_text}")
-message(STATUS "InstallLayoutTest: ${kyty_third_party_count} file(s) of the dependency and license "
-	"rules (listed, not checked):\n  ${kyty_third_party_text}")
+message(STATUS "InstallLayoutTest: ${kyty_third_party_count} file(s) of the license rules under "
+	"licenses/ (listed, not checked):\n  ${kyty_third_party_text}")
 if(kyty_failures)
 	message(FATAL_ERROR "InstallLayoutTest: FAILED (the tree stays in ${WORK_DIR}):"
 		"${kyty_failures}")

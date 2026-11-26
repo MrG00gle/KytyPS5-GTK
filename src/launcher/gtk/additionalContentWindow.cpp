@@ -10,10 +10,14 @@
 #include "launcher/gtk/i18n.h"
 #include "launcher/gtk/imageDecoding.h"
 #include "launcher/gtk/services/desktopLauncher.h"
+#include "launcher/gtk/services/fileChooser.h"
+#include "launcher/gtk/settingsWrite.h"
 
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -25,6 +29,7 @@ namespace kyty::gtk {
 struct AddOnLoad {
 	std::string                         addons_dir;
 	core::GameEntry                     entry;
+	std::vector<std::string>            user_addons; // the game's, as stored
 	std::uint64_t                       generation = 0;
 	core::AdditionalContentListing      listing;
 	std::vector<GObjectPtr<GdkTexture>> icons;     // per item; empty when it has no usable icon
@@ -34,6 +39,7 @@ struct AddOnLoad {
 struct AdditionalContentWindowState {
 	LauncherContext* context = nullptr;
 	core::GameEntry  entry;
+	std::string      title_id;       // NormalizeTitleId(entry.title_id): the user add-ons' key
 	std::string      folder;         // the add-ons folder of the latest listing
 	std::uint64_t    generation = 0; // of the latest listing
 	bool             loaded     = false;
@@ -58,6 +64,11 @@ struct _KytyAdditionalContentWindow {
 	GtkLabel*       status_label;
 	GtkWidget*      refresh_button;
 	GtkWidget*      open_button;
+	GtkWidget*      add_group;
+	GtkWidget*      add_button;
+	GtkWidget*      label_row;
+	GtkWidget*      folder_row;
+	GtkWidget*      choose_button;
 
 	kyty::gtk::AdditionalContentWindowState* state;
 };
@@ -90,13 +101,24 @@ bool Alive(KytyAdditionalContentWindow* self) {
 	return self->state != nullptr && !self->state->disposed;
 }
 
+// The game's user add-ons in the settings as they are now.
+std::vector<std::string> UserAddOns(const kyty::gtk::AdditionalContentWindowState& state) {
+	if (state.title_id.empty()) {
+		return {};
+	}
+	const auto& all   = state.context->settings.loaded.settings.user_addons;
+	const auto  found = all.find(state.title_id);
+	return found != all.end() ? found->second : std::vector<std::string> {};
+}
+
 // The status line (Requirement 11.3, HC-30): the launcher's translated text for each status (D46:
 // not core::AdditionalContentMessage); the folder is shown as it is set.
 std::string StatusText(const core::AdditionalContentListing& listing, const std::string& folder) {
 	switch (listing.status) {
 		case core::AdditionalContentStatus::Listed: {
+			// The packages of the add-ons folder and the user add-ons.
 			const auto count = static_cast<unsigned long>(listing.items.size());
-			return Format(kyty::gtk::NGettext("%d installed add-on", "%d installed add-ons", count),
+			return Format(kyty::gtk::NGettext("%d add-on", "%d add-ons", count),
 			              static_cast<int>(count));
 		}
 		case core::AdditionalContentStatus::FolderNotSet:
@@ -114,8 +136,13 @@ std::string StatusText(const core::AdditionalContentListing& listing, const std:
 
 // The GTask thread's work: the listing and the decoded icons.
 void Read(AddOnLoad& load) {
-	load.listing = core::LoadAdditionalContent(load.addons_dir, load.entry.title_id);
+	load.listing =
+	    core::LoadAdditionalContent(load.addons_dir, load.entry.title_id, load.user_addons);
 	for (const auto& item: load.listing.items) {
+		if (!item.user_entry.empty()) {
+			load.icons.emplace_back(); // a user add-on shows the game's icon (upstream's)
+			continue;
+		}
 		const auto icon = core::ReadEntryFile(item.directory, core::GameEntry::Kind::Directory,
 		                                      "sce_sys/icon0.png", core::kMaxImageBytes);
 		load.icons.push_back(GObjectPtr<GdkTexture>::Adopt(
@@ -126,14 +153,48 @@ void Read(AddOnLoad& load) {
 	                         load.entry.path, "icon0.png"));
 }
 
-GtkWidget* NewItemRow(const core::AdditionalContentItem& item, GdkTexture* icon) {
+void OnRemove(GtkButton* button, gpointer data);
+
+// The data key of a Remove button: the user add-on's entry.
+constexpr const char* kUserEntryKey = "kyty-user-addon";
+
+// The second line of a user add-on (upstream's texts).
+std::string UserAddOnState(const core::AdditionalContentItem& item) {
+	if (item.directory.empty()) {
+		// TRANSLATORS: a user add-on without a data folder (a license only).
+		return C_("add-on", "License only");
+	}
+	// TRANSLATORS: %s is the data folder of a user add-on.
+	return Format(item.missing_directory ? _("Data folder not found: %s") : _("Data: %s"),
+	              item.directory.c_str());
+}
+
+GtkWidget* NewItemRow(KytyAdditionalContentWindow* self, const core::AdditionalContentItem& item,
+                      GdkTexture* icon) {
 	GtkWidget* row = adw_action_row_new();
 	// Add-on titles are game data, never markup.
 	adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
 	adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), item.display_title.c_str());
-	// TRANSLATORS: the state of a listed add-on (the Qt launcher's).
-	adw_action_row_set_subtitle(ADW_ACTION_ROW(row), C_("add-on", "Installed"));
-	gtk_widget_set_tooltip_text(row, item.content_id.c_str());
+	if (item.user_entry.empty()) {
+		// TRANSLATORS: the state of a listed add-on (the Qt launcher's).
+		adw_action_row_set_subtitle(ADW_ACTION_ROW(row), C_("add-on", "Installed"));
+		gtk_widget_set_tooltip_text(row, item.content_id.c_str());
+	} else {
+		adw_action_row_set_subtitle(ADW_ACTION_ROW(row), UserAddOnState(item).c_str());
+		GtkWidget* remove = gtk_button_new_from_icon_name("user-trash-symbolic");
+		gtk_widget_add_css_class(remove, "flat");
+		gtk_widget_set_valign(remove, GTK_ALIGN_CENTER);
+		gtk_widget_set_tooltip_text(remove, _("Remove this add-on from the game"));
+		// TRANSLATORS: the Remove button of a user add-on; %s is its entitlement label.
+		const std::string name = Format(_("Remove %s"), item.display_title.c_str());
+		gtk_accessible_update_property(GTK_ACCESSIBLE(remove), GTK_ACCESSIBLE_PROPERTY_LABEL,
+		                               name.c_str(), -1);
+		g_object_set_data_full(G_OBJECT(remove), kUserEntryKey, g_strdup(item.user_entry.c_str()),
+		                       g_free);
+		// The button goes with its row, before the window.
+		g_signal_connect(remove, "clicked", G_CALLBACK(&OnRemove), self);
+		adw_action_row_add_suffix(ADW_ACTION_ROW(row), remove);
+	}
 	GtkWidget* image = gtk_image_new();
 	gtk_image_set_pixel_size(GTK_IMAGE(image), kIconSize);
 	if (icon != nullptr) {
@@ -165,7 +226,7 @@ void Apply(KytyAdditionalContentWindow* self, AddOnLoad& load) {
 		// HC-30: an add-on without a usable icon shows the game's.
 		GdkTexture* icon =
 		    i < load.icons.size() && load.icons[i] ? load.icons[i].get() : load.game_icon.get();
-		gtk_list_box_append(self->items_list, NewItemRow(items[i], icon));
+		gtk_list_box_append(self->items_list, NewItemRow(self, items[i], icon));
 	}
 	gtk_stack_set_visible_child_name(self->content_stack, items.empty() ? "empty" : "items");
 	gtk_label_set_text(self->status_label, StatusText(load.listing, load.addons_dir).c_str());
@@ -194,10 +255,11 @@ void List(KytyAdditionalContentWindow* self) {
 	gtk_widget_set_sensitive(self->open_button, FALSE);
 	gtk_stack_set_visible_child_name(self->content_stack, "loading");
 	gtk_spinner_start(self->spinner);
-	auto load        = std::make_shared<AddOnLoad>();
-	load->addons_dir = state.context->settings.loaded.settings.addons_dir;
-	load->entry      = state.entry;
-	load->generation = state.generation;
+	auto load         = std::make_shared<AddOnLoad>();
+	load->addons_dir  = state.context->settings.loaded.settings.addons_dir;
+	load->entry       = state.entry;
+	load->user_addons = UserAddOns(state);
+	load->generation  = state.generation;
 	// An unowned GTask, a recorded exception (p6-u9-6): the alive flag drops a late result.
 	kyty::gtk::RunInBackground([load]() { Read(*load); },
 	                           [self, alive = state.alive, load]() {
@@ -228,6 +290,107 @@ void OnOpenFolder(GtkButton* /*button*/, gpointer data) {
 			              error.c_str());
 			    kyty::gtk::ShowError(GTK_WINDOW(self), _("The add-ons folder could not be opened"),
 			                         error, self->state->cancellable.get());
+		    }
+	    },
+	    state.cancellable.get());
+}
+
+// ---- User add-ons (upstream KytyPS5's launcher, commit 66e21a62)
+
+// Saves entries as the game's user add-ons; saved runs after the Settings_Store was written.
+void SaveUserAddOns(KytyAdditionalContentWindow* self, std::vector<std::string> entries,
+                    std::function<void()> saved) {
+	auto&                  state = *self->state;
+	core::LauncherSettings next  = state.context->settings.loaded.settings;
+	if (entries.empty()) {
+		next.user_addons.erase(state.title_id);
+	} else {
+		next.user_addons[state.title_id] = std::move(entries);
+	}
+	kyty::gtk::SaveSettingsInteractively(GTK_WINDOW(self), *state.context, std::move(next),
+	                                     state.cancellable.get(),
+	                                     [alive = state.alive, saved = std::move(saved)]() {
+		                                     if (*alive) {
+			                                     saved();
+		                                     }
+	                                     });
+}
+
+void MarkRow(GtkWidget* row, bool error) {
+	if (error) {
+		gtk_widget_add_css_class(row, "error");
+	} else {
+		gtk_widget_remove_css_class(row, "error");
+	}
+}
+
+void OnAdd(KytyAdditionalContentWindow* self) {
+	if (!Alive(self) || self->state->title_id.empty()) {
+		return;
+	}
+	auto entry = core::MakeUserAddOn(gtk_editable_get_text(GTK_EDITABLE(self->label_row)),
+	                                 gtk_editable_get_text(GTK_EDITABLE(self->folder_row)));
+	MarkRow(self->label_row, !entry && entry.error() == core::UserAddOnError::InvalidLabel);
+	MarkRow(self->folder_row, !entry && entry.error() == core::UserAddOnError::MissingFolder);
+	if (!entry) {
+		// Upstream's text.
+		gtk_label_set_text(self->status_label,
+		                   _("Enter a 16-character entitlement label (A-Z, 0-9) and an existing "
+		                     "data folder, or no folder for a license only."));
+		return;
+	}
+	auto entries = UserAddOns(*self->state);
+	g_debug("additional content of %s: add %s", self->state->entry.path.c_str(), entry->c_str());
+	core::AddUserAddOn(entries, std::move(*entry));
+	SaveUserAddOns(self, std::move(entries), [self]() {
+		gtk_editable_set_text(GTK_EDITABLE(self->label_row), "");
+		gtk_editable_set_text(GTK_EDITABLE(self->folder_row), "");
+		List(self);
+	});
+}
+
+void OnAddClicked(GtkButton* /*button*/, gpointer data) {
+	OnAdd(KYTY_ADDITIONAL_CONTENT_WINDOW(data));
+}
+
+void OnRowActivated(AdwEntryRow* /*row*/, gpointer data) {
+	OnAdd(KYTY_ADDITIONAL_CONTENT_WINDOW(data));
+}
+
+void OnRemove(GtkButton* button, gpointer data) {
+	auto*       self = KYTY_ADDITIONAL_CONTENT_WINDOW(data);
+	const auto* entry =
+	    static_cast<const char*>(g_object_get_data(G_OBJECT(button), kUserEntryKey));
+	if (!Alive(self) || entry == nullptr) {
+		return;
+	}
+	auto entries = UserAddOns(*self->state);
+	if (!core::RemoveUserAddOn(entries, entry)) {
+		return;
+	}
+	g_debug("additional content of %s: remove %s", self->state->entry.path.c_str(), entry);
+	SaveUserAddOns(self, std::move(entries), [self]() { List(self); });
+}
+
+void OnChooseFolder(GtkButton* /*button*/, gpointer data) {
+	auto* self = KYTY_ADDITIONAL_CONTENT_WINDOW(data);
+	if (!Alive(self)) {
+		return;
+	}
+	auto& state = *self->state;
+	state.context->services.file_chooser.SelectFolders(
+	    GTK_WINDOW(self), _("Select add-on data folder"),
+	    [self](std::vector<std::filesystem::path> folders, const std::string& error) {
+		    if (!Alive(self)) {
+			    return;
+		    }
+		    if (!error.empty()) {
+			    kyty::gtk::ShowError(GTK_WINDOW(self), _("The folder could not be chosen"), error,
+			                         self->state->cancellable.get());
+			    return;
+		    }
+		    if (!folders.empty()) {
+			    gtk_editable_set_text(GTK_EDITABLE(self->folder_row), folders.front().c_str());
 		    }
 	    },
 	    state.cancellable.get());
@@ -272,6 +435,11 @@ static void kyty_additional_content_window_class_init(KytyAdditionalContentWindo
 	gtk_widget_class_bind_template_child(widget_class, KytyAdditionalContentWindow, status_label);
 	gtk_widget_class_bind_template_child(widget_class, KytyAdditionalContentWindow, refresh_button);
 	gtk_widget_class_bind_template_child(widget_class, KytyAdditionalContentWindow, open_button);
+	gtk_widget_class_bind_template_child(widget_class, KytyAdditionalContentWindow, add_group);
+	gtk_widget_class_bind_template_child(widget_class, KytyAdditionalContentWindow, add_button);
+	gtk_widget_class_bind_template_child(widget_class, KytyAdditionalContentWindow, label_row);
+	gtk_widget_class_bind_template_child(widget_class, KytyAdditionalContentWindow, folder_row);
+	gtk_widget_class_bind_template_child(widget_class, KytyAdditionalContentWindow, choose_button);
 	gtk_widget_class_add_binding_action(widget_class, GDK_KEY_Escape, GdkModifierType(0),
 	                                    "window.close", nullptr);
 }
@@ -303,6 +471,17 @@ kyty_additional_content_window_new(kyty::gtk::LauncherContext& context, GtkWindo
 	    SignalScope::Connect(self->refresh_button, "clicked", G_CALLBACK(&OnRefresh), self));
 	state.signals.push_back(
 	    SignalScope::Connect(self->open_button, "clicked", G_CALLBACK(&OnOpenFolder), self));
+	state.signals.push_back(
+	    SignalScope::Connect(self->add_button, "clicked", G_CALLBACK(&OnAddClicked), self));
+	state.signals.push_back(
+	    SignalScope::Connect(self->choose_button, "clicked", G_CALLBACK(&OnChooseFolder), self));
+	for (GtkWidget* row: {self->label_row, self->folder_row}) {
+		state.signals.push_back(
+		    SignalScope::Connect(row, "entry-activated", G_CALLBACK(&OnRowActivated), self));
+	}
+	// User add-ons are kept by title ID (upstream's launcher offers none without one).
+	state.title_id = title_id;
+	gtk_widget_set_sensitive(self->add_group, title_id.empty() ? FALSE : TRUE);
 	List(self);
 	return self;
 }

@@ -25,14 +25,21 @@ namespace kyty::core {
 //   --controller-volume, --controller-vibration, --keyboard-player always;
 // - --gpu only for a gpu_index of 0 or more (-1 is automatic);
 // - each boolean field as its flag when true, except trophy_enabled, which gives
-//   --no-trophy-notifications when false;
-// - the enum fields as their key names, and every number in decimal;
+//   --no-trophy-notifications when false, and pro_enabled, which gives --trinity;
+// - --flush-draws always (0 is off);
+// - --launch-activity <launch_activity> after --skip-notice-screen when it is not empty (upstream
+//   KytyPS5's launcher);
+// - with pro_enabled only: --pssr-upscaler; for DLSS also --dlss-folder (also when empty) and
+//   --dlss-preset unless dlss_preset is Default; for FSR also --fsr-folder;
+// - the enum fields as their key names (dlss_preset as its letter), and every number in decimal;
 // - one --keymap per entry of the effective input mapping that is IsValidMappingEntry, in order,
 //   as stored; an invalid entry, which a Qt-written store may hold, is never passed (the
 //   settings editor lists them with FindInvalidMappingEntries);
 // - --game <entry.path> for an archive and for the elf "eboot.bin" (or an empty elf, as Qt);
 //   otherwise --game <entry.path>/<elf>;
-// - --addcont-dir for a non-empty addons_dir, and --game-patch for a cheat_plan;
+// - --addcont-dir for a non-empty addons_dir, then one --addcont per user add-on that is
+//   IsUserAddOnEntry (additionalContentModel.h), in order (upstream KytyPS5's launcher; the
+//   Emulator checks that a data folder exists), and --game-patch for a cheat_plan;
 // - never --redzone (Requirement 3.4).
 std::vector<std::string> BuildEmulatorArguments(const GameEntry&              entry,
                                                 const EffectiveConfiguration& effective);

@@ -3,11 +3,6 @@
 
 #include "common/config.h" // IWYU pragma: export
 
-#if __cplusplus < 201703L
-#undef __cplusplus
-#define __cplusplus 201703L
-#endif
-
 
 // IWYU pragma: begin_exports
 #include <cinttypes>

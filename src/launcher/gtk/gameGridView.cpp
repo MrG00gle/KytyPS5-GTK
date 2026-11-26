@@ -180,6 +180,10 @@ void GameGridView::SetEmptySpaceMenu(GMenuModel* menu) {
 	m_state->shell->SetEmptySpaceMenu(menu);
 }
 
+void GameGridView::SetGameMenu(GMenuModel* menu) {
+	m_state->shell->SetGameMenu(menu);
+}
+
 bool GameGridView::PopupMenuAt(double x, double y) {
 	return m_state->shell->PopupAt(x, y);
 }

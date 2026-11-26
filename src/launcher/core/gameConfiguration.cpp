@@ -4,8 +4,12 @@
 #include "launcher/core/text.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
+#include <cstdint>
 #include <iterator>
 #include <string>
+#include <system_error>
 
 namespace kyty::core {
 
@@ -52,7 +56,93 @@ bool IsHexDigit(char c) {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
+bool IsDigit(char c) {
+	return c >= '0' && c <= '9';
+}
+
+// QRegularExpression's \s without Unicode properties: ASCII whitespace.
+bool IsSpace(char c) {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
+}
+
+std::string_view TrimSpaces(std::string_view text) {
+	while (!text.empty() && IsSpace(text.front())) {
+		text.remove_prefix(1);
+	}
+	while (!text.empty() && IsSpace(text.back())) {
+		text.remove_suffix(1);
+	}
+	return text;
+}
+
+// A run of decimal digits as an int32_t: nothing when it is empty or does not fit.
+std::optional<int32_t> ParseSide(std::string_view digits) {
+	if (digits.empty() || !std::all_of(digits.begin(), digits.end(), IsDigit)) {
+		return std::nullopt;
+	}
+	int32_t value         = 0;
+	const auto [end, err] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
+	if (err != std::errc {} || end != digits.data() + digits.size()) {
+		return std::nullopt;
+	}
+	return value;
+}
+
+// The four values of the old resolution enum, by their integer index (the legacy form).
+constexpr std::array<ScreenResolution, 4> kLegacyResolutions = {
+    ScreenResolution {1280, 720}, ScreenResolution {1920, 1080}, ScreenResolution {2560, 1440},
+    ScreenResolution {3840, 2160}};
+
+// The upstream launcher's presets, in its order: 16:9, then ultrawide.
+constexpr std::array<ScreenResolution, 8> kResolutionPresets = {
+    ScreenResolution {1280, 720},  ScreenResolution {1920, 1080}, ScreenResolution {2560, 1440},
+    ScreenResolution {3840, 2160}, ScreenResolution {2560, 1080}, ScreenResolution {3440, 1440},
+    ScreenResolution {3840, 1600}, ScreenResolution {5120, 2160}};
+
 } // namespace
+
+std::span<const ScreenResolution> ScreenResolutionPresets() {
+	return kResolutionPresets;
+}
+
+bool IsValidScreenResolution(const ScreenResolution& resolution) {
+	return resolution.width >= kMinScreenSize && resolution.width <= kMaxScreenSize &&
+	       resolution.height >= kMinScreenSize && resolution.height <= kMaxScreenSize;
+}
+
+std::string FormatScreenResolution(const ScreenResolution& resolution) {
+	return std::to_string(resolution.width) + "x" + std::to_string(resolution.height);
+}
+
+std::optional<ScreenResolution> ParseScreenResolution(std::string_view text) {
+	// The legacy integer index of the old enum ("0" ... "3", also "003").
+	if (!text.empty() && std::all_of(text.begin(), text.end(), IsDigit)) {
+		uint64_t index        = 0;
+		const auto [end, err] = std::from_chars(text.data(), text.data() + text.size(), index);
+		if (err == std::errc {} && end == text.data() + text.size() &&
+		    index < kLegacyResolutions.size()) {
+			return kLegacyResolutions[index];
+		}
+		return std::nullopt;
+	}
+	// The upstream launcher's form ^\s*R?(\d+)\s*[xX]\s*(\d+)\s*$, which also reads the old keys
+	// such as "R1920X1080".
+	auto rest = TrimSpaces(text);
+	if (!rest.empty() && rest.front() == 'R') {
+		rest.remove_prefix(1);
+	}
+	const auto separator = rest.find_first_of("xX");
+	if (separator == std::string_view::npos) {
+		return std::nullopt;
+	}
+	const auto width  = ParseSide(TrimSpaces(rest.substr(0, separator)));
+	const auto height = ParseSide(TrimSpaces(rest.substr(separator + 1)));
+	// The width is digits only (no space between "R" and the digits, as in the expression).
+	if (!width || !height || rest.empty() || !IsDigit(rest.front())) {
+		return std::nullopt;
+	}
+	return ScreenResolution {*width, *height};
+}
 
 std::optional<ValidationError> Validate(const GameConfiguration& configuration,
                                         ValidationScope          scope) {

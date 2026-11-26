@@ -1,6 +1,7 @@
 // Example tests of the input mapping editor's model (src/launcher/core/inputMapping.h, task 16.4;
 // Requirement 11.14): the control, pad source, and skin tables against the Emulator's
-// (src/graphics/presentation/window/hostInput.cpp), parsing host_input_mapping entries as the
+// (src/graphics/presentation/window/hostInput.cpp; the control names also read from that source),
+// upstream KytyPS5's touch pad swipes, parsing host_input_mapping entries as the
 // Emulator reads them (defaults, Disabled entries, conflicts, the last mouse sensitivity, the first
 // known skin, unknown entries kept), the serialized order, assign, unmap, restore defaults, and
 // saving to the global or a per-game target without touching Kyty.ini before the caller saves it
@@ -17,7 +18,9 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <map>
+#include <regex>
 #include <set>
 #include <string>
 #include <string_view>
@@ -90,15 +93,21 @@ void TestTables() {
 	                                                      "VibrationIntensity",
 	                                                      "TriggerEffectIntensity",
 	                                                      "GyroToggle",
-	                                                      "TouchPadMode"};
+	                                                      "TouchPadMode",
+	                                                      "TouchPadSwipeUp",
+	                                                      "TouchPadSwipeDown",
+	                                                      "TouchPadSwipeLeft",
+	                                                      "TouchPadSwipeRight"};
 	std::set<std::string_view>       ids;
 	for (const auto& control: kyty::core::InputControls()) {
 		Check(ids.insert(control.id).second, "unique id " + std::string(control.id));
 		Check(kyty::core::FindInputControl(control.id) == &control, "found by id");
 		const bool stick_direction =
 		    control.id.starts_with("LeftStick") || control.id.starts_with("RightStick");
-		Check(control.pad_mappable == !stick_direction,
-		      "only stick directions are not pad-mappable: " + std::string(control.id));
+		// The Emulator refuses "Pad:" entries for the touch pad swipes (hostInput.cpp).
+		const bool swipe = control.id.starts_with("TouchPadSwipe");
+		Check(control.pad_mappable == !(stick_direction || swipe),
+		      "only stick directions and swipes are not pad-mappable: " + std::string(control.id));
 		if (!control.keyboard_default.empty()) {
 			Check(kyty::core::IsEmulatorKeyName(control.keyboard_default) &&
 			          !kyty::core::IsReservedKeyName(control.keyboard_default),
@@ -147,6 +156,66 @@ void TestTables() {
 		      std::string(name) + " is a mouse button");
 	}
 	Check(!kyty::core::IsMouseButtonName("Mouse:left"), "mouse names are case-sensitive");
+}
+
+// The control names of the Emulator's CONTROL_INFO table, read from its source
+// (src/graphics/presentation/window/hostInput.cpp), are exactly the catalog's ids.
+void TestControlsMatchEmulatorSource() {
+	const auto source =
+	    kyty::core::ReadFileLimited(std::filesystem::path(KYTY_TEST_SOURCE_DIR) /
+	                                    "src/graphics/presentation/window/hostInput.cpp",
+	                                1u << 20u);
+	Check(source.has_value(), "read hostInput.cpp");
+	const auto begin = source->find("CONTROL_INFO = {");
+	const auto end   = source->find("};", begin);
+	Check(begin != std::string::npos && end != std::string::npos, "the CONTROL_INFO table");
+	const std::string     table = source->substr(begin, end - begin);
+	const std::regex      name(R"re(ControlInfo\s*\{\s*(?:\.name\s*=\s*)?"([A-Za-z0-9]+)")re");
+	std::set<std::string> emulator;
+	for (auto it = std::sregex_iterator(table.begin(), table.end(), name);
+	     it != std::sregex_iterator(); ++it) {
+		emulator.insert((*it)[1].str());
+	}
+	std::set<std::string> catalog;
+	for (const auto& control: kyty::core::InputControls()) {
+		catalog.insert(std::string(control.id));
+	}
+	std::string names;
+	for (const auto& id: emulator) {
+		names += " " + id;
+	}
+	Check(emulator.size() == 34 && emulator == catalog, "the catalog has the Emulator's " +
+	                                                        std::to_string(emulator.size()) +
+	                                                        " controls:" + names);
+}
+
+// Upstream KytyPS5's touch pad swipes: keys only (the keyboard tab, no default key), never a
+// "Pad:" binding, written and read back as the Emulator's names.
+void TestTouchPadSwipes() {
+	for (const char* id:
+	     {"TouchPadSwipeUp", "TouchPadSwipeDown", "TouchPadSwipeLeft", "TouchPadSwipeRight"}) {
+		const auto* control = kyty::core::FindInputControl(id);
+		Check(control != nullptr && !control->pad_tab && !control->pad_mappable &&
+		          control->keyboard_default.empty() && control->pad_default.empty() &&
+		          control->section == kyty::core::InputSection::System,
+		      std::string(id) + ": a System control of the keyboard tab without a default");
+	}
+	auto model = ParseMapping(
+	    Entries {"TouchPadSwipeUp=U", "TouchPadSwipeRight=M", "Pad:TouchPadSwipeDown=South"});
+	Check(model.keyboard_custom && model.keyboard.size() == 2 &&
+	          model.keyboard.at("TouchPadSwipeUp") == "U" &&
+	          model.keyboard.at("TouchPadSwipeRight") == "M" && !model.pad_custom &&
+	          model.unknown == Entries {"Pad:TouchPadSwipeDown=South"},
+	      "swipes bind keys; a Pad: swipe is kept as an unknown entry");
+	Check(SerializeMapping(model) ==
+	          Entries {"TouchPadSwipeUp=U", "TouchPadSwipeRight=M", "Pad:TouchPadSwipeDown=South"},
+	      "written in control order: " + Join(SerializeMapping(model)));
+	Check(kyty::core::Assign(model, InputDevice::KeyboardMouse, "TouchPadSwipeLeft", "B") &&
+	          model.keyboard.at("TouchPadSwipeLeft") == "B" &&
+	          !kyty::core::Assign(model, InputDevice::Pad, "TouchPadSwipeLeft", "South") &&
+	          !kyty::core::Unmap(model, InputDevice::Pad, "TouchPadSwipeLeft"),
+	      "Assign binds a key to a swipe, never a pad source");
+	CheckRoundTrip(model, "swipes");
 }
 
 void TestDefaults() {
@@ -596,6 +665,8 @@ void TestStoreUntouchedUntilSave() {
 int main() {
 	KytyTests::CheckNoDisplay("InputMappingTests");
 	TestTables();
+	TestControlsMatchEmulatorSource();
+	TestTouchPadSwipes();
 	TestDefaults();
 	TestParse();
 	TestSensitivityLocale();

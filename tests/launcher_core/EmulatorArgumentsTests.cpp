@@ -1,22 +1,33 @@
 // Example tests of the Emulator_Arguments (src/launcher/core/emulatorArguments.h, task 15.1): every
 // row of the design's mapping table, both --game forms, the omitted options, the input mapping
-// filter, per-game and global mappings, the cheat plan, and the absence of --redzone.
+// filter, per-game and global mappings, the cheat plan, and the absence of --redzone and
+// --shader-optimization-type. With --check-emulator <kyty_emulator> it instead runs the real
+// emulator on the arguments (CTest emulator_accepts_launcher_arguments).
 
+#include "launcher/core/configurationFields.h"
 #include "launcher/core/emulatorArguments.h"
 #include "launcher/core/gameConfiguration.h"
 #include "launcher/core/settingsStore.h"
 #include "support/fakeEnvironment.h"
 #include "support/noDisplay.h"
+#include "support/tempDir.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <optional>
+#include <spawn.h>
 #include <string>
+#include <string_view>
+#include <sys/wait.h>
 #include <tuple>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -122,14 +133,15 @@ void TestDefaults() {
 	                       "0",
 	                       "--present-mode",
 	                       "Mailbox",
+	                       "--flush-draws",
+	                       "0",
 	                       "--trophy-duration",
 	                       "6",
+	                       "--shader-cache",
 	                       "--vblank-frequency",
 	                       "60",
 	                       "--console-language",
 	                       "1",
-	                       "--shader-optimization-type",
-	                       "Performance",
 	                       "--shader-log-direction",
 	                       "Silent",
 	                       "--shader-log-folder",
@@ -150,7 +162,7 @@ void TestDefaults() {
 void TestEveryOptionInOrder() {
 	EffectiveConfiguration effective;
 	auto&                  c      = effective.configuration;
-	c.screen_resolution           = kyty::core::ScreenResolution::R3840X2160;
+	c.screen_resolution           = kyty::core::ScreenResolution {3840, 2160};
 	c.user_name                   = " Player One ";
 	c.user_id                     = kyty::core::kMaxUserId;
 	c.audio_input_device          = "USB Mic";
@@ -159,20 +171,27 @@ void TestEveryOptionInOrder() {
 	c.fullscreen_enabled          = true;
 	c.hdr_enabled                 = true;
 	c.hide_cursor_enabled         = true;
+	c.stretch_enabled             = true;
 	c.readback_linear_images      = true;
 	c.readback_tiled_images       = true;
+	c.readback_storage_images     = true;
 	c.sync_raw_image_buffers      = true;
+	c.flush_draws                 = 2147483647;
 	c.tessellation_enabled        = true;
+	c.occlusion_queries_enabled   = true;
+	c.relaxed_shader_float        = true;
+	c.native_rt                   = true;
+	c.shader_cache_enabled        = true;
 	c.trophy_enabled              = false;
 	c.trophy_duration_seconds     = 10;
 	c.perf_overlay_enabled        = true;
 	c.skip_notice_screen          = true;
 	c.network_connected           = true;
+	c.psn_emulation_enabled       = true;
 	c.vblank_frequency            = 360;
 	c.console_language            = 29;
 	c.vulkan_validation_enabled   = true;
 	c.shader_validation_enabled   = true;
-	c.shader_optimization_type    = kyty::core::ShaderOptimizationType::None;
 	c.shader_log_direction        = kyty::core::LogDirection::File;
 	c.shader_log_folder           = "logs/shaders";
 	c.command_buffer_dump_enabled = true;
@@ -181,11 +200,21 @@ void TestEveryOptionInOrder() {
 	c.printf_output_file          = "out.txt";
 	c.profiler_enabled            = true;
 	c.renderdoc_enabled           = true;
+	c.pro_enabled                 = true;
+	c.pssr_upscaler               = kyty::core::PssrUpscaler::DLSS;
+	c.dlss_folder                 = "/models/dlss";
+	c.dlss_preset                 = kyty::core::DlssPreset::K;
+	c.fsr_folder                  = "/ffx";
 	c.amd_cpu_enabled             = true;
+	c.guest_tsc_enabled           = true;
 	c.elf                         = "bin/game.elf";
 	c.host_input_mapping          = {"Cross=J", "Pad:Cross=South"};
 	effective.controller          = {"#0070D1", 0, 100, 4};
 	effective.addons_dir          = "/addons";
+	// Upstream's --addcont entries; one that --addcont would refuse is left out.
+	effective.user_addons = {"LICENSE000000001", "bad entry", "SEASONPASS000001=/dlc/season"};
+	// One run into an activity (upstream's "Launch activity").
+	effective.launch_activity     = "boss_rush";
 	effective.cheat_plan          = "/data/_Patches/PPSA01234.json";
 	const Args expected           = {"--screen-width",
 	                                 "3840",
@@ -212,24 +241,33 @@ void TestEveryOptionInOrder() {
 	                                 "--fullscreen",
 	                                 "--hdr",
 	                                 "--hide-cursor",
+	                                 "--stretch",
 	                                 "--readback-linear-images",
 	                                 "--readback-tiled-images",
+	                                 "--readback-storage-images",
 	                                 "--sync-raw-image-buffers",
+	                                 "--flush-draws",
+	                                 "2147483647",
 	                                 "--no-trophy-notifications",
 	                                 "--trophy-duration",
 	                                 "10",
 	                                 "--perf-overlay",
 	                                 "--skip-notice-screen",
+	                                 "--launch-activity",
+	                                 "boss_rush",
 	                                 "--network-connected",
+	                                 "--emulate-psn",
 	                                 "--tessellation",
+	                                 "--occlusion-queries",
+	                                 "--relaxed-shader-float",
+	                                 "--native-rt",
+	                                 "--shader-cache",
 	                                 "--vblank-frequency",
 	                                 "360",
 	                                 "--console-language",
 	                                 "29",
 	                                 "--vulkan-validation",
 	                                 "--shader-validation",
-	                                 "--shader-optimization-type",
-	                                 "None",
 	                                 "--shader-log-direction",
 	                                 "File",
 	                                 "--shader-log-folder",
@@ -242,7 +280,15 @@ void TestEveryOptionInOrder() {
 	                                 "--printf-output-file",
 	                                 "out.txt",
 	                                 "--profile",
+	                                 "--trinity",
+	                                 "--pssr-upscaler",
+	                                 "DLSS",
+	                                 "--dlss-folder",
+	                                 "/models/dlss",
+	                                 "--dlss-preset",
+	                                 "K",
 	                                 "--amd-cpu",
+	                                 "--guest-tsc",
 	                                 "--keymap",
 	                                 "Cross=J",
 	                                 "--keymap",
@@ -252,6 +298,10 @@ void TestEveryOptionInOrder() {
 	                                 "/games/A/bin/game.elf",
 	                                 "--addcont-dir",
 	                                 "/addons",
+	                                 "--addcont",
+	                                 "LICENSE000000001",
+	                                 "--addcont",
+	                                 "SEASONPASS000001=/dlc/season",
 	                                 "--game-patch",
 	                                 "/data/_Patches/PPSA01234.json"};
 	const auto args               = Build(effective);
@@ -261,10 +311,12 @@ void TestEveryOptionInOrder() {
 void TestScreenResolution() {
 	using kyty::core::ScreenResolution;
 	const std::vector<std::pair<ScreenResolution, std::pair<std::string, std::string>>> rows = {
-	    {ScreenResolution::R1280X720, {"1280", "720"}},
-	    {ScreenResolution::R1920X1080, {"1920", "1080"}},
-	    {ScreenResolution::R2560X1440, {"2560", "1440"}},
-	    {ScreenResolution::R3840X2160, {"3840", "2160"}}};
+	    {{1280, 720}, {"1280", "720"}},   {{1920, 1080}, {"1920", "1080"}},
+	    {{2560, 1440}, {"2560", "1440"}}, {{3840, 2160}, {"3840", "2160"}},
+	    {{2560, 1080}, {"2560", "1080"}}, {{3440, 1440}, {"3440", "1440"}},
+	    {{3840, 1600}, {"3840", "1600"}}, {{5120, 2160}, {"5120", "2160"}},
+	    {{320, 320}, {"320", "320"}},     {{16384, 16384}, {"16384", "16384"}},
+	    {{1366, 768}, {"1366", "768"}}};
 	for (const auto& [resolution, size]: rows) {
 		GameConfiguration c;
 		c.screen_resolution = resolution;
@@ -314,6 +366,17 @@ void TestOmittedValues() {
 	effective.addons_dir = "/mnt/add ons";
 	CheckValue(Build(effective), "--addcont-dir", "/mnt/add ons");
 
+	CheckAbsent(Build(effective), "--launch-activity");
+	effective.launch_activity = "Act 1: The End";
+	CheckValue(Build(effective), "--launch-activity", "Act 1: The End");
+	effective.launch_activity.clear();
+
+	CheckAbsent(Build(effective), "--addcont");
+	effective.user_addons = {"LICENSE00000000", "LICENSE000000001=", "license000000001"};
+	CheckAbsent(Build(effective), "--addcont");
+	effective.user_addons = {"LICENSE000000001=/mnt/a, b=c"};
+	CheckValue(Build(effective), "--addcont", "LICENSE000000001=/mnt/a, b=c");
+
 	CheckAbsent(Build(effective), "--game-patch");
 }
 
@@ -341,19 +404,27 @@ void TestFlags() {
 	    {&GameConfiguration::fullscreen_enabled, "--fullscreen"},
 	    {&GameConfiguration::hdr_enabled, "--hdr"},
 	    {&GameConfiguration::hide_cursor_enabled, "--hide-cursor"},
+	    {&GameConfiguration::stretch_enabled, "--stretch"},
 	    {&GameConfiguration::readback_linear_images, "--readback-linear-images"},
 	    {&GameConfiguration::readback_tiled_images, "--readback-tiled-images"},
+	    {&GameConfiguration::readback_storage_images, "--readback-storage-images"},
 	    {&GameConfiguration::sync_raw_image_buffers, "--sync-raw-image-buffers"},
 	    {&GameConfiguration::tessellation_enabled, "--tessellation"},
+	    {&GameConfiguration::occlusion_queries_enabled, "--occlusion-queries"},
+	    {&GameConfiguration::relaxed_shader_float, "--relaxed-shader-float"},
+	    {&GameConfiguration::native_rt, "--native-rt"},
+	    {&GameConfiguration::shader_cache_enabled, "--shader-cache"},
 	    {&GameConfiguration::perf_overlay_enabled, "--perf-overlay"},
 	    {&GameConfiguration::skip_notice_screen, "--skip-notice-screen"},
 	    {&GameConfiguration::network_connected, "--network-connected"},
+	    {&GameConfiguration::psn_emulation_enabled, "--emulate-psn"},
 	    {&GameConfiguration::vulkan_validation_enabled, "--vulkan-validation"},
 	    {&GameConfiguration::shader_validation_enabled, "--shader-validation"},
 	    {&GameConfiguration::command_buffer_dump_enabled, "--command-buffer-dump"},
 	    {&GameConfiguration::profiler_enabled, "--profile"},
 	    {&GameConfiguration::renderdoc_enabled, "--rd"},
-	    {&GameConfiguration::amd_cpu_enabled, "--amd-cpu"}};
+	    {&GameConfiguration::amd_cpu_enabled, "--amd-cpu"},
+	    {&GameConfiguration::guest_tsc_enabled, "--guest-tsc"}};
 	for (const auto& row: rows) {
 		GameConfiguration off;
 		off.*row.field = false;
@@ -390,12 +461,74 @@ void TestNumbers() {
 		c.console_language = language;
 		CheckValue(Build(c), "--console-language", std::to_string(language));
 	}
+	// --flush-draws is always passed; 0 is off.
+	for (const int32_t draws: {0, 1, 500, 2147483647}) {
+		c.flush_draws = draws;
+		CheckValue(Build(c), "--flush-draws", std::to_string(draws));
+	}
+}
+
+// PS5 Pro mode: --trinity, and only with it the upscaler and the upscaler's folder (and preset).
+void TestProMode() {
+	using kyty::core::DlssPreset;
+	using kyty::core::PssrUpscaler;
+	GameConfiguration c;
+	c.dlss_folder = "/models/dlss";
+	c.fsr_folder  = "/ffx";
+	c.dlss_preset = DlssPreset::A;
+	for (const auto upscaler: {PssrUpscaler::Linear, PssrUpscaler::DLSS, PssrUpscaler::FSR}) {
+		c.pro_enabled   = false;
+		c.pssr_upscaler = upscaler;
+		const auto off  = Build(c);
+		for (const char* name:
+		     {"--trinity", "--pssr-upscaler", "--dlss-folder", "--dlss-preset", "--fsr-folder"}) {
+			CheckAbsent(off, name);
+		}
+	}
+	c.pro_enabled   = true;
+	c.pssr_upscaler = PssrUpscaler::Linear;
+	auto args       = Build(c);
+	Check(Count(args, "--trinity") == 1, "--trinity with Pro mode: " + Show(args));
+	CheckValue(args, "--pssr-upscaler", "Linear");
+	CheckAbsent(args, "--dlss-folder");
+	CheckAbsent(args, "--dlss-preset");
+	CheckAbsent(args, "--fsr-folder");
+
+	c.pssr_upscaler = PssrUpscaler::DLSS;
+	args            = Build(c);
+	CheckValue(args, "--pssr-upscaler", "DLSS");
+	CheckValue(args, "--dlss-folder", "/models/dlss");
+	CheckValue(args, "--dlss-preset", "A");
+	CheckAbsent(args, "--fsr-folder");
+	const auto trinity = std::find(args.begin(), args.end(), "--trinity");
+	Check(args.end() - trinity >= 7 &&
+	          Args(trinity, trinity + 7) == Args {"--trinity", "--pssr-upscaler", "DLSS",
+	                                              "--dlss-folder", "/models/dlss", "--dlss-preset",
+	                                              "A"},
+	      "the upscaler options follow --trinity: " + Show(args));
+	for (const auto& [preset, letter]: std::vector<std::pair<DlssPreset, std::string>> {
+	         {DlssPreset::B, "B"}, {DlssPreset::K, "K"}, {DlssPreset::O, "O"}}) {
+		c.dlss_preset = preset;
+		CheckValue(Build(c), "--dlss-preset", letter);
+	}
+	c.dlss_preset = DlssPreset::Default;
+	CheckAbsent(Build(c), "--dlss-preset");
+	// An empty folder is passed as it is: the emulator then does not use DLSS.
+	c.dlss_folder = "";
+	CheckValue(Build(c), "--dlss-folder", "");
+
+	// FSR, read from an upstream Kyty.ini: passed as stored (it has no effect on Linux).
+	c.pssr_upscaler = PssrUpscaler::FSR;
+	args            = Build(c);
+	CheckValue(args, "--pssr-upscaler", "FSR");
+	CheckValue(args, "--fsr-folder", "/ffx");
+	CheckAbsent(args, "--dlss-folder");
+	CheckAbsent(args, "--dlss-preset");
 }
 
 void TestEnums() {
 	using kyty::core::LogDirection;
 	using kyty::core::PresentMode;
-	using kyty::core::ShaderOptimizationType;
 	GameConfiguration c;
 	for (const auto& [mode, text]:
 	     std::vector<std::pair<PresentMode, std::string>> {{PresentMode::Fifo, "Fifo"},
@@ -404,13 +537,8 @@ void TestEnums() {
 		c.present_mode = mode;
 		CheckValue(Build(c), "--present-mode", text);
 	}
-	for (const auto& [type, text]: std::vector<std::pair<ShaderOptimizationType, std::string>> {
-	         {ShaderOptimizationType::None, "None"},
-	         {ShaderOptimizationType::Size, "Size"},
-	         {ShaderOptimizationType::Performance, "Performance"}}) {
-		c.shader_optimization_type = type;
-		CheckValue(Build(c), "--shader-optimization-type", text);
-	}
+	// The emulator drops --shader-optimization-type, so the launcher never passes it.
+	CheckAbsent(Build(c), "--shader-optimization-type");
 	for (const auto& [direction, text]:
 	     std::vector<std::pair<LogDirection, std::string>> {{LogDirection::Silent, "Silent"},
 	                                                        {LogDirection::Console, "Console"},
@@ -552,10 +680,179 @@ void TestCheatPlan() {
 	CheckAbsent(Build(resolved, entry), "--game-patch");
 }
 
+// ---- CTest emulator_accepts_launcher_arguments (--check-emulator <kyty_emulator>)
+//
+// The shipped kyty_emulator accepts the arguments that BuildEmulatorArguments passes. P21
+// (tests/properties/emulator_launch_tests) checks them against the in-process parser; this mode
+// runs the real binary, with --help first, so that it parses every option and value and exits 0
+// without starting a game. A removed or renamed emulator option makes it exit 1 instead.
+
+struct ProcessResult {
+	int         exit_code = -1; // -1 unless the process exited normally.
+	std::string output;         // stdout and stderr
+};
+
+// Runs program with args, stdin from /dev/null, and captures stdout and stderr together.
+ProcessResult RunProcess(const std::string& program, const Args& args) {
+	Args storage {program};
+	storage.insert(storage.end(), args.begin(), args.end());
+	std::vector<char*> argv;
+	for (auto& arg: storage) {
+		argv.push_back(arg.data());
+	}
+	argv.push_back(nullptr);
+
+	int pipe_fds[2] = {-1, -1};
+	Check(pipe2(pipe_fds, O_CLOEXEC) == 0, "create the output pipe");
+	posix_spawn_file_actions_t actions;
+	posix_spawn_file_actions_init(&actions);
+	posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+	posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
+	posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDERR_FILENO);
+	pid_t     pid   = 0;
+	const int error = posix_spawn(&pid, program.c_str(), &actions, nullptr, argv.data(), environ);
+	posix_spawn_file_actions_destroy(&actions);
+	close(pipe_fds[1]);
+	Check(error == 0, "spawn " + program + ": " + std::strerror(error));
+
+	ProcessResult result;
+	char          buffer[4096];
+	for (;;) {
+		const auto count = read(pipe_fds[0], buffer, sizeof(buffer));
+		if (count > 0) {
+			result.output.append(buffer, static_cast<std::size_t>(count));
+		} else if (count < 0 && errno == EINTR) {
+			continue;
+		} else {
+			break;
+		}
+	}
+	close(pipe_fds[0]);
+
+	int status = 0;
+	while (waitpid(pid, &status, 0) < 0) {
+		Check(errno == EINTR, "wait for " + program);
+	}
+	if (WIFEXITED(status)) {
+		result.exit_code = WEXITSTATUS(status);
+	}
+	return result;
+}
+
+void CheckEmulatorAccepts(const std::string& emulator, const EffectiveConfiguration& effective,
+                          const GameEntry& entry, const std::string& what) {
+	const auto built = Build(effective, entry);
+	Args       args  = {"--help"};
+	args.insert(args.end(), built.begin(), built.end());
+	const auto result     = RunProcess(emulator, args);
+	const auto first_line = result.output.substr(0, result.output.find('\n'));
+	Check(result.exit_code == 0 && result.output.find("unknown option") == std::string::npos,
+	      what + ": kyty_emulator accepts " + Show(built) + " (exit " +
+	          std::to_string(result.exit_code) + ", first line '" + first_line + "')");
+}
+
+void CheckEmulator(const std::string& emulator) {
+	using kyty::core::FieldKind;
+	using kyty::core::FieldValue;
+	using kyty::core::GameConfigurationFields;
+
+	// --game and --game-patch must name existing files.
+	const KytyTests::TempDir dir("kyty_emulator_arguments");
+	const auto               game = dir.MakeDirectories("game");
+	dir.WriteFile("game/eboot.bin", "");
+	dir.WriteFile("game/bin/game.elf", "");
+	const auto addons = dir.MakeDirectories("addons");
+	const auto plan   = dir.WriteFile("_Patches/PPSA01234.json", "{}\n");
+	const auto entry  = DirectoryEntry(game);
+
+	// (a) The defaults.
+	CheckEmulatorAccepts(emulator, EffectiveConfiguration {}, entry, "the defaults");
+
+	// (b) Every boolean field off and then on (trophy_enabled passes its option when off), with
+	// every optional value and the largest values; then each value of each enum field.
+	EffectiveConfiguration every;
+	auto&                  c  = every.configuration;
+	c.user_name               = " Player One ";
+	c.user_id                 = kyty::core::kMaxUserId;
+	c.audio_input_device      = "Test Microphone";
+	c.gpu_index               = 0;
+	c.trophy_duration_seconds = 10;
+	c.vblank_frequency        = 360;
+	c.console_language        = kyty::core::kMaxConsoleLanguage;
+	c.flush_draws             = 2147483647;
+	c.dlss_folder             = "models";
+	c.fsr_folder              = "ffx";
+	c.host_input_mapping      = {"Cross=J", "Pad:Cross=South"};
+	every.controller          = {"#0070D1", 100, 100, kyty::core::kMaxKeyboardPlayer};
+	for (const bool on: {false, true}) {
+		for (const auto& field: GameConfigurationFields()) {
+			if (field.kind == FieldKind::Bool) {
+				Check(field.set(c, FieldValue(on)), "set " + std::string(field.name));
+			}
+		}
+		CheckEmulatorAccepts(emulator, every, entry,
+		                     on ? "every boolean field on" : "every boolean field off");
+	}
+	for (const auto& field: GameConfigurationFields()) {
+		if (field.kind != FieldKind::Enum) {
+			continue;
+		}
+		for (std::size_t i = 0; i < field.enum_keys.size(); i++) {
+			auto value = every;
+			// Pro mode is on (every boolean field is); the preset is passed only with DLSS.
+			if (field.name == "dlss_preset") {
+				value.configuration.pssr_upscaler = kyty::core::PssrUpscaler::DLSS;
+			}
+			Check(field.set(value.configuration, FieldValue(static_cast<int64_t>(i))),
+			      "set " + std::string(field.name));
+			CheckEmulatorAccepts(emulator, value, entry,
+			                     std::string(field.name) + " " + std::string(field.enum_keys[i]));
+		}
+	}
+	// Custom resolutions: the smallest, the largest, and an ultrawide preset.
+	for (const auto& resolution:
+	     {kyty::core::ScreenResolution {320, 320}, kyty::core::ScreenResolution {16384, 16384},
+	      kyty::core::ScreenResolution {3440, 1440}}) {
+		auto sized                            = every;
+		sized.configuration.screen_resolution = resolution;
+		CheckEmulatorAccepts(emulator, sized, entry,
+		                     "the resolution " + kyty::core::FormatScreenResolution(resolution));
+	}
+	// The other --game form: an executable inside the game directory.
+	auto elf              = every;
+	elf.configuration.elf = "bin/game.elf";
+	CheckEmulatorAccepts(emulator, elf, entry, "an executable other than eboot.bin");
+
+	// (c) An add-ons folder and a cheat plan.
+	auto launch       = every;
+	launch.addons_dir = addons.string();
+	launch.cheat_plan = plan;
+	CheckEmulatorAccepts(emulator, launch, entry, "an add-ons folder and a cheat plan");
+
+	// (d) User add-ons: a license only, and one with its data in an existing folder.
+	launch.user_addons = {"LICENSE000000001", "SEASONPASS000001=" + addons.string()};
+	CheckEmulatorAccepts(emulator, launch, entry, "user add-ons");
+
+	// (e) An activity, the longest ID --launch-activity accepts and one with spaces.
+	for (const char* activity: {"boss_rush", "12345678901234567890123456789012", "Act 1: ~End~"}) {
+		launch.launch_activity = activity;
+		CheckEmulatorAccepts(emulator, launch, entry, std::string("the activity ") + activity);
+	}
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
 	KytyTests::CheckNoDisplay("EmulatorArgumentsTests");
+	if (argc == 3 && std::string_view(argv[1]) == "--check-emulator") {
+		CheckEmulator(argv[2]);
+		std::printf("EmulatorArgumentsTests: kyty_emulator accepts the launcher's arguments\n");
+		return 0;
+	}
+	if (argc != 1) {
+		std::fprintf(stderr, "usage: %s [--check-emulator <kyty_emulator>]\n", argv[0]);
+		return 2;
+	}
 	TestDefaults();
 	TestEveryOptionInOrder();
 	TestScreenResolution();
@@ -564,6 +861,7 @@ int main() {
 	TestController();
 	TestFlags();
 	TestNumbers();
+	TestProMode();
 	TestEnums();
 	TestPaths();
 	TestGamePath();

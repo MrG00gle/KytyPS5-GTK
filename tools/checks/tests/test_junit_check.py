@@ -777,29 +777,38 @@ class CommittedLists(unittest.TestCase):
 
     VULKAN_HARNESS_MODES = (
         "buffer_cache_dirty_gc", "buffer_cache_ranges", "color_render_target_1d",
-        "command_scheduler_timeline", "compute_meta_clear_classification", "gpu_command_lane",
-        "gpu_tiler", "graphics_pipeline_rasterization", "host_image_allocation",
-        "pm4_context_state", "shader_recompiler_alignbyte", "shader_recompiler_compute",
-        "shader_recompiler_float_min_max", "stream_buffer_ring", "texture_cache_htile_clear",
-        "texture_cache_image_overlap", "texture_cache_image_views", "texture_cache_layered_image",
-        "texture_cache_storage_sampled")
+        "command_scheduler_timeline", "compute_meta_clear_classification", "depth_bits",
+        "gpu_command_lane", "gpu_tiler", "graphics_pipeline_rasterization",
+        "host_image_allocation", "msaa_storage", "pm4_context_state", "pssr",
+        "shader_recompiler_alignbyte", "shader_recompiler_compute",
+        "shader_recompiler_float_min_max", "shader_recompiler_integer16_ternary",
+        "shader_recompiler_mad_u16", "shader_recompiler_mul_hi24", "shader_recompiler_quadmask",
+        "shader_recompiler_relaxed_float", "shader_recompiler_tessellation_wave_sizes",
+        "shader_recompiler_vop3_conversions", "srgb_texture", "stream_buffer_ring",
+        "texture_cache_htile_clear", "texture_cache_image_overlap", "texture_cache_image_views",
+        "texture_cache_layered_image", "texture_cache_storage_sampled", "video_out_hdr10_to_sdr")
 
     def test_the_expected_failures_are_the_vulkan_harness_modes_with_their_text(self):
         expected = junit_check.read_expected_failures(
             os.path.join(CHECKS_DIR, "ci-expected-failures.txt"))
         self.assertEqual(expected, {name: FAILURE_TEXT for name in self.VULKAN_HARNESS_MODES})
 
-    def test_the_ubuntu_list_is_kernel_file_system_with_its_text(self):
+    # The tests that create a Vulkan window and stop on Ubuntu 24.04's lavapipe.
+    UBUNTU_WINDOW_TESTS = ("kernel_file_system", "pm4_flip", "video_out_flip_rate",
+                           "device_creation")
+
+    def test_the_ubuntu_list_is_the_window_tests_with_the_lavapipe_text(self):
         expected = junit_check.read_expected_failures(
             os.path.join(CHECKS_DIR, "ci-expected-failures-ubuntu.txt"))
-        self.assertEqual(expected, {"kernel_file_system": "llvmpipe (LLVM 20.1.2, 256 bits): "
-                                    "image view minLod is not supported; depthBounds is not "
-                                    "supported"})
+        text = ("llvmpipe (LLVM 20.1.2, 256 bits): image view minLod is not supported; "
+                "depthBounds is not supported")
+        self.assertEqual(expected, {name: text for name in self.UBUNTU_WINDOW_TESTS})
         # Both lists together are valid: they share no test.
         both = junit_check.read_expected_failure_lists(
             [os.path.join(CHECKS_DIR, "ci-expected-failures.txt"),
              os.path.join(CHECKS_DIR, "ci-expected-failures-ubuntu.txt")])
-        self.assertEqual(len(both), len(self.VULKAN_HARNESS_MODES) + 1)
+        self.assertEqual(len(both), len(self.VULKAN_HARNESS_MODES) +
+                         len(self.UBUNTU_WINDOW_TESTS))
 
     def test_the_retry_list_is_the_two_search_timing_cases(self):
         names = junit_check.read_retry_list(os.path.join(CHECKS_DIR, "ci-timing-retries.txt"))

@@ -16,6 +16,10 @@
 //   their CSS classes, tooltips, and accessible labels, created only for a game that needs one and
 //   centered on the corner of the drawn icon (its texture's rectangle or the placeholder glyph's;
 //   W4-07, D26), kept inside the icon square;
+// - the PS5 Pro badge of a game whose param.json says it supports PS5 Pro mode (upstream KytyPS5's
+//   launcher): a child GtkLabel, "PS5 PRO" on a Tile and "PRO" (smaller, CSS class compact) on a
+//   Title cell, with the game-pro-badge CSS class, the tooltip and accessible label "Supports PS5
+//   Pro mode", at the top end of the drawn icon, inside the icon square;
 // - the Status cell's colored indicator, a child widget with the status CSS class;
 // - accessibility: the accessible role is label and the text is the widget's GtkAccessibleText
 //   contents (GTK 4.14), as GtkLabel provides it; the rows and grid items keep their accessible
@@ -83,6 +87,9 @@ bool kyty_game_cell_get_icon_bounds(KytyGameCell* cell, graphene_rect_t* bounds)
 // hidden afterwards).
 GtkWidget* kyty_game_cell_get_metadata_emblem(KytyGameCell* cell);
 GtkWidget* kyty_game_cell_get_running_emblem(KytyGameCell* cell);
+// The PS5 Pro badge (a GtkLabel), or nullptr while the cell has none (made and hidden as the
+// emblems).
+GtkWidget* kyty_game_cell_get_pro_badge(KytyGameCell* cell);
 
 // Status: the indicator's status CSS class (one of the views' status-* classes), or nullptr for
 // none.
