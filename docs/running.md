@@ -46,6 +46,8 @@ same way.
 Select a game and press **Run**, press Enter, or double-click it. The game menu also opens the
 game's folder, its trophies, its additional content, its cheats (for `PPSA` titles), and its own
 settings and input mapping, and it can compress the game to a ZArchive or remove its save data.
+For a game that can start in one of its activities, **Launch into activity** lists them, and
+choosing one starts the game in that activity (`--launch-activity`) for that run.
 **Additional content…** lists the game's add-ons in the add-ons folder and the game's own add-ons,
 which you add there by entitlement label or content ID, with the folder of the add-on's data or
 without a folder for a license only.

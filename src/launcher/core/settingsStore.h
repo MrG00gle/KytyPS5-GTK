@@ -236,6 +236,9 @@ struct EffectiveConfiguration {
 	// (the launch arguments drop the entries that are not IsUserAddOnEntry).
 	std::vector<std::string>             user_addons;
 	std::optional<std::filesystem::path> cheat_plan; // as the caller passed it
+	// The activity to launch into for this run (upstream KytyPS5's launcher; never stored): ""
+	// unless the caller sets it.
+	std::string launch_activity;
 
 	friend bool operator==(const EffectiveConfiguration&, const EffectiveConfiguration&) = default;
 };

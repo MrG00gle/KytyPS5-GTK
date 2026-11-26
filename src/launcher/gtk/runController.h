@@ -78,8 +78,9 @@ public:
 	RunController(const RunController&)            = delete;
 	RunController& operator=(const RunController&) = delete;
 
-	// Runs game (the flow above); true when the Emulator started.
-	bool Run(KytyGame* game);
+	// Runs game (the flow above); true when the Emulator started. A non-empty activity launches the
+	// game into that activity for this run only (--launch-activity, upstream KytyPS5's launcher).
+	bool Run(KytyGame* game, const std::string& activity = {});
 	// Stops the running game; nothing while none runs.
 	void Stop();
 

@@ -129,6 +129,10 @@ inline std::string ParamJsonText(int index) {
 			       (index % 3 == 0   ? ",\"attribute3\":4194305"
 			        : index % 3 == 1 ? ",\"attribute3\":1"
 			                         : "") +
+			       // A launchActivity game intent, or none.
+			       (index % 2 == 0 ? ",\"gameIntent\":{\"permittedIntents\":[{\"intentType\":"
+			                         "\"launchActivity\"}]}"
+			                       : "") +
 			       "}";
 	}
 }

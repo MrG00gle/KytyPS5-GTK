@@ -404,6 +404,33 @@ void TestProSupported() {
 	Check(!ParseParamJson("[4194304]", "d").pro_supported, "an unusable param.json");
 }
 
+// gameIntent.permittedIntents with a launchActivity intent (upstream KytyPS5's launcher): the
+// title can be launched into an activity.
+void TestActivityIntent() {
+	const auto intent = [](const std::string& game_intent) {
+		return ParseParamJson(R"({"titleId":"PPSA01234","gameIntent":)" + game_intent + "}", "d")
+		    .activity_intent;
+	};
+	for (const char* value:
+	     {R"({"permittedIntents":[{"intentType":"launchActivity"}]})",
+	      R"({"permittedIntents":[{"intentType":"joinSession"},)"
+	      R"({"intentType":"launchActivity","x":1}]})",
+	      R"({"permittedIntents":[7,"launchActivity",{"intentType":"launchActivity"}]})"}) {
+		Check(intent(value), std::string("a launchActivity intent: ") + value);
+	}
+	for (const char* value:
+	     {"{}", "[]", "\"launchActivity\"", R"({"permittedIntents":{}})",
+	      R"({"permittedIntents":[]})", R"({"permittedIntents":["launchActivity"]})",
+	      R"({"permittedIntents":[{"intentType":"joinSession"}]})",
+	      R"({"permittedIntents":[{"intentType":"LaunchActivity"}]})",
+	      R"({"permittedIntents":[{"intentType":" launchActivity"}]})",
+	      R"({"permittedIntents":[{"intentType":["launchActivity"]}]})",
+	      R"({"permittedIntents":[{"type":"launchActivity"}]})"}) {
+		Check(!intent(value), std::string("no launchActivity intent: ") + value);
+	}
+	Check(!ParseParamJson(R"({"titleId":"PPSA01234"})", "d").activity_intent, "no gameIntent");
+}
+
 } // namespace
 
 int main() {
@@ -417,6 +444,7 @@ int main() {
 	TestHostArchive();
 	TestAccessors();
 	TestProSupported();
+	TestActivityIntent();
 	std::printf("GameMetadataTests: all tests passed\n");
 	return 0;
 }

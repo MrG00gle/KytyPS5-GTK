@@ -38,8 +38,12 @@ gpointer ItemObject(GObject* item) {
 
 } // namespace
 
-GObjectPtr<GMenuModel> LoadGameMenu() {
+GObjectPtr<GMenuModel> LoadGameMenu(GObjectPtr<GMenu>* actions) {
 	auto builder = GObjectPtr<GtkBuilder>::Adopt(gtk_builder_new_from_resource(kGameMenuResource));
+	if (actions != nullptr) {
+		*actions =
+		    GObjectPtr<GMenu>::Ref(G_MENU(gtk_builder_get_object(builder.get(), "game-actions")));
+	}
 	return GObjectPtr<GMenuModel>::Ref(
 	    G_MENU_MODEL(gtk_builder_get_object(builder.get(), "game-menu")));
 }
@@ -220,6 +224,13 @@ bool GameViewShell::PopupForSelection() {
 	}
 	Show(m_game_menu, target);
 	return true;
+}
+
+void GameViewShell::SetGameMenu(GMenuModel* menu) {
+	g_return_if_fail(menu != nullptr);
+	gtk_widget_unparent(m_game_menu);
+	m_game_menu = NewMenu(menu);
+	gtk_widget_set_parent(m_game_menu, m_root);
 }
 
 void GameViewShell::SetEmptySpaceMenu(GMenuModel* menu) {

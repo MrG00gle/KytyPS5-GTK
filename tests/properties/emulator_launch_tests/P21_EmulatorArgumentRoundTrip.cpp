@@ -12,7 +12,8 @@
 // '/' (Common::FixFilenameSlash in its option parser), so the add-ons directory is compared after
 // that replacement, and elf names on disk hold neither '\' nor NUL. User add-ons (upstream's
 // --addcont) are licenses only or have a data folder on disk; each valid entry reaches the
-// Emulator with its label and folder, in order.
+// Emulator with its label and folder, in order. Half of the cases launch into an activity of 1-32
+// printable ASCII characters.
 
 #include "common/archive.h"
 #include "common/emulatorConfig.h"
@@ -190,6 +191,16 @@ UserAddOnCase UserAddOns(const KytyTests::TempDir& dir) {
 	return addons;
 }
 
+// An activity ID that core::IsLaunchActivityId accepts: 1-32 printable ASCII characters.
+std::string ActivityId() {
+	std::string id;
+	const int   length = ConfigGen::Choose(1, 33);
+	for (int i = 0; i < length; i++) {
+		id += static_cast<char>(ConfigGen::Choose<int>(' ', '~' + 1));
+	}
+	return id;
+}
+
 std::string Joined(const std::vector<std::string>& args) {
 	std::string text;
 	for (const auto& arg: args) {
@@ -236,6 +247,8 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		// with entries that --addcont would refuse mixed in (the arguments leave them out).
 		const auto user_addons = UserAddOns(dir);
 		effective.user_addons  = user_addons.stored;
+		// One run into an activity (upstream's "Launch activity"), or none.
+		effective.launch_activity = OneIn(2) ? std::string() : ActivityId();
 
 		const auto title = ConfigGen::TitleId();
 		if (kyty::core::IsCheatTitleId(title) && OneIn(2)) {
@@ -322,6 +335,7 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		RC_ASSERT(c.shader_cache_enabled == config.shader_cache_enabled);
 		RC_ASSERT(c.psn_emulation_enabled == config.psn_emulation_enabled);
 		RC_ASSERT(c.guest_tsc_enabled == config.guest_tsc_enabled);
+		RC_ASSERT(c.launch_activity == effective.launch_activity);
 		// PS5 Pro mode: the upscaler, and its folder and preset, only with it (else the defaults).
 		RC_ASSERT(c.pro_enabled == config.pro_enabled);
 		const bool dlss =
@@ -382,5 +396,6 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		RC_CLASSIFY(effective.cheat_plan.has_value(), "cheat plan");
 		RC_CLASSIFY(with_invalid, "invalid mapping entries dropped");
 		RC_CLASSIFY(!user_addons.labels.empty(), "user add-ons");
+		RC_CLASSIFY(!effective.launch_activity.empty(), "an activity");
 	});
 }

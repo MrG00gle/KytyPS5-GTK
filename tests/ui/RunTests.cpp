@@ -6,6 +6,7 @@
 //
 // - run_arguments (10.1, 12.7): the arguments are the core's for the configuration at the moment
 //   of activation, and the working directory is the Data_Directory.
+// - run_launch_activity: upstream KytyPS5's "Launch activity" submenu and --launch-activity.
 // - run_log_lines (10.5): both streams, in order, with U+FFFD for invalid UTF-8, in the log within
 //   1 s, in batches; run_log_after_exit (10.7): the unterminated last line and the end of the run
 //   within 1 s, also while a grandchild keeps the pipes open (the 1 s EOF wait).
@@ -33,6 +34,7 @@
 #include "launcher/gtk/mainWindow.h"
 #include "launcher/gtk/runController.h"
 #include "launcher/gtk/settingsWindow.h"
+#include "support/contentGenerators.h"
 #include "ui/support/uiContext.h"
 #include "ui/support/uiDriver.h"
 #include "ui/support/uiFixtures.h"
@@ -49,6 +51,7 @@
 #include <filesystem>
 #include <functional>
 #include <gtk/gtk.h>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
@@ -307,6 +310,147 @@ KYTY_UI_CASE(run_arguments) {
 		const auto lines = KytyUi::LogLines(window);
 		Check(KytyUi::HasLine(lines, "second-run") && !KytyUi::HasLine(lines, "first-run"),
 		      "the second run starts with a cleared log");
+	});
+}
+
+// ---- Upstream KytyPS5's "Launch activity"
+
+namespace {
+
+// The labels of the game menu's activity submenu (the second item of its first section), or
+// nothing while the menu has none.
+std::optional<std::vector<std::string>> ActivityLabels(GMenuModel* menu) {
+	GMenuModel* section = g_menu_model_get_item_link(menu, 0, G_MENU_LINK_SECTION);
+	if (section == nullptr) {
+		return std::nullopt;
+	}
+	GMenuModel* submenu = g_menu_model_get_n_items(section) > 1
+	                          ? g_menu_model_get_item_link(section, 1, G_MENU_LINK_SUBMENU)
+	                          : nullptr;
+	std::optional<std::vector<std::string>> labels;
+	if (submenu != nullptr) {
+		labels.emplace();
+		for (int i = 0; i < g_menu_model_get_n_items(submenu); i++) {
+			gchar* label = nullptr;
+			g_menu_model_get_item_attribute(submenu, i, G_MENU_ATTRIBUTE_LABEL, "s", &label);
+			labels->emplace_back(label != nullptr ? label : "");
+			g_free(label);
+		}
+		g_object_unref(submenu);
+	}
+	g_object_unref(section);
+	return labels;
+}
+
+} // namespace
+
+// A game with a launchActivity intent in its param.json: the game menu has "Launch into activity"
+// after Run, with the activities of the game's UDS package (sorted; an underscore is shown, not a
+// mnemonic). One of them starts the game with --launch-activity <ID> for that run only; Run does
+// not pass it. A game without the intent has no submenu, and game.run-activity is off for it.
+KYTY_UI_CASE(run_launch_activity) {
+	KytyUi::UiContext ui;
+	const auto        games = KytyUi::PrepareLibrary(ui);
+	const fs::path    game  = games / "Activity Game";
+	const std::string enums =
+	    R"({"enumArray":[{"sourceId":"activity","enumValueArray":[{"name":"story"},)"
+	    R"({"name":"boss_rush"}]},{"sourceId":"difficulty","enumValueArray":[{"name":"hard"}]}]})";
+	if (games.empty() ||
+	    !KytyUi::WriteGameWithParam(
+	        game, R"({"localizedParameters":{"defaultLanguage":"en-US","en-US":{"titleName":)"
+	              R"("Activity Game"}},"titleId":"PPSA01010","appVersion":"01.000","gameIntent":)"
+	              R"({"permittedIntents":[{"intentType":"launchActivity"}]}})") ||
+	    !KytyUi::WriteText(game / "sce_sys" / "uds" / "uds00.ucp",
+	                       KytyTests::ContentGen::UcpBytes({{"enum_definition.json", enums}}))) {
+		return;
+	}
+	const KytyUi::FakeEmulatorBehavior fake("--exit 0");
+	KytyUi::RunWithLibrary(ui, [&](KytyApplication* application, KytyMainWindow* window) {
+		auto&         context = KytyUi::ContextOf(application);
+		GActionGroup* actions = kyty::gtk::MainWindowGameActions(window);
+		GtkWidget*    button  = KytyUi::FindByBuildableId(GTK_WIDGET(window), "game_menu_button");
+		GMenuModel*   menu =
+		    button != nullptr ? gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(button)) : nullptr;
+		if (!Check(menu != nullptr, "the header bar has the game menu")) {
+			return;
+		}
+		KytyUi::SelectTitle(context.library, kAlphaTitle);
+		Check(!ActivityLabels(menu) &&
+		          g_action_group_get_action_enabled(actions, "run-activity") == FALSE,
+		      "Alpha Game has no activity submenu");
+
+		KytyUi::SelectTitle(context.library, "Activity Game");
+		const std::vector<std::string> listed = {"boss__rush", "story"};
+		KytyUi::WaitFor([&]() { return ActivityLabels(menu) == listed; }, 5000,
+		                "the activities in the game menu");
+		gchar* label = nullptr;
+		if (GMenuModel* section = g_menu_model_get_item_link(menu, 0, G_MENU_LINK_SECTION)) {
+			g_menu_model_get_item_attribute(section, 1, G_MENU_ATTRIBUTE_LABEL, "s", &label);
+			g_object_unref(section);
+		}
+		Check(g_strcmp0(label, "Launch into activity") == 0 &&
+		          g_action_group_get_action_enabled(actions, "run-activity") != FALSE,
+		      "\"Launch into activity\" follows Run");
+		g_free(label);
+
+		// The header bar's menu: the submenu, then boss_rush.
+		// Without autohide: an autohide popover needs a grab, and the headless sessions have no
+		// seat.
+		GtkPopover* popover = gtk_menu_button_get_popover(GTK_MENU_BUTTON(button));
+		if (!Check(popover != nullptr, "the game menu button has its popover")) {
+			return;
+		}
+		gtk_popover_set_autohide(popover, FALSE);
+		gtk_menu_button_popup(GTK_MENU_BUTTON(button));
+		GtkWidget* submenu = nullptr;
+		KytyUi::WaitFor(
+		    [&]() {
+			    submenu = KytyUi::MenuItem(GTK_WIDGET(popover), "Launch into activity");
+			    return submenu != nullptr && gtk_widget_get_mapped(submenu) != FALSE;
+		    },
+		    3000, "the game menu to show Launch into activity");
+		if (submenu == nullptr) {
+			return;
+		}
+		g_signal_emit_by_name(submenu, "clicked");
+		GtkWidget* item = nullptr;
+		KytyUi::WaitFor(
+		    [&]() {
+			    item = KytyUi::MenuItem(GTK_WIDGET(popover), "boss_rush");
+			    return item != nullptr && gtk_widget_get_mapped(item) != FALSE;
+		    },
+		    3000, "the submenu to show boss_rush");
+		if (item == nullptr) {
+			return;
+		}
+		g_signal_emit_by_name(item, "clicked");
+		KytyUi::WaitFor([window]() { return Run(window).Stats().exits == 1; }, 8000,
+		                "the run into the activity to end");
+		const auto into          = RecordedArguments(ui);
+		KytyGame*  activity_game = KytyUi::GameByTitle(context.library, "Activity Game");
+		auto       effective     = core::ResolveEffectiveConfiguration(
+		    context.settings.loaded.settings, kyty_game_get_entry(activity_game),
+		    core::FindCheatPlan(ui.Services().environment, context.paths.data_dir,
+		                        kyty_game_get_entry(activity_game).title_id));
+		effective.launch_activity = "boss_rush";
+		Check(Option(into, "--launch-activity") == "boss_rush" &&
+		          into ==
+		              core::BuildEmulatorArguments(kyty_game_get_entry(activity_game), effective),
+		      "the game starts with --launch-activity boss_rush");
+		if (gtk_widget_get_mapped(GTK_WIDGET(popover)) != FALSE) {
+			gtk_popover_popdown(popover);
+		}
+
+		// Run: no activity.
+		if (!StartGame(application, window, "Activity Game")) {
+			return;
+		}
+		KytyUi::WaitFor([window]() { return Run(window).Stats().exits == 2; }, 8000,
+		                "the plain run to end");
+		const auto plain = RecordedArguments(ui);
+		Check(!plain.empty() &&
+		          std::find(plain.begin(), plain.end(), "--launch-activity") == plain.end(),
+		      "Run passes no activity");
 	});
 }
 

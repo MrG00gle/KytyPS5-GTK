@@ -1,8 +1,10 @@
 #include "launcher/gtk/mainWindow.h"
 
 #include "launcher/core/cheats.h"
+#include "launcher/core/trophyModel.h"
 #include "launcher/gtk/additionalContentWindow.h"
 #include "launcher/gtk/alerts.h"
+#include "launcher/gtk/backgroundTask.h"
 #include "launcher/gtk/cheatsWindow.h"
 #include "launcher/gtk/compressionDialog.h"
 #include "launcher/gtk/coreMessageText.h"
@@ -25,6 +27,7 @@
 
 #include <cmath>
 #include <cstdarg>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -50,6 +53,17 @@ struct MainWindowState {
 	std::unique_ptr<LogView>           log_view;
 	std::unique_ptr<RunController>     run;
 	std::unique_ptr<UpdateUi>          update; // task 21.6
+	// The game menu that the views and the header bar share, its first section, and the "Launch
+	// into activity" submenu (upstream KytyPS5's launcher) of activity_game, the selected game it
+	// is for ("" while it is not in the menu); activity_generation drops a late listing.
+	GObjectPtr<GMenuModel> game_menu;
+	GObjectPtr<GMenu>      game_menu_actions;
+	GObjectPtr<GMenu>      activity_menu;
+	std::filesystem::path  activity_game;
+	bool                   activity_shown      = false;
+	std::uint64_t          activity_generation = 0;
+	// False from dispose on: a pending activity listing's result is dropped.
+	std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 	// Quitting while a game runs (D34): what runs once the game has exited, whether the
 	// confirmation is open (and the cancellable that closes it), and whether the game was asked to
 	// stop for the quit.
@@ -106,19 +120,12 @@ namespace core = kyty::core;
 constexpr const char* kTemplateResource = "/io/github/MrG00gle/KytyPS5_GTK/ui/main-window.xml";
 
 // The game.* actions (plan D30): registered disabled, enabled by UpdateActions for the selection.
-constexpr const char* kGameActions[] = {"run",
-                                        "stop",
-                                        "open-folder",
-                                        "trophies",
-                                        "cheats",
-                                        "additional-content",
-                                        "compress",
-                                        "remove-save-data",
-                                        "edit-config",
-                                        "clear-config",
-                                        "input-mapping",
-                                        "export-settings",
-                                        "import-settings"};
+constexpr const char* kGameActions[] = {"run", "stop", "open-folder", "trophies", "cheats",
+                                        "additional-content", "compress", "remove-save-data",
+                                        "edit-config", "clear-config", "input-mapping",
+                                        "export-settings", "import-settings",
+                                        // Never enabled: the activity submenu's placeholder items.
+                                        "no-activity"};
 
 struct Accelerator {
 	const char* action;
@@ -250,6 +257,88 @@ void UpdateContent(KytyMainWindow* self) {
 	UpdateViewControls(self);
 }
 
+// ---- Launch into an activity (upstream KytyPS5's launcher, commit 2638b1b0)
+
+// What the GTask thread lists.
+struct ActivityLoad {
+	core::GameEntry          entry;
+	std::uint64_t            generation = 0;
+	std::vector<std::string> ids;
+};
+
+// The submenu's items: one per activity (game.run-activity with the ID), or one disabled item
+// while the activities are read or when the game lists none.
+void ShowActivities(KytyMainWindow* self, const std::vector<std::string>& ids, bool loading) {
+	GMenu* menu = self->state->activity_menu.get();
+	g_menu_remove_all(menu);
+	if (loading || ids.empty()) {
+		g_menu_append(menu, loading ? _("Looking for activities…") : _("No activities"),
+		              "game.no-activity");
+		return;
+	}
+	for (const auto& id: ids) {
+		// The ID as the game names it: an underscore is not a mnemonic.
+		std::string label;
+		for (const char c: id) {
+			label += c;
+			if (c == '_') {
+				label += '_';
+			}
+		}
+		GMenuItem* item = g_menu_item_new(label.c_str(), nullptr);
+		g_menu_item_set_action_and_target_value(item, "game.run-activity",
+		                                        g_variant_new_string(id.c_str()));
+		g_menu_append_item(menu, item);
+		g_object_unref(item);
+	}
+}
+
+// The selected game has a launchActivity intent: "Launch into activity" follows Run in the game
+// menu, and its activities are read from the game's UDS package in a GTask thread
+// (core::LoadActivityIds); otherwise the submenu is not in the menu.
+void UpdateActivityMenu(KytyMainWindow* self) {
+	auto& state = *self->state;
+	if (!state.game_menu_actions || !state.activity_menu) {
+		return;
+	}
+	KytyGame*             game  = state.context->library.Selected();
+	const bool            offer = game != nullptr && kyty_game_get_entry(game).activity_intent;
+	std::filesystem::path path  = offer ? kyty_game_get_entry(game).path : std::filesystem::path();
+	if (offer == state.activity_shown && path == state.activity_game) {
+		return;
+	}
+	state.activity_game = std::move(path);
+	state.activity_generation++;
+	if (offer != state.activity_shown) {
+		if (offer) {
+			// TRANSLATORS: the game menu's submenu of the activities a game can start in.
+			g_menu_insert_submenu(state.game_menu_actions.get(), 1, _("Launch into activity"),
+			                      G_MENU_MODEL(state.activity_menu.get()));
+		} else {
+			g_menu_remove(state.game_menu_actions.get(), 1);
+		}
+		state.activity_shown = offer;
+	}
+	if (!offer) {
+		g_menu_remove_all(state.activity_menu.get());
+		return;
+	}
+	ShowActivities(self, {}, true);
+	auto load        = std::make_shared<ActivityLoad>();
+	load->entry      = kyty_game_get_entry(game);
+	load->generation = state.activity_generation;
+	// An unowned GTask (as the add-ons window's): the alive flag drops a late result.
+	kyty::gtk::RunInBackground(
+	    [load]() { load->ids = core::LoadActivityIds(load->entry); },
+	    [self, alive = state.alive, load]() {
+		    if (!*alive || load->generation != self->state->activity_generation) {
+			    return;
+		    }
+		    g_debug("activities of %s: %zu", load->entry.path.c_str(), load->ids.size());
+		    ShowActivities(self, load->ids, false);
+	    });
+}
+
 void UpdateActions(KytyMainWindow* self) {
 	auto&       state   = *self->state;
 	KytyGame*   game    = state.context->library.Selected();
@@ -283,6 +372,11 @@ void UpdateActions(KytyMainWindow* self) {
 	           game != nullptr && core::IsCheatTitleId(kyty_game_get_entry(game).title_id));
 	// 10.4, LFI-11: Run for no game while one runs (or an update installs), Stop only then.
 	SetEnabled(actions, "run", game != nullptr && run.CanRun(kyty_game_get_entry(game).path));
+	// Upstream's "Launch activity": as Run, for a game with a launchActivity intent.
+	SetEnabled(actions, "run-activity",
+	           game != nullptr && kyty_game_get_entry(game).activity_intent &&
+	               run.CanRun(kyty_game_get_entry(game).path));
+	UpdateActivityMenu(self);
 	SetEnabled(actions, "stop", run.CanStop());
 	// Task 21.6 (Official builds): no second check while a check or an installation runs.
 	SetEnabled(state.app_actions, "check-updates", state.update && state.update->CanCheck());
@@ -684,6 +778,16 @@ void OnRun(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
 	}
 }
 
+// game.run-activity (a string parameter): the selected game, launched into that activity.
+void OnRunActivity(GSimpleAction* /*action*/, GVariant* parameter, gpointer data) {
+	auto*     self = KYTY_MAIN_WINDOW(data);
+	KytyGame* game = Alive(self) ? self->state->context->library.Selected() : nullptr;
+	if (game == nullptr || parameter == nullptr || !kyty_game_get_entry(game).activity_intent) {
+		return;
+	}
+	self->state->run->Run(game, g_variant_get_string(parameter, nullptr));
+}
+
 void OnStop(GSimpleAction* /*action*/, GVariant* /*parameter*/, gpointer data) {
 	auto* self = KYTY_MAIN_WINDOW(data);
 	if (Alive(self)) {
@@ -868,6 +972,11 @@ void InstallActions(KytyMainWindow* self, GtkApplication* application) {
 		g_simple_action_set_enabled(action.get(), FALSE);
 		g_action_map_add_action(G_ACTION_MAP(state.game_actions.get()), G_ACTION(action.get()));
 	}
+	// The activity's ID is the parameter.
+	auto run_activity = kyty::gtk::GObjectPtr<GSimpleAction>::Adopt(
+	    g_simple_action_new("run-activity", G_VARIANT_TYPE_STRING));
+	g_simple_action_set_enabled(run_activity.get(), FALSE);
+	g_action_map_add_action(G_ACTION_MAP(state.game_actions.get()), G_ACTION(run_activity.get()));
 	const auto connect = [&state, self](const char* name, GCallback callback) {
 		state.signals.push_back(kyty::gtk::SignalScope::Connect(
 		    FindAction(G_ACTION_MAP(state.game_actions.get()), name), "activate", callback, self));
@@ -879,6 +988,7 @@ void InstallActions(KytyMainWindow* self, GtkApplication* application) {
 	connect("compress", G_CALLBACK(&OnCompress));
 	connect("cheats", G_CALLBACK(&OnCheats));
 	connect("run", G_CALLBACK(&OnRun));
+	connect("run-activity", G_CALLBACK(&OnRunActivity));
 	connect("stop", G_CALLBACK(&OnStop));
 	connect("open-folder", G_CALLBACK(&OnOpenFolder));
 	connect("clear-config", G_CALLBACK(&OnClearConfig));
@@ -987,8 +1097,12 @@ void BuildViews(KytyMainWindow* self) {
 	gtk_range_set_value(GTK_RANGE(self->icon_width_scale), state.grid_view->IconWidth());
 	state.loading = false;
 	ShowView(self, settings.grid_view);
-	auto game_menu = kyty::gtk::LoadGameMenu();
-	gtk_menu_button_set_menu_model(self->game_menu_button, game_menu.get());
+	// One game menu for the views and the header bar, so that the activity submenu shows in each.
+	state.game_menu     = kyty::gtk::LoadGameMenu(&state.game_menu_actions);
+	state.activity_menu = kyty::gtk::GObjectPtr<GMenu>::Adopt(g_menu_new());
+	state.list_view->SetGameMenu(state.game_menu.get());
+	state.grid_view->SetGameMenu(state.game_menu.get());
+	gtk_menu_button_set_menu_model(self->game_menu_button, state.game_menu.get());
 }
 
 } // namespace
@@ -1002,6 +1116,7 @@ static void kyty_main_window_dispose(GObject* object) {
 	auto* self = KYTY_MAIN_WINDOW(object);
 	if (auto* state = self->state; state != nullptr && !state->disposed) {
 		state->disposed = true;
+		*state->alive   = false;
 		g_cancellable_cancel(state->cancellable.get());
 		if (const auto question = std::move(state->quit_question)) {
 			g_cancellable_cancel(question.get());

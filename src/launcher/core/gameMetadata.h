@@ -28,6 +28,9 @@ struct GameEntry {
 	bool metadata_available = false;
 	// The title supports PS5 Pro mode (attribute3 bit 22; upstream KytyPS5's launcher).
 	bool pro_supported = false;
+	// The title can be launched into an activity (a launchActivity game intent; upstream KytyPS5's
+	// launcher).
+	bool activity_intent = false;
 	// The path relative to the first Game_Folder (in list order) that contains the entry, with '/'
 	// separators ("." for the folder itself); used to migrate the Qt launcher's per-game entries.
 	std::string legacy_relative_path;
@@ -43,6 +46,7 @@ struct GameMetadata {
 	std::string firmware_version;
 	bool        metadata_available = false;
 	bool        pro_supported      = false;
+	bool        activity_intent    = false;
 
 	friend bool operator==(const GameMetadata&, const GameMetadata&) = default;
 };
@@ -70,7 +74,9 @@ std::string FallbackTitle(const std::filesystem::path& entry_path, GameEntry::Ki
 // - firmware_version: FormatSystemSoftwareVersion(requiredSystemSoftwareVersion);
 // - pro_supported: bit 22 of attribute3 when it is an integer, or a floating-point number with an
 //   integral value in the int64 range (QJsonValue::toInteger() in upstream's launcher); false
-//   otherwise.
+//   otherwise;
+// - activity_intent: an object of the array gameIntent.permittedIntents has the intentType
+//   "launchActivity" (exactly, as upstream's launcher compares it).
 GameMetadata ParseParamJson(std::string_view bytes, std::string_view fallback_title);
 
 // Reads the metadata of a Game_Entry; the scanner calls it once per new entry. Implementations

@@ -75,6 +75,9 @@ std::vector<std::string> BuildEmulatorArguments(const GameEntry&              en
 	args.Number("--trophy-duration", config.trophy_duration_seconds);
 	args.Flag(config.perf_overlay_enabled, "--perf-overlay");
 	args.Flag(config.skip_notice_screen, "--skip-notice-screen");
+	if (!effective.launch_activity.empty()) {
+		args.Value("--launch-activity", effective.launch_activity);
+	}
 	args.Flag(config.network_connected, "--network-connected");
 	args.Flag(config.psn_emulation_enabled, "--emulate-psn");
 	args.Flag(config.tessellation_enabled, "--tessellation");

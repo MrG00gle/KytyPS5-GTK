@@ -27,6 +27,8 @@ namespace kyty::core {
 // - each boolean field as its flag when true, except trophy_enabled, which gives
 //   --no-trophy-notifications when false, and pro_enabled, which gives --trinity;
 // - --flush-draws always (0 is off);
+// - --launch-activity <launch_activity> after --skip-notice-screen when it is not empty (upstream
+//   KytyPS5's launcher);
 // - with pro_enabled only: --pssr-upscaler; for DLSS also --dlss-folder (also when empty) and
 //   --dlss-preset unless dlss_preset is Default; for FSR also --fsr-folder;
 // - the enum fields as their key names (dlss_preset as its letter), and every number in decimal;

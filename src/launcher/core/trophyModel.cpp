@@ -3,6 +3,7 @@
 #include "common/archive.h"
 #include "common/file.h"
 #include "common/trophies.h"
+#include "launcher/core/gameContent.h"
 
 #include <algorithm>
 #include <charconv>
@@ -246,6 +247,25 @@ GameTrophies LoadGameTrophies(const GameEntry& entry, const fs::path& data_dir, 
 		result.packages.push_back(std::move(loaded));
 	}
 	return result;
+}
+
+bool IsLaunchActivityId(std::string_view id) {
+	// The Emulator's MAX_ACTIVITY_ID_LENGTH and its printable-character rule (emulatorOptions.cpp).
+	constexpr std::size_t kMaxActivityIdLength = 32;
+	return !id.empty() && id.size() <= kMaxActivityIdLength &&
+	       std::all_of(id.begin(), id.end(), [](char c) { return c >= ' ' && c <= '~'; });
+}
+
+std::vector<std::string> LoadActivityIds(const GameEntry& entry) {
+	const auto package = ResolveEntryFile(entry.path, entry.kind,
+	                                      Common::Trophies::UdsPackagePath(0).generic_string());
+	std::vector<std::string> ids;
+	for (const auto& id: Common::Trophies::LoadActivityIds(package)) {
+		if (IsLaunchActivityId(id)) {
+			ids.push_back(id);
+		}
+	}
+	return ids;
 }
 
 } // namespace kyty::core

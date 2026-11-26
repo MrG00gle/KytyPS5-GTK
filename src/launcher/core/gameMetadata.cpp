@@ -4,6 +4,7 @@
 #include "launcher/core/text.h"
 #include "launcher/core/version.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -110,6 +111,27 @@ bool SupportsProMode(const Json& root) {
 	return (bits & kProModeAttribute) != 0;
 }
 
+// A launchActivity intent among gameIntent.permittedIntents (upstream KytyPS5's launcher, commit
+// 2638b1b0).
+bool HasActivityIntent(const Json& root) {
+	const auto intent = root.find("gameIntent");
+	if (intent == root.end() || !intent->is_object()) {
+		return false;
+	}
+	const auto permitted = intent->find("permittedIntents");
+	if (permitted == intent->end() || !permitted->is_array()) {
+		return false;
+	}
+	return std::any_of(permitted->begin(), permitted->end(), [](const Json& item) {
+		if (!item.is_object()) {
+			return false;
+		}
+		const auto type = item.find("intentType");
+		return type != item.end() && type->is_string() &&
+		       type->get_ref<const std::string&>() == "launchActivity";
+	});
+}
+
 } // namespace
 
 std::string FallbackTitle(const std::filesystem::path& entry_path, GameEntry::Kind kind) {
@@ -148,7 +170,8 @@ GameMetadata ParseParamJson(std::string_view bytes, std::string_view fallback_ti
 	}
 	metadata.firmware_version =
 	    FormatSystemSoftwareVersion(GetString(root, "requiredSystemSoftwareVersion"));
-	metadata.pro_supported = SupportsProMode(root);
+	metadata.pro_supported   = SupportsProMode(root);
+	metadata.activity_intent = HasActivityIntent(root);
 	return metadata;
 }
 

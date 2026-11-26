@@ -48,6 +48,7 @@ public:
 
 	// See GameViewShell.
 	void SetEmptySpaceMenu(GMenuModel* menu);
+	void SetGameMenu(GMenuModel* menu);
 	bool PopupMenuAt(double x, double y);
 	bool PopupMenuForSelection();
 

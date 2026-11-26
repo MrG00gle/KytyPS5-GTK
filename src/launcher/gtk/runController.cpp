@@ -97,7 +97,7 @@ void RunController::Refuse(const std::string& body) {
 	}
 }
 
-bool RunController::Run(KytyGame* game) {
+bool RunController::Run(KytyGame* game, const std::string& activity) {
 	g_return_val_if_fail(KYTY_IS_GAME(game), false);
 	const core::GameEntry entry     = kyty_game_get_entry(game);
 	auto&                 run_state = m_context.run_state;
@@ -131,8 +131,9 @@ bool RunController::Run(KytyGame* game) {
 	// 4.-6. The arguments from the configuration as it is now (10.1).
 	const auto cheat_plan =
 	    core::FindCheatPlan(m_context.services.environment, data_dir, entry.title_id);
-	const auto effective =
+	auto effective =
 	    core::ResolveEffectiveConfiguration(m_context.settings.loaded.settings, entry, cheat_plan);
+	effective.launch_activity          = activity;
 	std::vector<std::string> arguments = core::BuildEmulatorArguments(entry, effective);
 
 	// 7. No title sound while the game runs (8.10); a new log (10.1).
