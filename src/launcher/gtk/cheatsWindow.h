@@ -5,20 +5,23 @@
 // PatchesDialog (src/launcher/src/patchesDialog.cpp). The main window offers it only for title IDs
 // that core::IsCheatTitleId accepts.
 //
-// Remote view: the credit link (core::kHenCheatsRepository through DesktopLauncher::OpenUri), the
-// HEN Cheats Collection files of the game's title ID (core::CheatCatalog, the installed version's
-// files first through core::PutInstalledVersionFirst) with version, format, and file name, the
-// collection's title of the file as the tooltip, and the status line (the number of files, or
-// none, and the indexes that could not be loaded with "Use Refresh to retry."). Selecting a file
-// previews it (core::RemoteCheats::Fetch with the game's title ID, version, and executable; MC4
-// and SHN files converted to cheat JSON as upstream KytyPS5 commit 91c5820c does): its cheats,
-// name, credits, and version, and why it cannot be
-// imported when it does not download, parse, or match the game; Import to Local is enabled only
-// for an importable file and again disabled after a failure. Refresh cancels a pending preview and
-// loads the list again. Import to Local (core::ImportRemoteCheats: _Patches/<TITLE_ID>.json with
-// every cheat off) is refused while the local file cannot be read, asks "Replace local cheats?"
-// when a local file exists, and, when the local file appeared or changed meanwhile, reads it again
-// and asks again; then it shows the Local view.
+// Remote view: the credit links (core::kKytyModulesRepository and core::kHenCheatsRepository
+// through DesktopLauncher::OpenUri), the KytyPS5-Modules patches and cheats and the HEN Cheats
+// Collection files of the game's title ID (core::CheatCatalog, the installed version's files first
+// through core::PutInstalledVersionFirst) with version, type (Patch or Cheat), and name (upstream
+// KytyPS5 commit d2ec91b8), the list's title of the file as the tooltip, and the status line (the
+// number of files, or none, and the lists that could not be loaded with "Use Refresh to retry.").
+// Selecting a file previews it (core::RemoteCheats::Fetch with the game's title ID, version, and
+// executable; MC4 and SHN files converted to cheat JSON as upstream KytyPS5 commit 91c5820c does):
+// its cheats, name, credits, and version, and why it cannot be imported when it does not download,
+// parse, or match the game; Import to Local is enabled only for an importable file and again
+// disabled after a failure. Refresh cancels a pending preview and loads the list again. Import to
+// Local (core::ImportRemoteCheats: _Patches/<TITLE_ID>.json with every imported cheat off and the
+// game's executable) is refused while the local file cannot be read, asks "Import to Local" when a
+// local file exists (Cancel, the default; Replace; and Keep other cheats when the local file is a
+// cheat file of this game whose other cheats would stay, core::MergeCheatDocuments), and, when the
+// local file appeared or changed meanwhile, reads it again and asks again; then it shows the Local
+// view.
 //
 // Local view: the cheats of the local cheat file (core::LoadLocalCheats) with check boxes, the
 // status line (no file, cannot be read with the core's reason, not valid with the parse error, or
@@ -29,8 +32,9 @@
 // Enable all and Disable all, which change only the check boxes. The local file is read and written
 // on the main thread (at most core::kMaxCheatFileBytes), as in Qt.
 //
-// The window opens at 900x700, the preview keeps a minimum height, and the file list's Version
-// column reserves its width while the list loads (phase 7 D29). Escape and Close close the window.
+// The window opens at 900x700, the preview keeps a minimum height, and the file list's Version and
+// Type columns reserve their widths while the list loads (phase 7 D29). Escape and Close close the
+// window.
 
 #include "launcher/core/gameMetadata.h"
 #include "launcher/gtk/launcherContext.h"

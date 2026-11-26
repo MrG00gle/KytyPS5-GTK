@@ -253,6 +253,28 @@ void TestTrainers() {
 	      "an MC4 file that does not decrypt to a trainer");
 }
 
+// A KytyPS5-Modules file (upstream KytyPS5 commit d2ec91b8): downloaded from its catalog's URL; a
+// file without "process" matches any executable of the game.
+void TestModulesFile() {
+	RemoteCheatFile file {"Unlock everything", "Game", "01.000", "json"};
+	file.kind = kyty::core::RemoteCheatKind::Patch;
+	file.url  = "https://kytyps5.github.io/KytyPS5-Modules/patches/json/PPSA01234/unlock.json";
+	Harness    harness;
+	const auto result = harness.Run(
+	    ContentGen::ResponseOf(R"({"id":"PPSA01234","version":"01.000","name":"Game",)"
+	                           R"("credits":["Modules"],"mods":[{"name":"Unlock all","memory":[)"
+	                           R"({"offset":"0x40","on":"01","off":"00"}]}]})"),
+	    file, CheatGame {"PPSA01234", "01.000", "game.elf"});
+	Check(harness.http.Requests().size() == 1 && harness.http.Requests()[0].url == file.url,
+	      "the file's own URL");
+	Check(harness.http.Requests()[0].redirects == kyty::core::RedirectPolicy::SameOrigin &&
+	          harness.http.Requests()[0].max_bytes == kMaxRemoteCheatFileBytes,
+	      "the limits of every remote file");
+	Check(result.importable && result.file == file && result.document &&
+	          result.document->cheats.size() == 1 && result.document->process.empty(),
+	      "a file without \"process\" is importable: " + result.error);
+}
+
 void TestNewerFetch() {
 	Harness harness;
 	auto    first = ContentGen::ResponseOf(ValidBody());
@@ -325,6 +347,7 @@ int main() {
 	TestFailures();
 	TestUnsupported();
 	TestTrainers();
+	TestModulesFile();
 	TestNewerFetch();
 	TestLocalFileUnchanged();
 	std::printf("RemoteCheatsTests: all tests passed\n");

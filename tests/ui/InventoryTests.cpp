@@ -1101,7 +1101,7 @@ KYTY_UI_CASE(lfi_12) {
 		                                        "cheats") == FALSE,
 		      "no cheats for a game without a PPSA title ID");
 		if (menu != nullptr) {
-			GtkWidget* cheats = MenuItem(GTK_WIDGET(menu), "Cheats (experimental)…");
+			GtkWidget* cheats = MenuItem(GTK_WIDGET(menu), "Cheats and patches (experimental)…");
 			Check(cheats == nullptr || gtk_widget_get_mapped(cheats) == FALSE ||
 			          gtk_widget_get_sensitive(cheats) == FALSE,
 			      "the Cheats item is not offered for it");

@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -287,7 +288,8 @@ std::optional<CheatProblem> ValidateRemoteImport(const CheatDocument& document,
 		                   std::string(version) + ").",
 		               std::string(version));
 	}
-	if (process.empty() || !EqualsIgnoreCase(StringMember(root, "process"), process)) {
+	if (process.empty() || (Member(root, "process") != nullptr &&
+	                        !EqualsIgnoreCase(StringMember(root, "process"), process))) {
 		return Problem(CheatProblemKind::ProcessMismatch,
 		               "The cheat file does not match this game's executable (" +
 		                   std::string(process) + ").",
@@ -371,16 +373,48 @@ Expected<void, CheatSaveError> SaveIfUnchanged(const std::filesystem::path&    p
 	return {};
 }
 
+CheatDocument MergeCheatDocuments(const CheatDocument* local, const CheatDocument& imported,
+                                  std::string_view process) {
+	auto root = OrderedJson::parse(imported.json.begin(), imported.json.end(), nullptr, false);
+	if (root.is_discarded() || CheckDocument(root)) {
+		return {};
+	}
+	auto                  mods = OrderedJson::array();
+	std::set<std::string> names;
+	for (auto mod: root["mods"]) {
+		names.insert(StringMember(mod, "name"));
+		mod["enabled"] = false;
+		mods.push_back(std::move(mod));
+	}
+	if (local != nullptr && !ValidateRemoteImport(*local, StringMember(root, "id"),
+	                                              StringMember(root, "version"), process)) {
+		// ValidateRemoteImport parsed local's json and found a "mods" array.
+		const auto local_root =
+		    OrderedJson::parse(local->json.begin(), local->json.end(), nullptr, false);
+		std::size_t kept = 0;
+		for (const auto& mod: *Member(local_root, "mods")) {
+			if (!names.contains(StringMember(mod, "name"))) {
+				mods.insert(mods.begin() + static_cast<std::ptrdiff_t>(kept++), mod);
+			}
+		}
+	}
+	root["mods"]    = std::move(mods);
+	root["process"] = std::string(process);
+	return MakeDocument(root);
+}
+
 Expected<std::filesystem::path, CheatSaveError>
 ImportRemoteCheats(const std::filesystem::path& data_dir, std::string_view title_id,
-                   const CheatDocument&            document,
+                   const CheatDocument& document, std::string_view process,
+                   const CheatDocument*            keep,
                    std::optional<std::string_view> expected_local_bytes) {
 	auto path = CheatFilePath(data_dir, title_id);
 	if (path.empty()) {
 		return MakeUnexpected(SaveError(CheatSaveErrorKind::Failed, kUnsupportedTitleId,
 		                                CheatSaveFailure::UnsupportedTitleId));
 	}
-	if (auto saved = SaveIfUnchanged(path, WithAllDisabled(document), expected_local_bytes);
+	if (auto saved = SaveIfUnchanged(path, MergeCheatDocuments(keep, document, process),
+	                                 expected_local_bytes);
 	    !saved) {
 		return MakeUnexpected(std::move(saved).error());
 	}

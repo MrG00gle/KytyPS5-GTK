@@ -6,7 +6,8 @@
 // - keyboard_tab_cycle_<window> (main window, settings window with every page, input mapping
 //   window with both tabs, cheats window with both tabs, an alert): Tab (the window's move-focus)
 //   goes through a cycle of focus stops that reaches every focusable interactive control (one stop
-//   for a list or grid view, whose items take the arrow keys) and comes back to the start;
+//   for a list or grid view, whose items take the arrow keys; one stop per link of a label with
+//   links, which GTK's Tab goes through in turn) and comes back to the start;
 //   Shift+Tab goes through the same stops in reverse. The cheats window shows Alpha Game's content
 //   (UiContext::WriteGameContent: two local cheats, the remote file list), and Tab reaches its
 //   content controls (KytyUi::GameContentControls).
@@ -98,6 +99,23 @@ bool FocusReachable(GtkWidget* widget) {
 	return true;
 }
 
+// The links of a label (its markup's <a> elements); GTK moves Tab through them in turn before the
+// focus leaves the label, so the label is one stop per link (the cheats window's credit line has
+// two).
+int LinkCount(GtkWidget* widget) {
+	if (widget == nullptr || !GTK_IS_LABEL(widget) ||
+	    gtk_label_get_use_markup(GTK_LABEL(widget)) == FALSE) {
+		return 0;
+	}
+	const std::string_view markup = gtk_label_get_label(GTK_LABEL(widget));
+	int                    links  = 0;
+	for (auto at = markup.find("<a "); at != std::string_view::npos;
+	     at      = markup.find("<a ", at + 1)) {
+		links++;
+	}
+	return links;
+}
+
 std::string Stops(const std::vector<GtkWidget*>& stops) {
 	std::string text;
 	for (GtkWidget* stop: stops) {
@@ -143,7 +161,12 @@ std::vector<GtkWidget*> CheckTabCycle(GtkWindow* window, const std::string& wher
 		if (!Check(next != nullptr, where + ": Tab keeps a focus")) {
 			return {};
 		}
-		if (std::find(stops.begin(), stops.end(), next) != stops.end()) {
+		// The next link of a label with links: the label again, right after itself.
+		const auto repeats   = std::find_if(stops.rbegin(), stops.rend(),
+		                                    [next](GtkWidget* stop) { return stop != next; }) -
+		                       stops.rbegin();
+		const bool next_link = repeats > 0 && repeats < LinkCount(next);
+		if (!next_link && std::find(stops.begin(), stops.end(), next) != stops.end()) {
 			KytyUi::Fail(where + ": Tab comes back to " + Describe(next) +
 			             " without reaching the first stop again; the stops:" + Stops(stops));
 			return {};

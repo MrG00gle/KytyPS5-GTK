@@ -489,18 +489,28 @@ CoreText CheatFetchErrorText(const core::CheatFetchError& error) {
 }
 
 CoreText CheatIndexFailureText(const core::CheatIndexFailure& failure) {
-	CoreText reason;
+	const bool modules = failure.source == core::kModulesCheatSource;
+	const auto skipped = Number(static_cast<uint64_t>(failure.skipped));
+	CoreText   reason;
 	if (failure.fetch.failure != core::HttpFailure::None) {
 		reason = CheatFetchErrorText(failure.fetch);
 	} else if (failure.problem == core::CheatIndexProblem::SkippedEntries) {
-		reason = Plural(NGettextNoop("Skipped %llu invalid cheat index entry.",
-		                             "Skipped %llu invalid cheat index entries."),
-		                failure.skipped, {Number(static_cast<uint64_t>(failure.skipped))});
+		reason = modules ? Plural(NGettextNoop("Skipped %llu invalid module catalog entry.",
+		                                       "Skipped %llu invalid module catalog entries."),
+		                          failure.skipped, {skipped})
+		                 : Plural(NGettextNoop("Skipped %llu invalid cheat index entry.",
+		                                       "Skipped %llu invalid cheat index entries."),
+		                          failure.skipped, {skipped});
+	} else if (modules) {
+		reason = Text(N_("Invalid module catalog."));
 	} else {
 		reason = Text(N_("Invalid cheat index."));
 	}
-	// TRANSLATORS: a cheat file format ("JSON", "MC4", "SHN"), then what went wrong with its list.
-	return Text(N_("%s: %s"), {Upper(failure.format), Render(reason)});
+	// TRANSLATORS: the KytyPS5-Modules catalog in the list of the remote cheat lists that failed.
+	const std::string source = modules ? Render(Text(N_("Modules"))) : Upper(failure.source);
+	// TRANSLATORS: where a remote list comes from ("Modules", or a cheat file format: "JSON",
+	// "MC4", "SHN"), then what went wrong with it.
+	return Text(N_("%s: %s"), {source, Render(reason)});
 }
 
 std::string CheatCatalogErrorText(const core::CheatCatalogResult& result) {

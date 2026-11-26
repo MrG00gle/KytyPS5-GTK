@@ -1,7 +1,8 @@
 #pragma once
 
-// Downloads one HEN Cheats Collection file for the cheats dialog's Remote preview and import
-// (task 16.2; Requirements 11.5, 11.17; Property 33), ported from the Qt launcher's
+// Downloads one file of the remote list (a HEN Cheats Collection file, or a KytyPS5-Modules file
+// at its catalog's URL) for the cheats dialog's Remote preview and import (task 16.2;
+// Requirements 11.5, 11.17; Property 33), ported from the Qt launcher's
 // CheatRepository::Fetch (src/launcher/src/cheatRepository.cpp) and the dialog's FileLoaded
 // handling (src/launcher/src/patchesDialog.cpp). The download has the limits of cheatCatalog.h:
 // at most kMaxRemoteCheatFileBytes, a complete response within kCheatRequestTimeout. A file is

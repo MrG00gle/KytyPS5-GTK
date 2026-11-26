@@ -1,9 +1,11 @@
-// Example tests of the HEN Cheats Collection file list (src/launcher/core/cheatCatalog.h, task
-// 16.2; Requirements 11.4, 11.17) with FakeHttpClient and FakeScheduler only (no network): the
-// URLs and the collection's name pattern, index parsing as Qt's ParseIndex, the request limits
-// (2 MiB, 30 s, no stall limit), the merged and sorted result of the three indexes, every failure
-// kind (network, HTTP status, 2 MiB + 1 bytes, the 30 s limit on the virtual clock), a client that
-// ignores max_bytes, a new Load cancelling the previous one, Cancel, and destruction mid-run.
+// Example tests of the remote file list (src/launcher/core/cheatCatalog.h, task 16.2; Requirements
+// 11.4, 11.17) with FakeHttpClient and FakeScheduler only (no network): the URLs and the
+// collection's name pattern, index parsing as Qt's ParseIndex, the KytyPS5-Modules catalog and its
+// URLs as upstream KytyPS5's ParseModules (commit d2ec91b8, with its test's catalog), the request
+// limits (2 MiB, 30 s, no stall limit), the merged and sorted result of the four lists, every
+// failure kind (network, HTTP status, 2 MiB + 1 bytes, the 30 s limit on the virtual clock), a
+// client that ignores max_bytes, a new Load cancelling the previous one, Cancel, and destruction
+// mid-run.
 
 #include "launcher/core/cheatCatalog.h"
 #include "support/contentGenerators.h"
@@ -11,6 +13,7 @@
 #include "support/fakeScheduler.h"
 #include "support/noDisplay.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -42,6 +45,9 @@ using std::chrono::milliseconds;
 
 constexpr char kBase[] = "https://raw.githubusercontent.com/TeeKay87/HEN-Cheats-Collection/master/"
                          "cheats/";
+constexpr char kModules[] = "https://kytyps5.github.io/KytyPS5-Modules/";
+// A catalog without files for any title.
+constexpr char kNoModules[] = R"({"patches":{}})";
 
 void Check(bool value, const std::string& message) {
 	if (!value) {
@@ -102,6 +108,138 @@ void TestUrls() {
 	const RemoteCheatFile versions {"CUSA00001_1.2.3_x_y.json.json", "", "", "json"};
 	Check(!kyty::core::RemoteCheatFileUrl(versions).empty(),
 	      "several version parts, '_' and '.' in the rest");
+
+	// A file with its own URL (a KytyPS5-Modules entry) keeps it; the format must still be known.
+	RemoteCheatFile module {"Unlock everything", "Game", "01.000", "json"};
+	module.kind = kyty::core::RemoteCheatKind::Patch;
+	module.url  = std::string(kModules) + "patches/json/a.json";
+	Check(kyty::core::RemoteCheatFileUrl(module) == module.url &&
+	          kyty::core::IsSupportedRemoteCheatFile(module),
+	      "a file's own URL");
+	module.format = "txt";
+	Check(kyty::core::RemoteCheatFileUrl(module).empty(), "no URL for an unknown format");
+
+	using kyty::core::CheatSourceUrl;
+	Check(CheatSourceUrl("modules") == std::string(kModules) + "index.min.json" &&
+	          CheatSourceUrl("json") == CheatIndexUrl("json") && CheatSourceUrl("mc4.txt").empty(),
+	      "the lists' URLs");
+	Check(kyty::core::kCheatSources ==
+	          std::array<std::string_view, 4> {"modules", "json", "mc4", "shn"},
+	      "the KytyPS5-Modules catalog comes first");
+}
+
+// Upstream's QUrl::resolved and isParentOf against https://kytyps5.github.io/KytyPS5-Modules/.
+void TestModulesUrls() {
+	using kyty::core::ResolveModulesUrl;
+	for (const auto& [path, url]: std::vector<std::pair<std::string, std::string>> {
+	         {"patches/json/a.json", "patches/json/a.json"},
+	         {"./a.json", "a.json"},
+	         {"x/../y/./z.json", "y/z.json"},
+	         {"x/../../KytyPS5-Modules/y.json", "y.json"},
+	         {"/KytyPS5-Modules/a.json", "a.json"},
+	         {"//kytyps5.github.io/KytyPS5-Modules/a.json", "a.json"},
+	         {"https://kytyps5.github.io/KytyPS5-Modules/a.json", "a.json"},
+	         {"HTTPS://KytyPS5.GitHub.IO/KytyPS5-Modules/a.json", "a.json"},
+	         {"a.json?v=1&b=2#part", "a.json?v=1&b=2"},
+	         {"a b/\xC3\xA9\\\"<>^`{|}.json", "a%20b/%C3%A9%5C%22%3C%3E%5E%60%7B%7C%7D.json"},
+	         {"a%20b%2Fc.json", "a%20b%2Fc.json"},
+	         {"%61%7E%2d.json", "a~-.json"},
+	         {"100%.json", "100%25.json"},
+	         {"a.json?q=x y", "a.json?q=x%20y"},
+	     }) {
+		Check(ResolveModulesUrl(path) == std::string(kModules) + url,
+		      "'" + path + "' -> " + ResolveModulesUrl(path));
+	}
+	for (const std::string path: {
+	         "",
+	         "./",
+	         ".",
+	         "?x",
+	         "#x",
+	         "../escape.json",
+	         "../KytyPS5-ModulesX/a.json",
+	         "%2e%2e/escape.json",
+	         "%2E%2E/%2E%2E/escape.json",
+	         "a/../../escape.json",
+	         "/escape.json",
+	         "/kytyps5-modules/a.json",
+	         "/KytyPS5-Modules",
+	         "/KytyPS5-Modules/",
+	         "https://example.com/x.json",
+	         "//example.com/x.json",
+	         "http://kytyps5.github.io/KytyPS5-Modules/a.json",
+	         "https:/KytyPS5-Modules/a.json",
+	         "https:a.json",
+	         "https://user@kytyps5.github.io/KytyPS5-Modules/a.json",
+	         "https://kytyps5.github.io:443/KytyPS5-Modules/a.json",
+	         "file:///KytyPS5-Modules/a.json",
+	         "a:b.json",
+	     }) {
+		Check(ResolveModulesUrl(path).empty(),
+		      "no URL for '" + path + "': " + ResolveModulesUrl(path));
+	}
+	Check(ResolveModulesUrl("a+b.c-d:e/x.json").empty(), "a scheme with + . -");
+	Check(ResolveModulesUrl("1a:b/x.json") == std::string(kModules) + "1a:b/x.json",
+	      "a first segment with ':' that is not a scheme");
+}
+
+// Upstream's ParseModulesListsTitlePatchesAndCheatsInsideTheCatalog, then more.
+void TestParseModules() {
+	using kyty::core::ParseModulesCatalog;
+	using kyty::core::RemoteCheatKind;
+	const auto catalog = R"({
+		"patches": {
+			"PPSA00001": [{"path": "patches/json/a.json", "title": "Unlock", "gameName": "Game",
+			               "version": "01.000.000"}],
+			"PPSA00002": [{"path": "patches/json/other.json", "title": "Other"}]
+		},
+		"cheats": {
+			"PPSA00001": [{"path": "cheats/json/b.json", "title": "Lives", "version": "01.001.000"},
+			              {"path": "../escape.json"}, {"path": "https://example.com/x.json"},
+			              {"path": "//example.com/x.json"}, {}]
+		},
+		"configs": {"PPSA00001": [{"path": "configs/json/c.json", "title": "Preset"}]}
+	})";
+	const auto result  = ParseModulesCatalog(catalog, "ppsa00001");
+	Check(result.files.size() == 2, "the title's patch and valid cheat");
+	Check(result.files[0].name == "Unlock" && result.files[0].title == "Game" &&
+	          result.files[0].version == "01.000.000" && result.files[0].format == "json" &&
+	          result.files[0].kind == RemoteCheatKind::Patch &&
+	          result.files[0].url == std::string(kModules) + "patches/json/a.json",
+	      "the patch");
+	Check(result.files[1].name == "Lives" && result.files[1].title.empty() &&
+	          result.files[1].kind == RemoteCheatKind::Cheat &&
+	          result.files[1].url == std::string(kModules) + "cheats/json/b.json",
+	      "the cheat");
+	Check(result.error == "Skipped 4 invalid module catalog entries." &&
+	          result.problem == kyty::core::CheatIndexProblem::SkippedEntries &&
+	          result.skipped == 4,
+	      "four invalid entries: " + result.error);
+	Check(kyty::core::RemoteCheatFileUrl(result.files[0]) == result.files[0].url,
+	      "the download goes to the entry's URL");
+
+	const auto odd = ParseModulesCatalog(
+	    R"({"patches":{"PPSA00001":[7,{"path":"p.json","title":5,"gameName":null,"version":1}]},)"
+	    R"("cheats":{"PPSA00001":{"path":"c.json"}},"other":1})",
+	    " PPSA00001 ");
+	Check(odd.files.size() == 1 && odd.files[0].name.empty() && odd.files[0].title.empty() &&
+	          odd.files[0].version.empty() && odd.files[0].url == std::string(kModules) + "p.json",
+	      "members that are not strings read as \"\"");
+	Check(odd.error == "Skipped 1 invalid module catalog entries." && odd.skipped == 1,
+	      "an entry that is not an object is invalid; a list that is not an array lists nothing");
+	const auto groups = ParseModulesCatalog(R"({"patches":[],"cheats":"x"})", "PPSA00001");
+	Check(groups.files.empty() && groups.error.empty(), "groups that are not objects");
+	const auto none = ParseModulesCatalog(kNoModules, "PPSA00001");
+	Check(none.files.empty() && none.error.empty() &&
+	          none.problem == kyty::core::CheatIndexProblem::None,
+	      "a catalog without the title");
+	for (const std::string bytes:
+	     {"", "[]", "{}", "null", "not JSON", R"({"patches":{})", R"({"patches":{}} trailing)"}) {
+		const auto refused = ParseModulesCatalog(bytes, "PPSA00001");
+		Check(refused.files.empty() && refused.error == "Invalid module catalog." &&
+		          refused.problem == kyty::core::CheatIndexProblem::Invalid,
+		      "an invalid catalog: '" + bytes + "'");
+	}
 }
 
 void TestParseIndex() {
@@ -122,8 +260,10 @@ void TestParseIndex() {
 	                            "PPSA01234_01.003_e.json PPSA01234_01.004_w.json",
 	      "the title's files in index order: " + Names(index.files));
 	Check(index.files[0].title == "Game Title (EU)" && index.files[0].version == "01.000" &&
-	          index.files[0].format == "json",
-	      "the first file");
+	          index.files[0].format == "json" &&
+	          index.files[0].kind == kyty::core::RemoteCheatKind::Cheat &&
+	          index.files[0].url == std::string(kBase) + "json/PPSA01234_01.000_HenCheats.json",
+	      "the first file, a cheat at its collection URL");
 	Check(index.files[1].title == "\xEF\xBF\xBD bad byte", "ill-formed UTF-8 becomes U+FFFD");
 	Check(index.files[2].title.empty(), "an empty title");
 	Check(index.files[3].title == "ideographic space", "Unicode whitespace is trimmed");
@@ -150,8 +290,9 @@ void TestParseIndex() {
 	const auto mc4 =
 	    ParseCheatIndex("PPSA01234_1.0_a.mc4=x\nPPSA01234_1.0_a.json=y", "mc4", "PPSA01234");
 	Check(Names(mc4.files) == "PPSA01234_1.0_a.mc4" && mc4.files[0].format == "mc4" &&
+	          mc4.files[0].url == std::string(kBase) + "mc4/PPSA01234_1.0_a.mc4" &&
 	          mc4.error == "Skipped 1 invalid cheat index entries.",
-	      "an mc4 index");
+	      "an mc4 index (upstream's ParseIndexPointsAtTheCollectionFile)");
 }
 
 void TestOrdering() {
@@ -200,8 +341,9 @@ struct Harness {
 	std::unique_ptr<CheatCatalog>   catalog = std::make_unique<CheatCatalog>(
 	    http, [this](const CheatCatalogResult& result) { results.push_back(result); });
 
-	void Add(std::string_view format, FakeResponse response) {
-		http.AddResponse(CheatIndexUrl(format), std::move(response));
+	// The response of the list source ("modules", "json", "mc4", or "shn").
+	void Add(std::string_view source, FakeResponse response) {
+		http.AddResponse(kyty::core::CheatSourceUrl(source), std::move(response));
 	}
 
 	const CheatCatalogResult& Run(std::string_view title_id) {
@@ -215,6 +357,11 @@ struct Harness {
 
 void TestLoad() {
 	Harness harness;
+	harness.Add("modules",
+	            ContentGen::ResponseOf(
+	                R"({"patches":{"PPSA01234":[{"path":"patches/json/u.json","title":"Unlock",)"
+	                R"("gameName":"Game","version":"02.000"}]},"cheats":{"PPSA01234":[)"
+	                R"({"path":"cheats/json/l.json","title":"Lives","version":"01.000"}]}})"));
 	harness.Add("json", ContentGen::ResponseOf(
 	                        IndexBody({"PPSA01234_01.000_a.json=A", "PPSA01234_02.000_b.json=B",
 	                                   "PPSA09999_01.000_z.json=other"})));
@@ -223,22 +370,26 @@ void TestLoad() {
 	harness.Add("shn", ContentGen::ResponseOf(IndexBody({"PPSA01234_02.000_c.shn=C"})));
 	const auto& result = harness.Run("ppsa01234");
 	Check(Names(result.files) ==
-	          "PPSA01234_02.000_b.json PPSA01234_02.000_c.shn PPSA01234_01.000_a.json "
+	          "PPSA01234_02.000_b.json Unlock PPSA01234_02.000_c.shn Lives PPSA01234_01.000_a.json "
 	          "PPSA01234_01.000_a.mc4",
 	      "merged and sorted by version, format, name: " + Names(result.files));
+	Check(result.files[1].kind == kyty::core::RemoteCheatKind::Patch &&
+	          result.files[1].url == std::string(kModules) + "patches/json/u.json",
+	      "the KytyPS5-Modules patch");
 	Check(result.error == "MC4: Skipped 1 invalid cheat index entries.", "error: " + result.error);
-	Check(result.failures.size() == 1 && result.failures[0].format == "mc4" &&
+	Check(result.failures.size() == 1 && result.failures[0].source == "mc4" &&
 	          result.failures[0].problem == kyty::core::CheatIndexProblem::SkippedEntries &&
 	          result.failures[0].skipped == 1 &&
 	          result.failures[0].fetch.failure == kyty::core::HttpFailure::None,
 	      "the failure's parts");
 
 	const auto& requests = harness.http.Requests();
-	Check(requests.size() == 3, "three index requests");
+	Check(requests.size() == 4, "four list requests");
 	for (std::size_t i = 0; i < requests.size(); i++) {
 		const auto& request = requests[i];
-		Check(request.url == CheatIndexUrl(kyty::core::kCheatFormats[i]), "in format order");
-		Check(request.max_bytes == 2u * 1024u * 1024u, "2 MiB per index");
+		Check(request.url == kyty::core::CheatSourceUrl(kyty::core::kCheatSources[i]),
+		      "the KytyPS5-Modules catalog, then the indexes in format order");
+		Check(request.max_bytes == 2u * 1024u * 1024u, "2 MiB per list");
 		Check(request.total_timeout == milliseconds {30000}, "30 s per request");
 		Check(request.stall_timeout == milliseconds {0}, "no stall limit");
 		Check(request.headers.size() == 1 && request.headers[0].first == "User-Agent" &&
@@ -257,6 +408,9 @@ void TestFailures() {
 	FakeResponse network;
 	network.network_failure = true;
 	network.failure_message = "connection refused";
+	FakeResponse not_found;
+	not_found.status = 404;
+	harness.Add("modules", not_found);
 	harness.Add("json", network);
 	FakeResponse status;
 	status.status = 503;
@@ -264,23 +418,45 @@ void TestFailures() {
 	harness.Add("shn", ContentGen::ResponseOf(std::string(kMaxCheatIndexBytes + 1, '\n')));
 	const auto& result = harness.Run("PPSA01234");
 	Check(result.files.empty(), "no files");
-	Check(result.error == "JSON: Cheat download failed: connection refused.\n"
+	Check(result.error == "Modules: Unexpected response from the cheat repository (HTTP 404).\n"
+	                      "JSON: Cheat download failed: connection refused.\n"
 	                      "MC4: Unexpected response from the cheat repository (HTTP 503).\n"
 	                      "SHN: Cheat download exceeds the size limit of 2 MiB.",
-	      "one line per failed index, in format order: " + result.error);
+	      "one line per failed list, in kCheatSources order: " + result.error);
 	using kyty::core::HttpFailure;
-	Check(result.failures.size() == 3 && result.failures[0].format == "json" &&
-	          result.failures[0].fetch.failure == HttpFailure::Network &&
-	          result.failures[0].fetch.detail == "connection refused" &&
-	          result.failures[1].format == "mc4" &&
-	          result.failures[1].fetch.failure == HttpFailure::Status &&
-	          result.failures[1].fetch.status == 503 && result.failures[2].format == "shn" &&
-	          result.failures[2].fetch.failure == HttpFailure::TooLarge &&
-	          result.failures[2].fetch.limit_mib == 2,
-	      "the failures' parts, in format order");
+	Check(result.failures.size() == 4 && result.failures[0].source == "modules" &&
+	          result.failures[0].fetch.failure == HttpFailure::Status &&
+	          result.failures[0].fetch.status == 404 && result.failures[1].source == "json" &&
+	          result.failures[1].fetch.failure == HttpFailure::Network &&
+	          result.failures[1].fetch.detail == "connection refused" &&
+	          result.failures[2].source == "mc4" &&
+	          result.failures[2].fetch.failure == HttpFailure::Status &&
+	          result.failures[2].fetch.status == 503 && result.failures[3].source == "shn" &&
+	          result.failures[3].fetch.failure == HttpFailure::TooLarge &&
+	          result.failures[3].fetch.limit_mib == 2,
+	      "the failures' parts, in kCheatSources order");
+
+	// The catalog's own problems.
+	for (const auto& [body, error, problem]:
+	     std::vector<std::tuple<std::string, std::string, kyty::core::CheatIndexProblem>> {
+	         {"{}", "Modules: Invalid module catalog.", kyty::core::CheatIndexProblem::Invalid},
+	         {R"({"cheats":{"PPSA01234":[{"path":"../x.json"},{"path":"/x.json"}]}})",
+	          "Modules: Skipped 2 invalid module catalog entries.",
+	          kyty::core::CheatIndexProblem::SkippedEntries}}) {
+		Harness modules;
+		modules.Add("modules", ContentGen::ResponseOf(body));
+		for (const auto format: kyty::core::kCheatFormats) {
+			modules.Add(format, ContentGen::ResponseOf("\n"));
+		}
+		const auto& loaded = modules.Run("PPSA01234");
+		Check(loaded.error == error && loaded.failures.size() == 1 &&
+		          loaded.failures[0].source == "modules" && loaded.failures[0].problem == problem,
+		      "the catalog's problem: " + loaded.error);
+	}
 
 	// Exactly 2 MiB is accepted; an empty body is an invalid index.
 	Harness limits;
+	limits.Add("modules", ContentGen::ResponseOf(kNoModules));
 	limits.Add("json", ContentGen::ResponseOf(ContentGen::BodyOfSize("PPSA01234_1.0_a.json=A\n", "",
 	                                                                 kMaxCheatIndexBytes, '\n')));
 	limits.Add("mc4", ContentGen::ResponseOf(""));
@@ -311,6 +487,7 @@ void TestTimeout() {
 		                           {24, 24});
 		response.latency        = milliseconds {latency};
 		response.chunk_interval = milliseconds {interval};
+		harness.Add("modules", ContentGen::ResponseOf(kNoModules));
 		harness.Add("json", response);
 		harness.Add("mc4", ContentGen::ResponseOf("\n"));
 		harness.Add("shn", ContentGen::ResponseOf("\n"));
@@ -356,6 +533,7 @@ void TestClientSideLimit() {
 	std::vector<CheatCatalogResult> results;
 	CheatCatalog catalog(http,
 	                     [&](const CheatCatalogResult& result) { results.push_back(result); });
+	inner.AddResponse(kyty::core::CheatSourceUrl("modules"), ContentGen::ResponseOf(kNoModules));
 	inner.AddResponse(CheatIndexUrl("json"),
 	                  ContentGen::ResponseOf(std::string(kMaxCheatIndexBytes + 1, '\n'),
 	                                         {kMaxCheatIndexBytes, 1}));
@@ -374,11 +552,13 @@ void TestReload() {
 	Harness harness;
 	auto    slow = ContentGen::ResponseOf("PPSA01234_1.0_old.json=old\n");
 	slow.latency = milliseconds {5000};
+	harness.Add("modules", slow);
 	harness.Add("json", slow);
 	harness.Add("mc4", slow);
 	harness.Add("shn", slow);
 	harness.catalog->Load("PPSA01234");
 	harness.scheduler.AdvanceBy(milliseconds {100});
+	harness.Add("modules", ContentGen::ResponseOf(kNoModules));
 	harness.Add("json", ContentGen::ResponseOf("PPSA05678_1.0_new.json=new\n"));
 	harness.Add("mc4", ContentGen::ResponseOf("\n"));
 	harness.Add("shn", ContentGen::ResponseOf("\n"));
@@ -387,8 +567,8 @@ void TestReload() {
 	Check(harness.results.size() == 1 &&
 	          Names(harness.results[0].files) == "PPSA05678_1.0_new.json",
 	      "only the newer Load is delivered");
-	Check(harness.http.Requests().size() == 6 && harness.http.ActiveCount() == 0,
-	      "the first three requests were cancelled");
+	Check(harness.http.Requests().size() == 8 && harness.http.ActiveCount() == 0,
+	      "the first four requests were cancelled");
 
 	// Cancel: no result.
 	Harness cancelled;
@@ -425,13 +605,13 @@ void TestReload() {
 		}
 	});
 	for (int i = 0; i < 2; i++) {
-		for (const auto format: kyty::core::kCheatFormats) {
-			http.AddResponse(CheatIndexUrl(format), ContentGen::ResponseOf("\n"));
+		for (const auto source: kyty::core::kCheatSources) {
+			http.AddResponse(kyty::core::CheatSourceUrl(source), ContentGen::ResponseOf("\n"));
 		}
 	}
 	catalog->Load("PPSA01234");
 	scheduler.RunUntilIdle();
-	Check(results.size() == 2 && http.Requests().size() == 6, "a reload from the callback");
+	Check(results.size() == 2 && http.Requests().size() == 8, "a reload from the callback");
 
 	// Without a callback.
 	FakeScheduler  quiet_scheduler;
@@ -439,7 +619,7 @@ void TestReload() {
 	CheatCatalog   quiet(quiet_http, {});
 	quiet.Load("PPSA01234");
 	quiet_scheduler.RunUntilIdle();
-	Check(!quiet.Loading() && quiet_http.Requests().size() == 3, "the callback is optional");
+	Check(!quiet.Loading() && quiet_http.Requests().size() == 4, "the callback is optional");
 }
 
 } // namespace
@@ -447,6 +627,8 @@ void TestReload() {
 int main() {
 	KytyTests::CheckNoDisplay("CheatCatalogTests");
 	TestUrls();
+	TestModulesUrls();
+	TestParseModules();
 	TestParseIndex();
 	TestOrdering();
 	TestFailureTexts();

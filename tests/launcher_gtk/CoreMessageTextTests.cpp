@@ -306,7 +306,9 @@ void TestCheatSaveErrors() {
 	const auto write = kyty::core::SaveIfUnchanged(path, document, std::string_view(bytes));
 	kyty::core::SetAtomicFileFaultForTesting({});
 	check(write.error(), "a write that fails");
-	check(kyty::core::ImportRemoteCheats(temp.Path(), "CUSA01234", document, std::nullopt).error(),
+	check(kyty::core::ImportRemoteCheats(temp.Path(), "CUSA01234", document, "eboot.bin", nullptr,
+	                                     std::nullopt)
+	          .error(),
 	      "an unsupported title");
 	for (int failure = 1; failure <= static_cast<int>(CheatSaveFailure::Write); failure++) {
 		Check(failures.count(static_cast<CheatSaveFailure>(failure)) == 1,
@@ -330,12 +332,15 @@ void TestCheatDownloads() {
 		          "download failure " + std::to_string(static_cast<int>(result.failure)));
 	}
 
-	// The catalog: one line per index that failed, as the core joins them.
+	// The catalog: one line per list that failed, as the core joins them.
 	KytyTests::FakeScheduler  scheduler;
 	KytyTests::FakeHttpClient http(scheduler);
 	KytyTests::FakeResponse   network;
 	network.network_failure = true;
 	network.failure_message = "connection refused";
+	KytyTests::FakeResponse modules;
+	modules.body = R"({"cheats":{"PPSA01234":[{"path":"../x.json"},{"path":"/y.json"}]}})";
+	http.AddResponse(kyty::core::CheatSourceUrl("modules"), modules);
 	http.AddResponse(kyty::core::CheatIndexUrl("json"), network);
 	KytyTests::FakeResponse status;
 	status.status = 404;
@@ -348,9 +353,9 @@ void TestCheatDownloads() {
 	    http, [&](const kyty::core::CheatCatalogResult& result) { results.push_back(result); });
 	catalog.Load("PPSA01234");
 	scheduler.RunUntilIdle();
-	Check(results.size() == 1 && results[0].failures.size() == 3, "three failed indexes");
+	Check(results.size() == 1 && results[0].failures.size() == 4, "four failed lists");
 	for (const auto& failure: results[0].failures) {
-		CheckKey(kyty::gtk::CheatIndexFailureText(failure), "the index " + failure.format);
+		CheckKey(kyty::gtk::CheatIndexFailureText(failure), "the list " + failure.source);
 	}
 	Check(kyty::gtk::CheatCatalogErrorText(results[0]) == results[0].error,
 	      "the catalog's lines: \"" + kyty::gtk::CheatCatalogErrorText(results[0]) + "\"");
@@ -361,6 +366,15 @@ void TestCheatDownloads() {
 	    "json", {}, kyty::core::CheatIndexProblem::SkippedEntries, 1};
 	CheckText(kyty::gtk::CheatIndexFailureText(one), "JSON: Skipped 1 invalid cheat index entry.",
 	          "one skipped line (the singular form; the core says \"entries\")");
+	kyty::core::CheatIndexFailure catalog_invalid {
+	    "modules", {}, kyty::core::CheatIndexProblem::Invalid, 0};
+	CheckText(kyty::gtk::CheatIndexFailureText(catalog_invalid), "Modules: Invalid module catalog.",
+	          "an invalid KytyPS5-Modules catalog");
+	kyty::core::CheatIndexFailure catalog_one {
+	    "modules", {}, kyty::core::CheatIndexProblem::SkippedEntries, 1};
+	CheckText(kyty::gtk::CheatIndexFailureText(catalog_one),
+	          "Modules: Skipped 1 invalid module catalog entry.",
+	          "one skipped catalog entry (the singular form)");
 
 	// A remote file: the download failure, the parse error, a mismatch.
 	std::vector<kyty::core::RemoteCheatResult> fetched;

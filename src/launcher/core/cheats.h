@@ -125,11 +125,12 @@ Expected<CheatDocument, CheatProblem> ParseCheatDocument(std::string_view bytes,
 std::string SerializeCheatDocument(const CheatDocument& document);
 
 // Why a downloaded document must not be imported for the game, or nothing when it may (Requirement
-// 11.17), ported unchanged from Qt's Cheats::ValidateImport: the document must be valid
-// (ParseCheatDocument's rules); title_id must be a cheat title ID (IsCheatTitleId) equal to "id"
-// ignoring letter case after TrimWhitespace(title_id); version must be non-empty and equal to
-// "version"; process must be non-empty and equal to "process" ignoring letter case; there must be
-// at least one mod and no "master" member; no mod may have "module_name"; every mod needs a
+// 11.17), ported from Qt's Cheats::ValidateImport: the document must be valid (ParseCheatDocument's
+// rules); title_id must be a cheat title ID (IsCheatTitleId) equal to "id" ignoring letter case
+// after TrimWhitespace(title_id); version must be non-empty and equal to "version"; process must be
+// non-empty and, when the document has a "process" member, equal to it ignoring letter case
+// (KytyPS5-Modules files name none; upstream KytyPS5 commit d2ec91b8); there must be at least one
+// mod and no "master" member; no mod may have "module_name"; every mod needs a
 // non-empty "memory" array of objects with "offset" (hexadecimal, optionally 0x, 1-16 digits),
 // "on" and "off" (pairs of hexadecimal digits, the same length), no "absolute" other than false, no
 // "expected" other than "off" (ignoring letter case), and none of "section", "sectionName",
@@ -183,15 +184,27 @@ Expected<void, CheatSaveError> SaveIfUnchanged(const std::filesystem::path&    p
                                                const CheatDocument&            document,
                                                std::optional<std::string_view> expected_bytes);
 
+// The document an import writes (upstream KytyPS5's Cheats::Merge, commit d2ec91b8): imported with
+// "enabled": false in every mod, its other members as they are, and "process" set to process (in
+// its place, or added at the end: a KytyPS5-Modules file may have none, and the Emulator needs it).
+// When local is given and ValidateRemoteImport(*local, imported's "id", imported's "version",
+// process) accepts it, the mods of local whose names no imported mod has come first, in local's
+// order and unchanged (their enabled states included). A default-constructed document when imported
+// is not a valid cheat document.
+CheatDocument MergeCheatDocuments(const CheatDocument* local, const CheatDocument& imported,
+                                  std::string_view process);
+
 // Imports a downloaded document for a game (Requirement 11.5; Property 32): SaveIfUnchanged of
-// WithAllDisabled(document) to CheatFilePath(data_dir, title_id), so the file is
-// <data_dir>/_Patches/<TITLE_ID>.json with the title ID upper-cased. Returns that path. The caller
-// checks ValidateRemoteImport first and passes the local file's bytes as LoadLocalCheats read them
-// (nullopt when there was no file). Failed "Unsupported title ID." for a title without cheats.
+// MergeCheatDocuments(keep, document, process) to CheatFilePath(data_dir, title_id), so the file
+// is <data_dir>/_Patches/<TITLE_ID>.json with the title ID upper-cased. Returns that path. The
+// caller checks ValidateRemoteImport first, passes the game's executable (CheatProcessName),
+// keep (the local file's document, to keep its other cheats; nullptr to replace them), and the
+// local file's bytes as LoadLocalCheats read them (nullopt when there was no file). Failed
+// "Unsupported title ID." for a title without cheats.
 Expected<std::filesystem::path, CheatSaveError>
 ImportRemoteCheats(const std::filesystem::path& data_dir, std::string_view title_id,
-                   const CheatDocument&            document,
-                   std::optional<std::string_view> expected_local_bytes);
+                   const CheatDocument& document, std::string_view process,
+                   const CheatDocument* keep, std::optional<std::string_view> expected_local_bytes);
 
 // The local cheat file of a game, as the cheats dialog's Local view loads it (Requirement 11.6).
 struct LocalCheatFile {

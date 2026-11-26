@@ -196,7 +196,10 @@ std::vector<std::pair<std::string, std::string>> CheatIndexes() {
 		return gen::CheatIndexLine(gen::CheatFileName(title_id, version, rest, format), title) +
 		       "\n";
 	};
-	return {{kyty::core::CheatIndexUrl("json"),
+	return {{kyty::core::kModulesCatalogUrl,
+	         R"({"patches":{"PPSA01002":[{"path":"patches/json/PPSA01002/beta.json",)"
+	         R"("title":"Beta patch","gameName":"Beta Quest","version":"01.020"}]},"cheats":{}})"},
+	        {kyty::core::CheatIndexUrl("json"),
 	         line("PPSA01001", "01.000", "alpha", "json", "Alpha Game") +
 	             line("PPSA01001", "01.020", "alpha", "json", "Alpha Game") +
 	             line("PPSA01002", "01.020", "beta", "json", "Beta Quest")},

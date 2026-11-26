@@ -5,6 +5,7 @@
 
 #include <adwaita.h>
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -278,7 +279,8 @@ GtkWindow* Confirm(GtkWindow* parent, std::string_view heading, std::string_view
 
 GtkWindow* Choose(GtkWindow* parent, std::string_view heading, std::string_view body,
                   const std::vector<std::string>& labels, int cancel_index, int default_index,
-                  std::function<void(int index)> callback, GCancellable* cancellable) {
+                  std::function<void(int index)> callback, GCancellable* cancellable,
+                  int destructive_index) {
 	if (AlreadyCancelled(cancellable)) {
 		return nullptr;
 	}
@@ -302,6 +304,17 @@ GtkWindow* Choose(GtkWindow* parent, std::string_view heading, std::string_view 
 	GtkWindow* window = NewToplevel(before);
 	if (own != nullptr) {
 		AlertLink::Attach(window);
+	}
+	if (destructive_index >= 0 && static_cast<std::size_t>(destructive_index) < labels.size()) {
+		const auto& label = labels[static_cast<std::size_t>(destructive_index)];
+		if (GtkWidget* button =
+		        window != nullptr ? FindLastButton(GTK_WIDGET(window), label) : nullptr;
+		    button != nullptr) {
+			gtk_widget_add_css_class(button, "destructive-action");
+		} else {
+			g_debug("choice \"%s\": button \"%s\" not found, it keeps its default style",
+			        std::string(heading).c_str(), label.c_str());
+		}
 	}
 	return window;
 }

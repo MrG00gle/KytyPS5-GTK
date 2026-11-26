@@ -11,6 +11,14 @@
 // within kCheatRequestTimeout, and no stall limit. The Qt launcher used a 15 s transfer
 // (inactivity) timeout besides its 30 s limit; the requirement's 30 s completion limit is the only
 // one now.
+//
+// Before the collection's indexes, the list also has the patches and cheats that KytyPS5-Modules
+// publishes (upstream KytyPS5 commit d2ec91b8, CheatRepository::Load and ParseModules), listed in
+// its catalog kModulesCatalogUrl:
+//   {"patches": {"<TITLE_ID>": [{"path": "patches/json/<file>.json", "title": "...",
+//                                "gameName": "...", "version": "01.000"}, ...]},
+//    "cheats": {"<TITLE_ID>": [...]}}
+// Each entry's file is cheat JSON at its path, relative to kModulesBaseUrl.
 
 #include "launcher/core/httpClient.h"
 
@@ -35,12 +43,33 @@ inline constexpr char                      kCheatUserAgent[] = "Kyty-Launcher"; 
 // The formats of the collection, in the order their indexes are requested.
 inline constexpr std::array<std::string_view, 3> kCheatFormats = {"json", "mc4", "shn"};
 
-// One file of the collection, from an index line.
+// KytyPS5-Modules (upstream's kModulesUrl): its files are below kModulesBaseUrl, and its catalog
+// is index.min.json there. kModulesCheatSource names the catalog in CheatIndexFailure::source.
+inline constexpr char kModulesBaseUrl[] = "https://kytyps5.github.io/KytyPS5-Modules/";
+inline constexpr char kModulesCatalogUrl[] =
+    "https://kytyps5.github.io/KytyPS5-Modules/index.min.json";
+inline constexpr std::string_view kModulesCheatSource = "modules";
+
+// The lists CheatCatalog loads, in the order they are requested: the KytyPS5-Modules catalog, then
+// the collection's index of each format (upstream's order).
+inline constexpr std::array<std::string_view, 4> kCheatSources = {kModulesCheatSource, "json",
+                                                                  "mc4", "shn"};
+
+// What a remote file holds (upstream's RemoteFile::kind): every collection file is a Cheat; a
+// KytyPS5-Modules file is a Patch or a Cheat, as its catalog lists it.
+enum class RemoteCheatKind { Cheat, Patch };
+
+// One file of the remote list: from an index line of the collection or an entry of the
+// KytyPS5-Modules catalog.
 struct RemoteCheatFile {
-	std::string name;    // "<TITLE_ID>_<version>_<rest>.<format>"
-	std::string title;   // the text after '=', trimmed
-	std::string version; // the <version> part of the name ("01.000")
-	std::string format;  // "json", "mc4", or "shn"
+	std::string name;    // "<TITLE_ID>_<version>_<rest>.<format>"; a Modules entry's "title"
+	std::string title;   // the text after '=', trimmed; a Modules entry's "gameName"
+	std::string version; // the <version> part of the name ("01.000"); a Modules entry's "version"
+	std::string format;  // "json", "mc4", or "shn" (Modules files are JSON)
+	RemoteCheatKind kind = RemoteCheatKind::Cheat;
+	// Where the file is (ParseCheatIndex, ParseModulesCatalog); "" lets RemoteCheatFileUrl build
+	// the collection's URL from name and format.
+	std::string url {};
 
 	friend bool operator==(const RemoteCheatFile&, const RemoteCheatFile&) = default;
 };
@@ -48,41 +77,65 @@ struct RemoteCheatFile {
 // <kCheatRepositoryBaseUrl><format>.txt; "" for a format outside kCheatFormats.
 std::string CheatIndexUrl(std::string_view format);
 
-// <kCheatRepositoryBaseUrl><format>/<name>; "" unless format is one of kCheatFormats and name
-// matches the collection's pattern ^([A-Z]{4}[0-9]{5})_([0-9]+(\.[0-9]+)+)_[A-Za-z0-9_.-]+\.(ext)$
-// with ext equal to format (Qt's RemoteFile::Url).
+// kModulesCatalogUrl for kModulesCheatSource, else CheatIndexUrl(source).
+std::string CheatSourceUrl(std::string_view source);
+
+// "" unless format is one of kCheatFormats; then file.url when it is set, else
+// <kCheatRepositoryBaseUrl><format>/<name> when name matches the collection's pattern
+// ^([A-Z]{4}[0-9]{5})_([0-9]+(\.[0-9]+)+)_[A-Za-z0-9_.-]+\.(ext)$ with ext equal to format (Qt's
+// RemoteFile::Url).
 std::string RemoteCheatFileUrl(const RemoteCheatFile& file);
+
+// The URL of a KytyPS5-Modules file (upstream's kModulesUrl.resolved(path), accepted when
+// kModulesUrl.isParentOf it): path, a URL reference (RFC 3986), resolved against kModulesBaseUrl
+// with its dot segments removed, when the result is an https URL of kytyps5.github.io (no user
+// information, no port) whose path is below /KytyPS5-Modules/; else "". Percent-encoded unreserved
+// characters are decoded first (so "%2E%2E" is a dot segment, as QUrl reads it), characters a URL
+// cannot hold are percent-encoded, and a fragment is dropped.
+std::string ResolveModulesUrl(std::string_view path);
 
 // A file can be previewed and imported when it has a URL: JSON files as they are, MC4 and SHN files
 // converted to cheat JSON (cheatTrainer.h; upstream KytyPS5 commit 91c5820c dropped Qt's
 // RemoteFile::IsSupported).
 bool IsSupportedRemoteCheatFile(const RemoteCheatFile& file);
 
-// What is wrong with an index, for the GTK layer's own words (plan V1).
+// What is wrong with an index or the KytyPS5-Modules catalog, for the GTK layer's own words (plan
+// V1).
 enum class CheatIndexProblem {
 	None,
-	Invalid,        // "Invalid cheat index."
-	SkippedEntries, // "Skipped <skipped> invalid cheat index entries."
+	Invalid,        // "Invalid cheat index." / "Invalid module catalog."
+	SkippedEntries, // "Skipped <skipped> invalid cheat index entries." / "... module catalog ..."
 };
 
 struct CheatIndex {
 	std::vector<RemoteCheatFile> files;
-	std::string                  error; // "" when every line was usable
+	std::string                  error; // "" when every line or entry was usable
 	CheatIndexProblem            problem = CheatIndexProblem::None;
-	std::size_t                  skipped = 0; // SkippedEntries: the invalid lines
+	std::size_t                  skipped = 0; // SkippedEntries: the invalid lines or entries
 };
 
-// The files of title_id in the index of format, in index order (Qt's ParseIndex). The bytes are
-// read as UTF-8 (ill-formed sequences become U+FFFD; a leading byte order mark is dropped) and
-// split at LF; each line is trimmed (TrimWhitespace) and empty lines are skipped. A line without
-// '=' or whose name (the text before the first '=', untrimmed) does not match the pattern of
-// RemoteCheatFileUrl with the index's format counts as invalid; lines for another title ID (the
-// name's first part against NormalizeTitleId(title_id)) and repeated names are skipped. error:
-// "Invalid cheat index." (no files) for an unknown format, empty bytes, or more than
-// kMaxCheatIndexBytes; else "Skipped <n> invalid cheat index entries." when there were invalid
-// lines.
+// The files of title_id in the index of format, in index order (Qt's ParseIndex), each a Cheat
+// with its RemoteCheatFileUrl. The bytes are read as UTF-8 (ill-formed sequences become U+FFFD; a
+// leading byte order mark is dropped) and split at LF; each line is trimmed (TrimWhitespace) and
+// empty lines are skipped. A line without '=' or whose name (the text before the first '=',
+// untrimmed) does not match the pattern of RemoteCheatFileUrl with the index's format counts as
+// invalid; lines for another title ID (the name's first part against NormalizeTitleId(title_id))
+// and repeated names are skipped. error: "Invalid cheat index." (no files) for an unknown format,
+// empty bytes, or more than kMaxCheatIndexBytes; else "Skipped <n> invalid cheat index entries."
+// when there were invalid lines.
 CheatIndex ParseCheatIndex(std::string_view bytes, std::string_view format,
                            std::string_view title_id);
+
+// The files of title_id in a KytyPS5-Modules catalog (upstream's ParseModules): the entries of
+// "patches" (kind Patch), then of "cheats" (kind Cheat), under the key NormalizeTitleId(title_id),
+// in catalog order. Each file is JSON, its name the entry's "title", its title the entry's
+// "gameName", its version the entry's "version" (a member that is not a string reads as ""), and
+// its url ResolveModulesUrl of the entry's "path"; an entry whose path gives no URL (also one that
+// is not an object) is invalid. A group or a title ID's list that is not an object or an array
+// lists nothing. error: "Invalid module catalog." (no files) when the bytes are not a JSON object
+// with at least one member; else "Skipped <n> invalid module catalog entries." when there were
+// invalid entries.
+CheatIndex ParseModulesCatalog(std::string_view bytes, std::string_view title_id);
 
 // The request of one collection download: GET url, User-Agent kCheatUserAgent, max_bytes,
 // total_timeout kCheatRequestTimeout, no stall timeout, and RedirectPolicy::SameOrigin (the Qt
@@ -119,10 +172,10 @@ CheatFetchError CheatFetchErrorFor(const HttpResult& result, uint64_t max_bytes)
 RequestId StartCheatDownload(HttpClient& http, std::string url, uint64_t max_bytes,
                              std::function<void(std::string body, CheatFetchError error)> done);
 
-// An index that failed or had invalid lines: the download failure (fetch.failure is not None),
-// else the index's problem.
+// A list that failed or had invalid lines or entries: the download failure (fetch.failure is not
+// None), else the list's problem.
 struct CheatIndexFailure {
-	std::string       format; // "json", "mc4", or "shn"
+	std::string       source; // an element of kCheatSources: "modules", "json", "mc4", or "shn"
 	CheatFetchError   fetch;
 	CheatIndexProblem problem = CheatIndexProblem::None;
 	std::size_t       skipped = 0;
@@ -131,13 +184,14 @@ struct CheatIndexFailure {
 };
 
 struct CheatCatalogResult {
-	// The title's files of every index, by version (descending, byte order), then format, then
+	// The title's files of every list, by version (descending, byte order), then format, then
 	// name, as Qt sorted them.
 	std::vector<RemoteCheatFile> files;
-	// One line "<FORMAT>: <reason>" per index that failed or had invalid lines, in kCheatFormats
-	// order, joined by LF; "" when every index loaded cleanly.
+	// One line "<SOURCE>: <reason>" per list that failed or had invalid lines or entries, in
+	// kCheatSources order, joined by LF; SOURCE is "Modules" for the KytyPS5-Modules catalog and
+	// the upper-case format for an index. "" when every list loaded cleanly.
 	std::string error;
-	// The same indexes with their parts, in the same order (empty exactly when error is "").
+	// The same lists with their parts, in the same order (empty exactly when error is "").
 	std::vector<CheatIndexFailure> failures;
 };
 
@@ -146,10 +200,11 @@ struct CheatCatalogResult {
 void PutInstalledVersionFirst(std::vector<RemoteCheatFile>& files,
                               std::string_view              installed_version);
 
-// Loads the three indexes for one title ID (Qt's CheatRepository::Load). on_loaded (optional) runs
-// once per Load, after the last of the three requests ended, from an HttpClient callback (never
-// inside Load); it must not destroy the catalog. A new Load or Cancel cancels the requests of the
-// previous Load, whose result is never delivered; destroying the catalog cancels them too.
+// Loads the four lists of kCheatSources for one title ID (Qt's CheatRepository::Load). on_loaded
+// (optional) runs once per Load, after the last of the four requests ended, from an HttpClient
+// callback (never inside Load); it must not destroy the catalog. A new Load or Cancel cancels the
+// requests of the previous Load, whose result is never delivered; destroying the catalog cancels
+// them too.
 class CheatCatalog {
 public:
 	using LoadedFn = std::function<void(const CheatCatalogResult&)>;
