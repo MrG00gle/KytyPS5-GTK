@@ -209,6 +209,9 @@ std::string GameTooltip(KytyGame* game) {
 	add(_("Firmware version: %s"), row.firmware_version);
 	add(_("Path: %s"), row.path);
 	add(_("Comment: %s"), row.comment);
+	if (entry.pro_supported) {
+		lines.emplace_back(_("Supports PS5 Pro mode"));
+	}
 	if (!entry.metadata_available) {
 		lines.emplace_back(_("The game's sce_sys/param.json is missing or unusable, so its "
 		                     "metadata is unavailable."));

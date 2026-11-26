@@ -4,6 +4,9 @@
 #include "launcher/core/text.h"
 #include "launcher/core/version.h"
 
+#include <cmath>
+#include <cstdint>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <utility>
 
@@ -75,6 +78,38 @@ std::string GetTitleId(const Json& root) {
 	return {};
 }
 
+// attribute3 bit 22: the title supports PS5 Pro mode (upstream KytyPS5's launcher, commit
+// bd28a152).
+constexpr std::uint64_t kProModeAttribute = std::uint64_t {1} << 22u;
+
+bool SupportsProMode(const Json& root) {
+	const auto it = root.find("attribute3");
+	if (it == root.end()) {
+		return false;
+	}
+	std::uint64_t bits = 0;
+	if (it->is_number_unsigned()) {
+		// Above the qint64 range Qt reads a double that toInteger() does not convert.
+		bits = it->get<std::uint64_t>();
+		if (bits > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+			return false;
+		}
+	} else if (it->is_number_integer()) {
+		bits = static_cast<std::uint64_t>(it->get<std::int64_t>());
+	} else if (it->is_number_float()) {
+		// QJsonValue::toInteger(): a whole number that fits in a qint64, else 0.
+		const double value = it->get<double>();
+		if (!std::isfinite(value) || std::trunc(value) != value || value < -0x1p63 ||
+		    value >= 0x1p63) {
+			return false;
+		}
+		bits = static_cast<std::uint64_t>(static_cast<std::int64_t>(value));
+	} else {
+		return false;
+	}
+	return (bits & kProModeAttribute) != 0;
+}
+
 } // namespace
 
 std::string FallbackTitle(const std::filesystem::path& entry_path, GameEntry::Kind kind) {
@@ -113,6 +148,7 @@ GameMetadata ParseParamJson(std::string_view bytes, std::string_view fallback_ti
 	}
 	metadata.firmware_version =
 	    FormatSystemSoftwareVersion(GetString(root, "requiredSystemSoftwareVersion"));
+	metadata.pro_supported = SupportsProMode(root);
 	return metadata;
 }
 

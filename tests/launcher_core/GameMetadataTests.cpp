@@ -382,6 +382,28 @@ void TestAccessors() {
 	      "nothing exists in a missing archive");
 }
 
+// attribute3 bit 22 (upstream KytyPS5's launcher): the title supports PS5 Pro mode. Read as
+// QJsonValue::toInteger() reads it: integers, and whole floating-point numbers in the qint64 range.
+void TestProSupported() {
+	const auto pro = [](const std::string& attribute3) {
+		return ParseParamJson(R"({"titleId":"PPSA01234","attribute3":)" + attribute3 + "}", "d")
+		    .pro_supported;
+	};
+	for (const char* value: {"4194304", "4194305", "12582912", "2147483647", "-1", "-4194304",
+	                         "4194304.0", "4.194304e6", "9223372036854775807"}) {
+		Check(pro(value), std::string("bit 22 is set in attribute3 = ") + value);
+	}
+	for (const char* value:
+	     {"0", "1", "4194303", "8388608", "2097152", "-4194305", "-9223372036854775808",
+	      "4194304.5", "1e300", "9223372036854775808", "18446744073709551615", "\"4194304\"",
+	      "true", "null", "[4194304]", "{\"bits\":4194304}"}) {
+		Check(!pro(value), std::string("no PS5 Pro mode for attribute3 = ") + value);
+	}
+	Check(!ParseParamJson(R"({"titleId":"PPSA01234"})", "d").pro_supported,
+	      "no attribute3: no PS5 Pro mode");
+	Check(!ParseParamJson("[4194304]", "d").pro_supported, "an unusable param.json");
+}
+
 } // namespace
 
 int main() {
@@ -394,6 +416,7 @@ int main() {
 	TestHostDirectory();
 	TestHostArchive();
 	TestAccessors();
+	TestProSupported();
 	std::printf("GameMetadataTests: all tests passed\n");
 	return 0;
 }

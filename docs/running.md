@@ -34,6 +34,9 @@ searches every game folder recursively and lists:
 - each directory that contains `eboot.bin`;
 - each ZArchive (`.zar`) file whose archive root contains `eboot.bin`.
 
+A game whose `sce_sys/param.json` says that it supports PS5 Pro mode shows a **PRO** badge on its
+icon in the list and **PS5 PRO** in the grid.
+
 **Refresh game list** in the main menu scans the folders again. Folders that cannot be read are
 listed in a message, and the rest of the list stays usable. In the Flatpak, a folder chosen in the
 folder chooser stays readable after the launcher restarts and after a reboot, until you remove it

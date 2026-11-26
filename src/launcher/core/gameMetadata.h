@@ -26,6 +26,8 @@ struct GameEntry {
 	std::string firmware_version;
 	// False when param.json is missing, larger than 1 MiB, or not a JSON object.
 	bool metadata_available = false;
+	// The title supports PS5 Pro mode (attribute3 bit 22; upstream KytyPS5's launcher).
+	bool pro_supported = false;
 	// The path relative to the first Game_Folder (in list order) that contains the entry, with '/'
 	// separators ("." for the folder itself); used to migrate the Qt launcher's per-game entries.
 	std::string legacy_relative_path;
@@ -40,6 +42,7 @@ struct GameMetadata {
 	std::string game_version;
 	std::string firmware_version;
 	bool        metadata_available = false;
+	bool        pro_supported      = false;
 
 	friend bool operator==(const GameMetadata&, const GameMetadata&) = default;
 };
@@ -64,7 +67,10 @@ std::string FallbackTitle(const std::filesystem::path& entry_path, GameEntry::Ki
 // - title_id: titleId, else bytes [7, 16) of contentId when contentId is 36 bytes long with '-' at
 //   index 6 and '_' at index 16 ("UP0000-PPSA01234_00-..."), else "";
 // - game_version: appVersion, else contentVersion;
-// - firmware_version: FormatSystemSoftwareVersion(requiredSystemSoftwareVersion).
+// - firmware_version: FormatSystemSoftwareVersion(requiredSystemSoftwareVersion);
+// - pro_supported: bit 22 of attribute3 when it is an integer, or a floating-point number with an
+//   integral value in the int64 range (QJsonValue::toInteger() in upstream's launcher); false
+//   otherwise.
 GameMetadata ParseParamJson(std::string_view bytes, std::string_view fallback_title);
 
 // Reads the metadata of a Game_Entry; the scanner calls it once per new entry. Implementations

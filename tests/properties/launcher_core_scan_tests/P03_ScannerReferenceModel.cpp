@@ -234,6 +234,7 @@ void CheckAgainst(const kyty::core::ScanResult& result, const ReferenceResult& e
 		RC_ASSERT(entry.game_version == read.game_version);
 		RC_ASSERT(entry.firmware_version == read.firmware_version);
 		RC_ASSERT(entry.metadata_available == read.metadata_available);
+		RC_ASSERT(entry.pro_supported == read.pro_supported);
 	}
 	RC_ASSERT(actual.size() == expected.entries.size());
 	for (const auto& [path, entry]: expected.entries) {
