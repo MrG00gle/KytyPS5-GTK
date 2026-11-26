@@ -1,5 +1,7 @@
 #include "launcher/core/remoteCheats.h"
 
+#include "launcher/core/cheatTrainer.h"
+
 #include <utility>
 
 namespace kyty::core {
@@ -26,7 +28,10 @@ struct RemoteCheats::State {
 		RemoteCheatResult result;
 		result.file = file;
 		if (fetch.failure == HttpFailure::None) {
-			if (auto document = ParseCheatDocument(body, file.name)) {
+			auto document = file.format == "json"
+			                    ? ParseCheatDocument(body, file.name)
+			                    : ParseCheatTrainer(body, file.format == "mc4", file.name);
+			if (document) {
 				result.problem =
 				    ValidateRemoteImport(*document, game.title_id, game.version, game.process);
 				result.importable = !result.problem;
@@ -60,7 +65,7 @@ Expected<void, std::string> RemoteCheats::Fetch(const RemoteCheatFile& file, Che
 	auto& state = *m_state;
 	state.CancelRequest();
 	if (!IsSupportedRemoteCheatFile(file)) {
-		return MakeUnexpected(std::string(kUnsupportedCheatFormatMessage));
+		return MakeUnexpected(std::string(kUnsupportedCheatFileMessage));
 	}
 	const std::weak_ptr<State> weak       = m_state;
 	const auto                 generation = state.generation;

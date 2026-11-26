@@ -5,7 +5,7 @@
 // that file with --game-patch (emulatorArguments.h). Ported from the Qt launcher's Cheats namespace
 // (src/launcher/src/cheatFile.cpp) and the file handling of its cheats dialog
 // (src/launcher/src/patchesDialog.cpp). The HEN Cheats Collection file list and downloads are in
-// cheatCatalog.h and remoteCheats.h.
+// cheatCatalog.h and remoteCheats.h, the conversion of its MC4 and SHN files in cheatTrainer.h.
 //
 // Document format (design.md, "Cheat file"):
 //   { "id": "PPSA01234", "name": "...", "version": "01.000", "process": "eboot.bin",
@@ -92,8 +92,10 @@ enum class CheatProblemKind {
 	NoCheats,            // "The cheat file contains no cheats."
 	MasterCodes,         // "This JSON uses master codes, which are not supported yet."
 	ModuleSpecific,      // "This JSON uses module-specific cheats, which are not supported yet."
-	AddressingFeatures,  // "This JSON uses memory addressing features that are not supported yet."
+	AddressingFeatures,  // "This cheat file uses memory addressing features that are not supported
+	                     // yet."
 	UnsupportedMemory,   // "Unsupported memory entries in cheat "<detail>"." (detail: the name)
+	InvalidXml,          // "Invalid cheat XML." (an MC4 or SHN file, cheatTrainer.h)
 };
 
 struct CheatProblem {

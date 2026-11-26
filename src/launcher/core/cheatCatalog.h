@@ -53,8 +53,9 @@ std::string CheatIndexUrl(std::string_view format);
 // with ext equal to format (Qt's RemoteFile::Url).
 std::string RemoteCheatFileUrl(const RemoteCheatFile& file);
 
-// Only JSON files can be previewed and imported (Qt's RemoteFile::IsSupported); the Remote view
-// lists the others disabled.
+// A file can be previewed and imported when it has a URL: JSON files as they are, MC4 and SHN files
+// converted to cheat JSON (cheatTrainer.h; upstream KytyPS5 commit 91c5820c dropped Qt's
+// RemoteFile::IsSupported).
 bool IsSupportedRemoteCheatFile(const RemoteCheatFile& file);
 
 // What is wrong with an index, for the GTK layer's own words (plan V1).

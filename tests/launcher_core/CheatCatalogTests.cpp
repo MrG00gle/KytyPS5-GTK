@@ -71,7 +71,9 @@ void TestUrls() {
 	const RemoteCheatFile mc4 {"PPSA01234_1.0_a-b.c_d.mc4", "", "1.0", "mc4"};
 	Check(kyty::core::RemoteCheatFileUrl(mc4) == std::string(kBase) + "mc4/" + mc4.name,
 	      "an mc4 file");
-	Check(!kyty::core::IsSupportedRemoteCheatFile(mc4), "mc4 is not supported");
+	Check(kyty::core::IsSupportedRemoteCheatFile(mc4), "mc4 is supported (converted)");
+	const RemoteCheatFile shn {"PPSA01234_01.000_a.shn", "", "01.000", "shn"};
+	Check(kyty::core::IsSupportedRemoteCheatFile(shn), "shn is supported (converted)");
 	for (const auto& [name, format]: std::vector<std::pair<std::string, std::string>> {
 	         {"PPSA01234_01.000_x.json", "mc4"}, // extension and format differ
 	         {"PPSA01234_01.000_x.json", "txt"},

@@ -317,7 +317,7 @@ void TestValidateRemoteImport() {
 	};
 	const std::string memory_unsupported = "Unsupported memory entries in cheat \"m\".";
 	const std::string addressing =
-	    "This JSON uses memory addressing features that are not supported yet.";
+	    "This cheat file uses memory addressing features that are not supported yet.";
 	check(with_mod(""), "The cheat file contains no cheats.", Kind::NoCheats);
 	check(with_mod(R"({"name":"m","memory":[{"offset":"1","on":"90","off":"0F"}]})",
 	               R"("master":{},)"),

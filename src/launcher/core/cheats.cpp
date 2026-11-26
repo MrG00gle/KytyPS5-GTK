@@ -28,8 +28,8 @@ constexpr char kChangedOnDisk[]       = "Cheat file changed; reload the dialog."
 constexpr char kUnsupportedMemory[]   = "Unsupported memory entries in cheat \"";
 constexpr char kUnsupportedTitleId[]  = "Unsupported title ID.";
 constexpr char kInvalidCheatFile[]    = "Invalid cheat file.";
-constexpr char kAddressingFeatures[]  = "This JSON uses memory addressing features that are not "
-                                        "supported yet.";
+constexpr char kAddressingFeatures[]  = "This cheat file uses memory addressing features that are "
+                                        "not supported yet.";
 constexpr char kModuleSpecificCheat[] = "This JSON uses module-specific cheats, which are not "
                                         "supported yet.";
 

@@ -51,6 +51,9 @@ choosing one starts the game in that activity (`--launch-activity`) for that run
 **Additional content…** lists the game's add-ons in the add-ons folder and the game's own add-ons,
 which you add there by entitlement label or content ID, with the folder of the add-on's data or
 without a folder for a license only.
+**Cheats (experimental)…** lists the game's cheat files in the HEN Cheats Collection, in the JSON,
+MC4, and SHN formats, and shows the cheats of the one you select. **Import to Local** saves it as
+the game's cheat file in the data directory, with every cheat off.
 
 ## ZArchive games
 

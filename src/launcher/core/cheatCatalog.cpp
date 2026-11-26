@@ -111,7 +111,7 @@ std::string RemoteCheatFileUrl(const RemoteCheatFile& file) {
 }
 
 bool IsSupportedRemoteCheatFile(const RemoteCheatFile& file) {
-	return file.format == "json" && !RemoteCheatFileUrl(file).empty();
+	return !RemoteCheatFileUrl(file).empty();
 }
 
 CheatIndex ParseCheatIndex(std::string_view bytes, std::string_view format,

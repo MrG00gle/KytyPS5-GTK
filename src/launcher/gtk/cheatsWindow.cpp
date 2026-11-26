@@ -297,10 +297,10 @@ GtkWidget* NewColumnLabel(const std::string& text, GtkSizeGroup* group) {
 }
 
 // One row of the file list: version ("01.000 (installed)"), format, and file name under the
-// column headers; a file that cannot be previewed (MC4, SHN) is disabled.
+// column headers. Every file can be previewed: MC4 and SHN files are converted (upstream KytyPS5
+// commit 91c5820c).
 GtkWidget* NewFileRow(KytyCheatsWindow* self, const core::RemoteCheatFile& file) {
 	const auto&       state     = *self->state;
-	const bool        supported = core::IsSupportedRemoteCheatFile(file);
 	const bool        installed = !state.version.empty() && file.version == state.version;
 	const std::string format    = Upper(file.format);
 	const std::string version =
@@ -321,22 +321,12 @@ GtkWidget* NewFileRow(KytyCheatsWindow* self, const core::RemoteCheatFile& file)
 	GtkWidget* row = gtk_list_box_row_new();
 	gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
 	// The collection's title of the file is game data (a plain-text tooltip).
-	const std::string tooltip =
-	    supported ? file.title
-	              // TRANSLATORS: the tooltip of a disabled remote cheat file: "<title> — MC4 is
-	              // not supported."
-	              : Format(_("%s — %s is not supported."), file.title.c_str(), format.c_str());
-	gtk_widget_set_tooltip_text(row, tooltip.c_str());
+	gtk_widget_set_tooltip_text(row, file.title.c_str());
 	// TRANSLATORS: the accessible name of a remote cheat file: "<version>, <format>, <file>".
 	const std::string accessible = Format(C_("remote cheat file", "%s, %s, %s"), version.c_str(),
 	                                      format.c_str(), file.name.c_str());
 	gtk_accessible_update_property(GTK_ACCESSIBLE(row), GTK_ACCESSIBLE_PROPERTY_LABEL,
 	                               accessible.c_str(), -1);
-	if (!supported) {
-		gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
-		gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
-		gtk_widget_set_sensitive(row, FALSE);
-	}
 	return row;
 }
 
@@ -467,7 +457,7 @@ void Preview(KytyCheatsWindow* self, GtkListBoxRow* row) {
 	const auto fetched = state.remote->Fetch(state.files[static_cast<std::size_t>(index)],
 	                                         {state.title_id, state.version, state.process});
 	if (!fetched) {
-		gtk_label_set_text(self->preview_status, _("Only JSON cheat files are supported."));
+		gtk_label_set_text(self->preview_status, _("This cheat file cannot be downloaded."));
 	}
 }
 

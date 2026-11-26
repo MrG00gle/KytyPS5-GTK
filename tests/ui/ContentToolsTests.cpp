@@ -18,7 +18,8 @@
 //   content_compress_verify_failed, content_compress_quit_midway (W4-17),
 //   compression_quit_after_main_window_closed and compression_quit_job_outlives_wait (p7-u7-2).
 // - Cheats (11.4-11.6, LFI-27): content_cheats_remote_list (W4-24, W4-28),
-//   content_cheats_remote_not_json (W4-25, phase 8 plan D9), content_cheats_local_states (W4-22,
+//   content_cheats_remote_not_json (W4-25, phase 8 plan D9), content_cheats_remote_trainers
+//   (upstream KytyPS5's MC4 and SHN import), content_cheats_local_states (W4-22,
 //   W4-23, p7-u7-1), content_cheats_apply_enable_disable, cheats_version_column_font_change
 //   (p7-u7-3), cheats_split_position_states (phase 8 plan D12).
 // - Input mapping (11.14, LFI-24): content_input_mapping_capture (key, mouse, and pad),
@@ -330,12 +331,13 @@ bool WaitForRemoteList(GtkWidget* root) {
 	    "the remote list to show Alpha Game's files");
 }
 
-// Serves Alpha Game's JSON file of version (01.000 or 01.020) with body.
-void ServeAlphaFile(KytyUi::UiContext& ui, std::string body, const char* version = "01.000") {
+// Serves Alpha Game's file of version (01.000 or 01.020) in format with body.
+void ServeAlphaFile(KytyUi::UiContext& ui, std::string body, const char* version = "01.000",
+                    const char* format = "json") {
 	core::RemoteCheatFile file;
-	file.name    = gen::CheatFileName("PPSA01001", version, "alpha", "json");
+	file.name    = gen::CheatFileName("PPSA01001", version, "alpha", format);
 	file.version = version;
-	file.format  = "json";
+	file.format  = format;
 	KytyTests::LoopbackResponse response;
 	response.body         = std::move(body);
 	response.content_type = "text/plain";
@@ -1694,7 +1696,7 @@ KYTY_UI_CASE(compression_quit_job_outlives_wait) {
 // ---- Cheats
 
 // The Remote view (11.4): the credit link, Alpha Game's files with the installed version first,
-// MC4 and SHN disabled, the count; W4-28: the Version column keeps its width while the list loads;
+// every one enabled, the count; W4-28: the Version column keeps its width while the list loads;
 // W4-24: the window opens at 900x700 with room for the preview.
 KYTY_UI_CASE(content_cheats_remote_list) {
 	KytyUi::UiContext ui;
@@ -1748,16 +1750,15 @@ KYTY_UI_CASE(content_cheats_remote_list) {
 	Check(names.size() == 4 && names[0] == "01.000 (installed), JSON, PPSA01001_01.000_alpha.json",
 	      "four files, the installed version's JSON file first: " +
 	          (names.empty() ? std::string("none") : names[0]));
-	int disabled = 0;
+	// Every file can be previewed, MC4 and SHN files too (upstream KytyPS5 commit 91c5820c); the
+	// tooltip is the collection's title of the file.
 	for (GtkWidget* row: rows) {
-		if (gtk_widget_get_sensitive(row) == FALSE) {
-			disabled++;
-			const char* tooltip = gtk_widget_get_tooltip_text(row);
-			Check(tooltip != nullptr && std::string_view(tooltip).ends_with(" is not supported."),
-			      "a disabled file says why");
-		}
+		const char* tooltip = gtk_widget_get_tooltip_text(row);
+		Check(gtk_widget_get_sensitive(row) != FALSE &&
+		          gtk_list_box_row_get_selectable(GTK_LIST_BOX_ROW(row)) != FALSE &&
+		          tooltip != nullptr && std::string_view(tooltip) == "Alpha Game",
+		      "an enabled file with its title: " + KytyUi::ControlName(row));
 	}
-	Check(disabled == 2, "the MC4 and SHN files are disabled");
 	Check(LabelText(root, "remote_status") == "4 remote files for PPSA01001.",
 	      "the status line: " + LabelText(root, "remote_status"));
 	// The preview of the installed version's file (W4-24: every cheat visible).
@@ -1829,6 +1830,92 @@ KYTY_UI_CASE(content_cheats_remote_not_json) {
 	      "Import to Local stays disabled");
 	Check(KytyUi::ReadText(local) == before, "the local file is unchanged");
 	Check(KytyUi::Capture(cheats, "not-json"), "the error renders");
+	KytyUi::CloseWithEscape(cheats, "the cheats window");
+}
+
+// MC4 and SHN files (upstream KytyPS5 commit 91c5820c): the trainers of tests/fixtures/cheats,
+// served for Alpha Game, preview their converted cheats; the SHN file imports to the local file
+// with every cheat off. A trainer that is not XML says so and keeps Import disabled.
+KYTY_UI_CASE(content_cheats_remote_trainers) {
+	KytyUi::UiContext ui;
+	const auto        games = ContentLibrary(ui);
+	if (games.empty()) {
+		return;
+	}
+	const fs::path fixtures = fs::path(KYTY_TEST_SOURCE_DIR) / "tests" / "fixtures" / "cheats";
+	ServeAlphaFile(ui, KytyUi::ReadText(fixtures / "PPSA01001_01.000_alpha.mc4"), "01.000", "mc4");
+	ServeAlphaFile(ui, KytyUi::ReadText(fixtures / "PPSA01001_01.000_alpha.shn"), "01.000", "shn");
+	const fs::path data   = ui.AppDirectory();
+	GtkWindow*     cheats = OpenCheats(ui, Entry(games, kAlphaTitle));
+	if (cheats == nullptr) {
+		return;
+	}
+	GtkWidget* root = GTK_WIDGET(cheats);
+	adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(Widget(root, "stack")), "remote");
+	if (!WaitForRemoteList(root)) {
+		return;
+	}
+	GtkWidget* import  = Widget(root, "import_button");
+	const auto preview = [&](std::string_view name) {
+		gtk_list_box_select_row(GTK_LIST_BOX(Widget(root, "files_list")),
+		                        GTK_LIST_BOX_ROW(FileRow(root, name)));
+		KytyUi::WaitFor([import]() { return gtk_widget_get_sensitive(import) != FALSE; }, 5000,
+		                "the preview of " + std::string(name) + " to enable Import to Local");
+		KytyUi::WaitForPaintedFrame(root);
+		std::vector<std::string> names;
+		for (GtkWidget* row: Named(Widget(root, "preview_list"), ADW_TYPE_ACTION_ROW, "")) {
+			names.push_back(KytyUi::ControlName(row));
+		}
+		return names;
+	};
+	using Names = std::vector<std::string>;
+	Check(preview(", PPSA01001_01.000_alpha.mc4") ==
+	          Names {"Moon Jump", "Unlimited Time", "Freeze Enemies"},
+	      "the MC4 file's cheats");
+	Check(LabelText(root, "preview_status")
+	          .starts_with("Alpha Game\nCredits: Kyty Tests · Version: "
+	                       "01.000\n\nImport to Local"),
+	      "the MC4 file's name, credits, and version: " + LabelText(root, "preview_status"));
+	Check(KytyUi::Capture(cheats, "mc4-preview"), "the MC4 preview renders");
+	Check(preview(", PPSA01001_01.000_alpha.shn") == Names {"Infinite Health", "Max Coins & Gems"},
+	      "the SHN file's cheats");
+
+	// Import the SHN file over Alpha Game's local file.
+	Check(KytyUi::Activate(import), "a click on Import to Local");
+	if (GtkWindow* question = KytyUi::FindAlert("Replace local cheats?"); question != nullptr) {
+		KytyUi::CloseAlert(question, "Replace");
+	}
+	KytyUi::WaitFor([root]() { return KytyUi::VisiblePage(root) == "local"; }, 3000,
+	                "the Local view after the import");
+	using States = std::vector<std::pair<std::string, bool>>;
+	Check(StoredCheats(data) == States {{"Infinite Health", false}, {"Max Coins & Gems", false}},
+	      "the local file has the SHN file's cheats, every one off");
+	const auto local = core::LoadLocalCheats(data, "PPSA01001");
+	Check(local.document && local.document->id == "PPSA01001" &&
+	          local.document->process == "eboot.bin" &&
+	          local.document->cheats[0].memory ==
+	              R"([{"offset":"0x1A2B3C","on":"909090","off":"0F85C3"}])",
+	      "the local file is cheat JSON with the converted writes");
+	Check(KytyUi::Capture(cheats, "shn-imported"), "the imported cheats render");
+
+	// An MC4 file that is not a trainer.
+	ServeAlphaFile(ui, "not an encrypted trainer", "01.000", "mc4");
+	adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(Widget(root, "stack")), "remote");
+	KytyUi::WaitForPaintedFrame(root);
+	gtk_list_box_select_row(GTK_LIST_BOX(Widget(root, "files_list")),
+	                        GTK_LIST_BOX_ROW(FileRow(root, ", PPSA01001_01.000_alpha.mc4")));
+	KytyUi::WaitFor(
+	    [root]() {
+		    return LabelText(root, "preview_status").starts_with("Could not preview this file: ");
+	    },
+	    5000, "the error of an MC4 file that is not a trainer");
+	Check(
+	    LabelText(root, "preview_status").find("PPSA01001_01.000_alpha.mc4: Invalid cheat XML.") !=
+	        std::string::npos,
+	    "the error names the file: " + LabelText(root, "preview_status"));
+	Check(Named(Widget(root, "preview_list"), ADW_TYPE_ACTION_ROW, "").empty(),
+	      "no cheat is listed");
+	Check(gtk_widget_get_sensitive(import) == FALSE, "Import to Local stays disabled");
 	KytyUi::CloseWithEscape(cheats, "the cheats window");
 }
 

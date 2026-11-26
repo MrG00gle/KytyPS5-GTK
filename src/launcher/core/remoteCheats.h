@@ -5,7 +5,8 @@
 // CheatRepository::Fetch (src/launcher/src/cheatRepository.cpp) and the dialog's FileLoaded
 // handling (src/launcher/src/patchesDialog.cpp). The download has the limits of cheatCatalog.h:
 // at most kMaxRemoteCheatFileBytes, a complete response within kCheatRequestTimeout. A file is
-// importable only when it downloaded, parsed (ParseCheatDocument), and matches the game
+// importable only when it downloaded, parsed (ParseCheatDocument for JSON, ParseCheatTrainer for
+// MC4 and SHN, as upstream KytyPS5 commit 91c5820c converts them), and matches the game
 // (ValidateRemoteImport); otherwise error says why and the UI keeps Import disabled. Nothing here
 // writes the local cheat file: the import is ImportRemoteCheats (cheats.h).
 
@@ -22,8 +23,8 @@
 
 namespace kyty::core {
 
-inline constexpr uint64_t kMaxRemoteCheatFileBytes         = kMaxCheatFileBytes; // 8 MiB
-inline constexpr char     kUnsupportedCheatFormatMessage[] = "Only JSON cheat files are supported.";
+inline constexpr uint64_t kMaxRemoteCheatFileBytes       = kMaxCheatFileBytes; // 8 MiB
+inline constexpr char     kUnsupportedCheatFileMessage[] = "This cheat file cannot be downloaded.";
 
 // The game a downloaded file must match: its title ID, its game version (GameEntry::game_version),
 // and its executable (CheatProcessName of the effective elf setting).
@@ -62,8 +63,8 @@ public:
 	RemoteCheats& operator=(const RemoteCheats&) = delete;
 
 	// Cancels the previous download and downloads RemoteCheatFileUrl(file). A file that is not
-	// IsSupportedRemoteCheatFile starts nothing and gives kUnsupportedCheatFormatMessage at once
-	// (no on_loaded call).
+	// IsSupportedRemoteCheatFile (it has no URL) starts nothing and gives
+	// kUnsupportedCheatFileMessage at once (no on_loaded call).
 	Expected<void, std::string> Fetch(const RemoteCheatFile& file, CheatGame game);
 	void                        Cancel();
 

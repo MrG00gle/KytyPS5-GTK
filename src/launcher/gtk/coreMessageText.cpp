@@ -417,13 +417,14 @@ CoreText CheatProblemText(const core::CheatProblem& problem) {
 			    Text(N_("This JSON uses module-specific cheats, which are not supported yet."));
 			break;
 		case CheatProblemKind::AddressingFeatures:
-			reason =
-			    Text(N_("This JSON uses memory addressing features that are not supported yet."));
+			reason = Text(
+			    N_("This cheat file uses memory addressing features that are not supported yet."));
 			break;
 		case CheatProblemKind::UnsupportedMemory:
 			// TRANSLATORS: %s is the name of a cheat.
 			reason = Text(N_("Unsupported memory entries in cheat \"%s\"."), {problem.detail});
 			break;
+		case CheatProblemKind::InvalidXml: reason = Text(N_("Invalid cheat XML.")); break;
 	}
 	if (problem.file.empty()) {
 		return reason;

@@ -12,6 +12,7 @@
 #include "launcher/core/archiveJob.h"
 #include "launcher/core/atomicFile.h"
 #include "launcher/core/cheatCatalog.h"
+#include "launcher/core/cheatTrainer.h"
 #include "launcher/core/cheats.h"
 #include "launcher/core/compatibility.h"
 #include "launcher/core/configurationFields.h"
@@ -264,7 +265,9 @@ void TestCheatProblems() {
 	refused(WithMod(R"({"name":"m"})"), "PPSA01234", "01.000", "eboot.bin", "unsupported memory");
 	check(*kyty::core::ValidateRemoteImport({}, "PPSA01234", "01.000", "eboot.bin"),
 	      "a document without JSON");
-	for (int kind = 0; kind <= static_cast<int>(CheatProblemKind::UnsupportedMemory); kind++) {
+	check(kyty::core::ParseCheatTrainer("<Other/>", false, "PPSA01234_01.000_a.shn").error(),
+	      "a trainer that is not XML");
+	for (int kind = 0; kind <= static_cast<int>(CheatProblemKind::InvalidXml); kind++) {
 		Check(seen.count(static_cast<CheatProblemKind>(kind)) == 1,
 		      "CheatProblemKind " + std::to_string(kind) + " was shown");
 	}

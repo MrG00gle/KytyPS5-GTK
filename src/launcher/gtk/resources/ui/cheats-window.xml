@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- The cheats window (task 21.4, plan D43, LFI-27): the Remote view (the credit link, the HEN
      Cheats Collection files of the game with version, format, and file, a preview of the selected
-     JSON file, Refresh, and Import to Local) and the Local view (the cheats of the game's local
+     file, Refresh, and Import to Local) and the Local view (the cheats of the game's local
      cheat file with check boxes, Reload, Apply selection, Enable all, and Disable all).
      cheatsWindow.cpp fills the lists, the status lines, and the credit link. -->
 <interface domain="kyty-launcher">
@@ -67,7 +67,7 @@
                         </child>
                         <child>
                           <object class="GtkLabel">
-                            <property name="label" translatable="yes">Only JSON cheats are supported. MC4 and SHN files are shown disabled. Select a JSON file to preview its cheats.</property>
+                            <property name="label" translatable="yes">Select a file to preview its cheats.</property>
                             <property name="xalign">0</property>
                             <property name="wrap">True</property>
                             <style>

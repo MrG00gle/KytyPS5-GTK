@@ -7,11 +7,12 @@
 //
 // Remote view: the credit link (core::kHenCheatsRepository through DesktopLauncher::OpenUri), the
 // HEN Cheats Collection files of the game's title ID (core::CheatCatalog, the installed version's
-// files first through core::PutInstalledVersionFirst) with version, format, and file name, MC4 and
-// SHN files disabled with "<title> — <FORMAT> is not supported." as the tooltip, and the status
-// line (the number of files, or none, and the indexes that could not be loaded with "Use Refresh
-// to retry."). Selecting a JSON file previews it (core::RemoteCheats::Fetch with the game's title
-// ID, version, and executable): its cheats, name, credits, and version, and why it cannot be
+// files first through core::PutInstalledVersionFirst) with version, format, and file name, the
+// collection's title of the file as the tooltip, and the status line (the number of files, or
+// none, and the indexes that could not be loaded with "Use Refresh to retry."). Selecting a file
+// previews it (core::RemoteCheats::Fetch with the game's title ID, version, and executable; MC4
+// and SHN files converted to cheat JSON as upstream KytyPS5 commit 91c5820c does): its cheats,
+// name, credits, and version, and why it cannot be
 // imported when it does not download, parse, or match the game; Import to Local is enabled only
 // for an importable file and again disabled after a failure. Refresh cancels a pending preview and
 // loads the list again. Import to Local (core::ImportRemoteCheats: _Patches/<TITLE_ID>.json with
