@@ -75,10 +75,10 @@ void TestList() {
 void TestMessages() {
 	const fs::path folder = "/media/addons";
 	Check(kyty::core::AdditionalContentMessage(AdditionalContentStatus::Listed, folder, 1) ==
-	          "1 installed add-on(s)",
+	          "1 add-on(s)",
 	      "one item");
 	Check(kyty::core::AdditionalContentMessage(AdditionalContentStatus::Listed, folder, 12) ==
-	          "12 installed add-on(s)",
+	          "12 add-on(s)",
 	      "twelve items");
 	Check(kyty::core::AdditionalContentMessage(AdditionalContentStatus::FolderNotSet, {}, 0) ==
 	          "No add-ons folder is set. Open Global settings and set the Add-ons folder to the "
@@ -139,7 +139,7 @@ void TestLoad() {
 	           "SCE_SYS/PARAM.JSON");
 	const auto listed = kyty::core::LoadAdditionalContent(folder, " ppsa01234 ");
 	Check(listed.status == AdditionalContentStatus::Listed && listed.folder_exists &&
-	          listed.message == "3 installed add-on(s)",
+	          listed.message == "3 add-on(s)",
 	      "three add-ons listed: " + listed.message);
 	Check(Titles(listed.items) ==
 	          std::vector<std::string> {"COSTUMEPACK00002", "Season Pass", "Upper"},
@@ -154,12 +154,112 @@ void TestLoad() {
 	const auto link = temp.MakeSymlink(folder, "linked-addons");
 	const auto one  = kyty::core::LoadAdditionalContent(link, "PPSA09999");
 	Check(one.status == AdditionalContentStatus::Listed && one.folder_exists &&
-	          one.message == "1 installed add-on(s)" &&
+	          one.message == "1 add-on(s)" &&
 	          Titles(one.items) == std::vector<std::string> {"Other game"},
 	      "a link to the add-ons folder is followed");
 	const auto empty_title = kyty::core::LoadAdditionalContent(folder, "  ");
 	Check(empty_title.status == AdditionalContentStatus::NoItems && empty_title.items.empty(),
 	      "an empty title ID has no add-ons");
+}
+
+// The entries of upstream's user add-ons: their parts, the form --addcont accepts, the entry the
+// add-ons window makes (upstream's AdditionalContentDialog::Add), and the list edits.
+void TestUserAddOnEntries() {
+	using kyty::core::UserAddOnError;
+	Check(kyty::core::UserAddOnLabel("SEASONPASS000001=/dlc/a=b") == "SEASONPASS000001" &&
+	          kyty::core::UserAddOnDirectory("SEASONPASS000001=/dlc/a=b") == "/dlc/a=b" &&
+	          kyty::core::UserAddOnLabel("LICENSE000000001") == "LICENSE000000001" &&
+	          kyty::core::UserAddOnDirectory("LICENSE000000001").empty(),
+	      "the label is before the first '=' and the folder after it");
+	for (const std::string_view entry:
+	     {"LICENSE000000001", "SEASONPASS000001=/dlc", "0123456789ABCDEF=relative/dir"}) {
+		Check(kyty::core::IsUserAddOnEntry(entry), "accepted: " + std::string(entry));
+	}
+	for (const std::string_view entry:
+	     {"", "SHORT", "lowercase0000000", "LICENSE0000000001", "LICENSE00000000_",
+	      "LICENSE000000001=", "=/dlc", " LICENSE000000001", "LICENSE00000000\xC3\x89"}) {
+		Check(!kyty::core::IsUserAddOnEntry(entry), "rejected: '" + std::string(entry) + "'");
+	}
+
+	const KytyTests::TempDir temp("kyty_user_addons");
+	const auto               data = temp.Path() / "dlc data";
+	fs::create_directories(data);
+	const auto license = kyty::core::MakeUserAddOn("  LICENSE000000001\t", "  ");
+	Check(license && *license == "LICENSE000000001", "a license only: the trimmed label");
+	const auto content_id =
+	    kyty::core::MakeUserAddOn("UP0000-PPSA01234_00-SEASONPASS000001", data.string() + "/");
+	Check(content_id && *content_id == "SEASONPASS000001=" + data.string(),
+	      "a content ID gives its label; the folder without its trailing separator");
+	const auto dotted = kyty::core::MakeUserAddOn("SEASONPASS000001",
+	                                              (data / ".." / "dlc data" / "." / "").string());
+	Check(dotted && *dotted == "SEASONPASS000001=" + data.string(),
+	      "the folder is made lexically normal");
+	const auto relative = kyty::core::MakeUserAddOn("SEASONPASS000001", ".");
+	Check(relative && *relative == "SEASONPASS000001=" + fs::current_path().string(),
+	      "a relative folder is made absolute");
+	const auto file = temp.WriteFile("not-a-folder", "x");
+	Check(kyty::core::MakeUserAddOn("SEASONPASS000001", file.string()).error() ==
+	              UserAddOnError::MissingFolder &&
+	          kyty::core::MakeUserAddOn("SEASONPASS000001", (temp.Path() / "missing").string())
+	                  .error() == UserAddOnError::MissingFolder,
+	      "the data folder must be an existing directory");
+	for (const std::string_view label:
+	     {"", "SHORT", "seasonpass000001", "UP0000-PPSA01234_00-", "SEASONPASS0000012"}) {
+		Check(kyty::core::MakeUserAddOn(label, data.string()).error() ==
+		          UserAddOnError::InvalidLabel,
+		      "an invalid label: '" + std::string(label) + "'");
+	}
+
+	std::vector<std::string> entries = {"LICENSE000000001", "SEASONPASS000001=/old"};
+	kyty::core::AddUserAddOn(entries, "SEASONPASS000001=/new");
+	kyty::core::AddUserAddOn(entries, "COSTUMEPACK00002");
+	Check(entries == std::vector<std::string> {"LICENSE000000001", "SEASONPASS000001=/new",
+	                                           "COSTUMEPACK00002"},
+	      "an entry replaces the one with its label and goes to the end");
+	Check(kyty::core::RemoveUserAddOn(entries, "SEASONPASS000001=/new") &&
+	          !kyty::core::RemoveUserAddOn(entries, "SEASONPASS000001=/new") &&
+	          !kyty::core::RemoveUserAddOn(entries, "LICENSE000000001=/x") &&
+	          entries == std::vector<std::string> {"LICENSE000000001", "COSTUMEPACK00002"},
+	      "Remove takes the equal entry only");
+}
+
+// LoadAdditionalContent lists the user add-ons after the packages, with the data folder's state,
+// and counts them in the status.
+void TestLoadUserAddOns() {
+	const KytyTests::TempDir temp("kyty_user_addons_load");
+	const auto               data    = temp.Path() / "data";
+	const auto               missing = temp.Path() / "missing";
+	fs::create_directories(data);
+	const std::vector<std::string> user = {"LICENSE000000001", "SEASONPASS000001=" + data.string(),
+	                                       "COSTUMEPACK00002=" + missing.string(), "not an entry"};
+
+	const auto not_set = kyty::core::LoadAdditionalContent({}, "PPSA01234", user);
+	Check(not_set.status == AdditionalContentStatus::Listed && !not_set.folder_exists &&
+	          not_set.message == "4 add-on(s)" && not_set.items.size() == 4,
+	      "user add-ons are listed without an add-ons folder: " + not_set.message);
+	Check(not_set.items[0] ==
+	              AdditionalContentItem {"LICENSE000000001", "", "", "LICENSE000000001", false} &&
+	          not_set.items[1] == AdditionalContentItem {"SEASONPASS000001", "", data,
+	                                                     "SEASONPASS000001=" + data.string(),
+	                                                     false} &&
+	          not_set.items[2] == AdditionalContentItem {"COSTUMEPACK00002", "", missing,
+	                                                     "COSTUMEPACK00002=" + missing.string(),
+	                                                     true} &&
+	          not_set.items[3].display_title == "not an entry" &&
+	          not_set.items[3].user_entry == "not an entry",
+	      "each entry as stored, with its label, folder, and whether the folder is missing");
+
+	const fs::path addons = "addons";
+	WriteAddOn(temp, addons / "dlc1", "PPSA01234", "SEASONPASS000001", "Season Pass");
+	const auto both =
+	    kyty::core::LoadAdditionalContent(temp.Path() / addons, "PPSA01234", {user.data(), 1});
+	Check(both.status == AdditionalContentStatus::Listed && both.message == "2 add-on(s)" &&
+	          Titles(both.items) == std::vector<std::string> {"Season Pass", "LICENSE000000001"} &&
+	          both.items[0].user_entry.empty(),
+	      "the packages first, then the user add-ons");
+	const auto none = kyty::core::LoadAdditionalContent(temp.Path() / "empty", "PPSA01234", {});
+	Check(none.status == AdditionalContentStatus::FolderMissing && none.items.empty(),
+	      "without user add-ons the folder's status stays");
 }
 
 } // namespace
@@ -169,6 +269,8 @@ int main() {
 	TestList();
 	TestMessages();
 	TestLoad();
+	TestUserAddOnEntries();
+	TestLoadUserAddOns();
 	std::printf("AdditionalContentTests: all tests passed\n");
 	return 0;
 }

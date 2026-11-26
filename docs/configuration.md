@@ -129,6 +129,14 @@ These fields exist only in a game's own settings:
 When the launcher starts a game, it also passes `--game-patch <data directory>/_Patches/<TITLE_ID>.json`
 when the game has a cheat file there.
 
+A game's own add-ons, which **Additional content…** in the game menu adds and removes, are stored
+under the game's title ID in the `[AdditionalContent]` group, as the upstream launcher stores them:
+`<TITLE_ID>` is a list of entries, each `<label>` for a license only or `<label>=<folder>` for an
+add-on with its data in that folder (`<label>` is the add-on's 16-character entitlement label).
+The launcher passes each entry as `--addcont <entry>`, after `--addcont-dir`. The emulator does not
+start while an entry names a folder that does not exist; the add-ons window shows such an entry as
+"Data folder not found".
+
 ## Other launcher settings
 
 | Key | Group | Default | Meaning |

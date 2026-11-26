@@ -2077,7 +2077,7 @@ KYTY_UI_CASE(lfi_28) {
 		KytyUi::WaitFor(
 		    [&]() { return kyty_additional_content_window_is_loaded(addons) && listed(); }, 5000,
 		    "the add-on to be listed");
-		Check(KytyUi::AllText(root).find("1 installed add-on") != std::string::npos,
+		Check(KytyUi::AllText(root).find("1 add-on") != std::string::npos,
 		      "the status line counts the add-on");
 		Check(KytyUi::Activate(KytyUi::FindByBuildableId(root, "refresh_button")),
 		      "a click on Refresh");

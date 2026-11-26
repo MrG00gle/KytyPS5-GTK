@@ -1,5 +1,6 @@
 #include "launcher/core/emulatorArguments.h"
 
+#include "launcher/core/additionalContentModel.h"
 #include "launcher/core/cheats.h"
 #include "launcher/core/configurationFields.h"
 #include "launcher/core/gameConfiguration.h"
@@ -118,6 +119,11 @@ std::vector<std::string> BuildEmulatorArguments(const GameEntry&              en
 	args.Value("--game", whole_entry ? entry.path.string() : (entry.path / config.elf).string());
 	if (!effective.addons_dir.empty()) {
 		args.Value("--addcont-dir", effective.addons_dir);
+	}
+	for (const auto& addon: effective.user_addons) {
+		if (IsUserAddOnEntry(addon)) {
+			args.Value("--addcont", addon);
+		}
 	}
 	if (effective.cheat_plan) {
 		args.Value("--game-patch", effective.cheat_plan->string());

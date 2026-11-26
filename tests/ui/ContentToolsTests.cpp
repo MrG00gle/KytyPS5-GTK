@@ -12,7 +12,8 @@
 // - Trophies (11.1, 11.2, LFI-25, LFI-26): content_trophy_viewer, content_trophy_details,
 //   content_trophy_overview, content_trophy_overview_alignment (W4-20),
 //   content_trophy_overview_cancel (W4-16), trophy_overview_trims_titles (p7-u7-2).
-// - Add-ons (11.3, LFI-28): content_addons_list, content_addons_refresh_focused (W4-27).
+// - Add-ons (11.3, LFI-28): content_addons_list, content_addons_refresh_focused (W4-27),
+//   content_addons_user (upstream KytyPS5's user add-ons).
 // - Compression (11.8-11.11, 11.16, LFI-29): content_compress_progress_cancel,
 //   content_compress_verify_failed, content_compress_quit_midway (W4-17),
 //   compression_quit_after_main_window_closed and compression_quit_job_outlives_wait (p7-u7-2).
@@ -1147,7 +1148,7 @@ KYTY_UI_CASE(content_addons_list) {
 	std::sort(titles.begin(), titles.end());
 	Check(titles == std::vector<std::string> {"ALPHABONUSPACK01", "Alpha Soundtrack"},
 	      "Alpha Game's two add-ons, one by its entitlement label, none of Beta Quest");
-	Check(LabelText(root, "status_label") == "2 installed add-ons",
+	Check(LabelText(root, "status_label") == "2 add-ons",
 	      "the status counts them: " + LabelText(root, "status_label"));
 	Check(KytyUi::Capture(GTK_WINDOW(window), "listed"), "the listed add-ons render");
 	struct State {
@@ -1227,6 +1228,142 @@ KYTY_UI_CASE(content_addons_refresh_focused) {
 	Check(FirstNamed(root, ADW_TYPE_ACTION_ROW, "Alpha Soundtrack") != nullptr,
 	      "the add-on is listed after the refreshes");
 	KytyUi::CloseWithEscape(GTK_WINDOW(window), "the additional content window");
+}
+
+// Upstream KytyPS5's user add-ons: Add checks the label and the folder (the status says why and
+// the row is marked), takes a content ID's label and a folder from the chooser, and saves the
+// game's list to Kyty.ini ([AdditionalContent], by title ID); the rows follow the packages with
+// their state; Remove saves the list without the entry. A game without a title ID has none.
+KYTY_UI_CASE(content_addons_user) {
+	KytyUi::UiContext ui;
+	const auto        games = ContentLibrary(ui);
+	if (games.empty()) {
+		return;
+	}
+	const fs::path  data = ui.Root() / "user dlc";
+	std::error_code ec;
+	fs::create_directories(data, ec);
+	auto& context = ui.Context();
+	auto* window  = KYTY_ADDITIONAL_CONTENT_WINDOW(
+	    Present(GTK_WINDOW(kyty_additional_content_window_new(context, ui.ParentWindow(),
+	                                                          Entry(games, kAlphaTitle))),
+	            "the additional content window"));
+	if (window == nullptr) {
+		return;
+	}
+	GtkWidget* root   = GTK_WIDGET(window);
+	const auto loaded = [window]() { return kyty_additional_content_window_is_loaded(window); };
+	KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	GtkWidget* label_row  = Widget(root, "label_row");
+	GtkWidget* folder_row = Widget(root, "folder_row");
+	if (!Check(label_row != nullptr && folder_row != nullptr &&
+	               gtk_widget_is_sensitive(Widget(root, "add_group")) != FALSE,
+	           "the add form is offered for a game with a title ID")) {
+		return;
+	}
+	const auto stored = [&ui]() {
+		auto report = core::LoadSettings(ui.SettingsFile());
+		return report ? report->settings.user_addons
+		              : std::map<std::string, std::vector<std::string>> {};
+	};
+	const auto add = [&](const char* label, const std::string& folder) {
+		gtk_editable_set_text(GTK_EDITABLE(label_row), label);
+		gtk_editable_set_text(GTK_EDITABLE(folder_row), folder.c_str());
+		Check(KytyUi::Activate(Widget(root, "add_button")), "a click on Add");
+		KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	};
+	const std::string refused =
+	    "Enter a 16-character entitlement label (A-Z, 0-9) and an existing data folder, or no "
+	    "folder for a license only.";
+
+	// Refused: a short label, then a folder that does not exist; nothing is saved.
+	add("SHORT", "");
+	Check(LabelText(root, "status_label") == refused &&
+	          gtk_widget_has_css_class(label_row, "error") != FALSE &&
+	          gtk_widget_has_css_class(folder_row, "error") == FALSE,
+	      "a short label is refused: " + LabelText(root, "status_label"));
+	add("USERLICENSE00001", (ui.Root() / "missing").string());
+	Check(LabelText(root, "status_label") == refused &&
+	          gtk_widget_has_css_class(label_row, "error") == FALSE &&
+	          gtk_widget_has_css_class(folder_row, "error") != FALSE,
+	      "a missing data folder is refused");
+	Check(stored().empty() && context.settings.loaded.settings.user_addons.empty(),
+	      "nothing is saved");
+
+	// A license only, by the content ID's label.
+	add("UP0000-PPSA01001_00-USERLICENSE00001", "");
+	// An add-on with its data folder, chosen through the folder chooser.
+	gtk_editable_set_text(GTK_EDITABLE(label_row), "USERDATAPACK0001");
+	ui.Services().file_chooser.folder_answers.push_back({data});
+	Check(KytyUi::Activate(Widget(root, "choose_button")), "a click on the folder button");
+	KytyUi::WaitFor(
+	    [&]() { return data.string() == gtk_editable_get_text(GTK_EDITABLE(folder_row)); }, 3000,
+	    "the chosen folder in the data folder row");
+	const auto& calls = ui.Services().file_chooser.calls;
+	Check(!calls.empty() && calls.back() == "SelectFolders Select add-on data folder",
+	      "the chooser is titled Select add-on data folder");
+	Check(KytyUi::Activate(Widget(root, "add_button")), "a click on Add");
+	KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	const std::vector<std::string> expected = {"USERLICENSE00001",
+	                                           "USERDATAPACK0001=" + data.string()};
+	Check(stored() == std::map<std::string, std::vector<std::string>> {{"PPSA01001", expected}} &&
+	          context.settings.loaded.settings.user_addons.at("PPSA01001") == expected,
+	      "Kyty.ini holds the game's two user add-ons by its title ID");
+	Check(std::string(gtk_editable_get_text(GTK_EDITABLE(label_row))).empty() &&
+	          std::string(gtk_editable_get_text(GTK_EDITABLE(folder_row))).empty() &&
+	          gtk_widget_has_css_class(label_row, "error") == FALSE,
+	      "the form is empty after Add");
+	GtkWidget* license = FirstNamed(root, ADW_TYPE_ACTION_ROW, "USERLICENSE00001");
+	GtkWidget* pack    = FirstNamed(root, ADW_TYPE_ACTION_ROW, "USERDATAPACK0001");
+	Check(license != nullptr &&
+	          adw_action_row_get_subtitle(ADW_ACTION_ROW(license)) == std::string("License only") &&
+	          pack != nullptr &&
+	          adw_action_row_get_subtitle(ADW_ACTION_ROW(pack)) == "Data: " + data.string(),
+	      "the user add-ons' rows with their state");
+	Check(Named(root, ADW_TYPE_ACTION_ROW, "").size() == 3 &&
+	          LabelText(root, "status_label") == "3 add-ons",
+	      "the folder's add-on and the two user add-ons: " + LabelText(root, "status_label"));
+	Check(KytyUi::Capture(GTK_WINDOW(window), "user-add-ons"), "the user add-ons render");
+
+	// A stored data folder that is gone.
+	fs::remove(data, ec);
+	Check(KytyUi::Activate(Widget(root, "refresh_button")), "a click on Refresh");
+	KytyUi::WaitFor(loaded, 5000, "Refresh to list again");
+	pack = FirstNamed(root, ADW_TYPE_ACTION_ROW, "USERDATAPACK0001");
+	Check(pack != nullptr && adw_action_row_get_subtitle(ADW_ACTION_ROW(pack)) ==
+	                             "Data folder not found: " + data.string(),
+	      "a missing data folder is shown");
+
+	// Remove.
+	Check(KytyUi::Activate(KytyUi::FindByAccessibleLabel(root, "Remove USERLICENSE00001")),
+	      "a click on the license's Remove button");
+	KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	Check(stored() ==
+	              std::map<std::string, std::vector<std::string>> {
+	                  {"PPSA01001", {"USERDATAPACK0001=" + data.string()}}} &&
+	          FirstNamed(root, ADW_TYPE_ACTION_ROW, "USERLICENSE00001") == nullptr,
+	      "Remove saves the list without the license");
+	Check(KytyUi::Activate(KytyUi::FindByAccessibleLabel(root, "Remove USERDATAPACK0001")),
+	      "a click on the data pack's Remove button");
+	KytyUi::WaitFor(loaded, 5000, "the add-ons to be listed");
+	Check(stored().empty() && context.settings.loaded.settings.user_addons.empty() &&
+	          LabelText(root, "status_label") == "1 add-on",
+	      "the last Remove leaves no list for the game");
+	KytyUi::CloseWithEscape(GTK_WINDOW(window), "the additional content window");
+
+	// No title ID: no user add-ons.
+	auto untitled     = Entry(games, kAlphaTitle);
+	untitled.title_id = "  ";
+	auto* plain       = KYTY_ADDITIONAL_CONTENT_WINDOW(Present(
+	    GTK_WINDOW(kyty_additional_content_window_new(context, ui.ParentWindow(), untitled)),
+	    "the additional content window without a title ID"));
+	if (plain != nullptr) {
+		KytyUi::WaitFor([plain]() { return kyty_additional_content_window_is_loaded(plain); }, 5000,
+		                "the add-ons to be listed");
+		Check(gtk_widget_is_sensitive(Widget(GTK_WIDGET(plain), "add_group")) == FALSE,
+		      "the add form is off without a title ID");
+		KytyUi::CloseWithEscape(GTK_WINDOW(plain), "the additional content window");
+	}
 }
 
 // ---- Compression

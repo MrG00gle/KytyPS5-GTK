@@ -10,7 +10,9 @@
 // ParseOptions must accept them with status Run and options equal to the fields per the design's
 // mapping table. The Emulator reads a '\' in an --addcont-dir, --game, or --game-patch value as
 // '/' (Common::FixFilenameSlash in its option parser), so the add-ons directory is compared after
-// that replacement, and elf names on disk hold neither '\' nor NUL.
+// that replacement, and elf names on disk hold neither '\' nor NUL. User add-ons (upstream's
+// --addcont) are licenses only or have a data folder on disk; each valid entry reaches the
+// Emulator with its label and folder, in order.
 
 #include "common/archive.h"
 #include "common/emulatorConfig.h"
@@ -154,6 +156,40 @@ std::optional<Config::ControllerColor> ColorOf(const std::string& text) {
 	return color;
 }
 
+// The user add-ons of a case: the entries as stored, and the label and data folder of each valid
+// entry in order (what --addcont gives the Emulator).
+struct UserAddOnCase {
+	std::vector<std::string> stored;
+	std::vector<std::string> labels;
+	std::vector<std::string> folders; // "" for a license only
+};
+
+UserAddOnCase UserAddOns(const KytyTests::TempDir& dir) {
+	static const std::string_view         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+	static const std::vector<std::string> invalid  = {
+	    "", "SHORT", "lowercase0000000", "LICENSE0000000001", "LICENSE000000001=", "=folder"};
+	UserAddOnCase addons;
+	const int     count = OneIn(3) ? 0 : ConfigGen::Choose(1, 4);
+	for (int i = 0; i < count; i++) {
+		if (OneIn(5)) {
+			addons.stored.push_back(PickOf(invalid));
+			continue;
+		}
+		std::string label;
+		for (int j = 0; j < 16; j++) {
+			label += alphabet[ConfigGen::Choose<size_t>(0, alphabet.size())];
+		}
+		std::string folder;
+		if (OneIn(2)) {
+			folder = dir.MakeDirectories("addon " + std::to_string(i)).string();
+		}
+		addons.stored.push_back(folder.empty() ? label : label + "=" + folder);
+		addons.labels.push_back(label);
+		addons.folders.push_back(folder);
+	}
+	return addons;
+}
+
 std::string Joined(const std::vector<std::string>& args) {
 	std::string text;
 	for (const auto& arg: args) {
@@ -195,6 +231,11 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		if (with_invalid) {
 			config.host_input_mapping = WithInvalidEntries(config.host_input_mapping);
 		}
+
+		// User add-ons (upstream's --addcont): licenses only and add-ons whose data folder exists,
+		// with entries that --addcont would refuse mixed in (the arguments leave them out).
+		const auto user_addons = UserAddOns(dir);
+		effective.user_addons  = user_addons.stored;
 
 		const auto title = ConfigGen::TitleId();
 		if (kyty::core::IsCheatTitleId(title) && OneIn(2)) {
@@ -322,6 +363,11 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		auto addons = effective.addons_dir;
 		std::replace(addons.begin(), addons.end(), '\\', '/');
 		RC_ASSERT(parsed.addcont_dir.native() == addons);
+		RC_ASSERT(parsed.addcont.size() == user_addons.labels.size());
+		for (size_t i = 0; i < parsed.addcont.size(); i++) {
+			RC_ASSERT(parsed.addcont[i].entitlement_label == user_addons.labels[i]);
+			RC_ASSERT(parsed.addcont[i].mount_dir.native() == user_addons.folders[i]);
+		}
 		if (effective.cheat_plan) {
 			RC_ASSERT(effective.cheat_plan->native() ==
 			          kyty::core::CheatFilePath(dir.Path(), title).native());
@@ -335,5 +381,6 @@ KYTY_PROPERTY(21, "Emulator argument round trip") {
 		                                   : "directory, other elf");
 		RC_CLASSIFY(effective.cheat_plan.has_value(), "cheat plan");
 		RC_CLASSIFY(with_invalid, "invalid mapping entries dropped");
+		RC_CLASSIFY(!user_addons.labels.empty(), "user add-ons");
 	});
 }

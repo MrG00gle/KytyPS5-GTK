@@ -35,7 +35,9 @@ namespace kyty::core {
 //   settings editor lists them with FindInvalidMappingEntries);
 // - --game <entry.path> for an archive and for the elf "eboot.bin" (or an empty elf, as Qt);
 //   otherwise --game <entry.path>/<elf>;
-// - --addcont-dir for a non-empty addons_dir, and --game-patch for a cheat_plan;
+// - --addcont-dir for a non-empty addons_dir, then one --addcont per user add-on that is
+//   IsUserAddOnEntry (additionalContentModel.h), in order (upstream KytyPS5's launcher; the
+//   Emulator checks that a data folder exists), and --game-patch for a cheat_plan;
 // - never --redzone (Requirement 3.4).
 std::vector<std::string> BuildEmulatorArguments(const GameEntry&              entry,
                                                 const EffectiveConfiguration& effective);

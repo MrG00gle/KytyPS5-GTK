@@ -1406,6 +1406,65 @@ void TestResolveEffectiveConfiguration() {
 	    "an empty add-ons folder");
 }
 
+// [AdditionalContent] (upstream KytyPS5's launcher): each game's user add-ons by title ID, in
+// QSettings' string list form; the whole group is the schema's; the game's list goes into the
+// EffectiveConfiguration.
+void TestUserAddOns() {
+	const std::vector<std::string> alpha  = {"LICENSE000000001", "SEASONPASS000001=/dlc/season"};
+	const auto                     report = LoadEdited("qt6-portable.ini", [](IniFile& file) {
+		// As upstream's QSettings writes them: a list, and a one-element list as a string.
+		file.SetRaw("AdditionalContent/PPSA01234",
+		            "LICENSE000000001, \"SEASONPASS000001=/dlc/season\"");
+		file.SetRaw("AdditionalContent/PPSA05678", "\"COSTUMEPACK00002=/dlc/costume\"");
+		file.SetRaw("AdditionalContent/PPSA09999", "@Invalid()");
+		file.SetRaw("AdditionalContent/PPSA00001", "@ByteArray(x)");
+		file.SetString("AdditionalContent/PPSA02222/below", "BELOWKEY00000001");
+	});
+	const auto&                    s      = report.settings;
+	Check(s.user_addons ==
+	          std::map<std::string, std::vector<std::string>> {
+	              {"PPSA01234", alpha}, {"PPSA05678", {"COSTUMEPACK00002=/dlc/costume"}}},
+	      "the lists of two games; an empty list is no add-on");
+	CheckDefaulted(report, {"AdditionalContent/PPSA00001"}, "an opaque value is reported");
+	Check(std::none_of(
+	          s.unknown.Entries().begin(), s.unknown.Entries().end(),
+	          [](const auto& entry) { return entry.first.starts_with("AdditionalContent"); }),
+	      "no key of the group is unknown");
+
+	const auto saved = IniFile::Parse(kyty::core::SerializeSettings(s));
+	Check(
+	    saved.GetRaw("AdditionalContent/PPSA01234") ==
+	            std::optional<std::string>("LICENSE000000001, \"SEASONPASS000001=/dlc/season\"") &&
+	        saved.GetRaw("AdditionalContent/PPSA05678") ==
+	            std::optional<std::string>("\"COSTUMEPACK00002=/dlc/costume\"") &&
+	        !saved.Find("AdditionalContent/PPSA09999") &&
+	        !saved.Find("AdditionalContent/PPSA00001") &&
+	        !saved.Find("AdditionalContent/PPSA02222/below"),
+	    "the save writes the two lists in QSettings' form, and only them");
+	Check(kyty::core::ParseSettings(kyty::core::SerializeSettings(s)).settings == s,
+	      "the save loads back");
+
+	auto changed                     = s;
+	changed.user_addons["PPSA05678"] = {};
+	changed.user_addons.erase("PPSA01234");
+	const auto empty = IniFile::Parse(kyty::core::SerializeSettings(changed));
+	Check(std::none_of(
+	          empty.Entries().begin(), empty.Entries().end(),
+	          [](const auto& entry) { return entry.first.starts_with("AdditionalContent"); }),
+	      "a game without add-ons has no key, and no game leaves no group");
+
+	auto game     = Entry("/games/PPSA01234");
+	game.title_id = " ppsa01234 ";
+	Check(kyty::core::ResolveEffectiveConfiguration(s, game, std::nullopt).user_addons == alpha,
+	      "the game's list by its normalized title ID");
+	game.title_id = "PPSA07777";
+	Check(kyty::core::ResolveEffectiveConfiguration(s, game, std::nullopt).user_addons.empty(),
+	      "a game without a list");
+	game.title_id = "  ";
+	Check(kyty::core::ResolveEffectiveConfiguration(s, game, std::nullopt).user_addons.empty(),
+	      "a game without a title ID");
+}
+
 } // namespace
 
 int main() {
@@ -1428,6 +1487,7 @@ int main() {
 	TestInvalidStoredMapping();
 	TestMigrateLegacyGamePaths();
 	TestResolveEffectiveConfiguration();
+	TestUserAddOns();
 	std::puts("SettingsStoreTests: all tests passed");
 	return 0;
 }
