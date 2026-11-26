@@ -29,7 +29,9 @@ constexpr float kMaxMouseSensitivity = 5.0f;
 using S = InputSection;
 
 // The Qt editor's PAD_CONTROLS: id, label, keyboard label, keyboard default, pad default, on the
-// Gamepad tab, pad-mappable in the Emulator (every control but the stick directions), section.
+// Gamepad tab, pad-mappable in the Emulator (every control but the stick directions and the touch
+// pad swipes), section. The touch pad swipes are upstream KytyPS5's (commit 5b454a61): keys only,
+// without a default.
 constexpr std::array kControls = {
     InputControl {"Cross", "Cross", "Cross", "J", "South", true, true, S::Face},
     InputControl {"Circle", "Circle", "Circle", "L", "East", true, true, S::Face},
@@ -56,6 +58,14 @@ constexpr std::array kControls = {
                   true, S::System},
     InputControl {"TouchPadMode", "Emulated touch pad mode", "Emulated touch pad mode", "F6", "",
                   true, true, S::System},
+    InputControl {"TouchPadSwipeUp", "Touch pad swipe up", "Touch pad swipe up", "", "", false,
+                  false, S::System},
+    InputControl {"TouchPadSwipeDown", "Touch pad swipe down", "Touch pad swipe down", "", "",
+                  false, false, S::System},
+    InputControl {"TouchPadSwipeLeft", "Touch pad swipe left", "Touch pad swipe left", "", "",
+                  false, false, S::System},
+    InputControl {"TouchPadSwipeRight", "Touch pad swipe right", "Touch pad swipe right", "", "",
+                  false, false, S::System},
     InputControl {"LeftStickUp", "Up", "Up", "W", "", false, false, S::LeftStick},
     InputControl {"LeftStickDown", "Down", "Down", "S", "", false, false, S::LeftStick},
     InputControl {"LeftStickLeft", "Left", "Left", "A", "", false, false, S::LeftStick},

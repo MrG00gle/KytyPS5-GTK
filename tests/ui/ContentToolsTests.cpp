@@ -22,6 +22,7 @@
 //   W4-23, p7-u7-1), content_cheats_apply_enable_disable, cheats_version_column_font_change
 //   (p7-u7-3), cheats_split_position_states (phase 8 plan D12).
 // - Input mapping (11.14, LFI-24): content_input_mapping_capture (key, mouse, and pad),
+//   content_input_mapping_swipes (upstream KytyPS5's touch pad swipes),
 //   content_input_mapping_per_game, content_input_mapping_per_game_note (W4-14),
 //   content_input_mapping_markup (W4-13, a translated section title with "<" and "&" through a
 //   catalog the case writes), content_controller_preview (the pressed-state highlight, 11.11's
@@ -2385,6 +2386,58 @@ KYTY_UI_CASE(content_input_mapping_capture) {
 
 // The per-game editor (11.14): Save gives the game its own mapping (the global one unchanged);
 // reopened, the editor says so, and Use global mapping makes the game use the global one again.
+// Upstream KytyPS5's touch pad swipes: four System rows on the Keyboard and mouse tab, without a
+// default key and not on the Gamepad tab; a captured key is saved under the Emulator's name.
+KYTY_UI_CASE(content_input_mapping_swipes) {
+	KytyUi::UiContext ui;
+	if (ContentLibrary(ui).empty()) {
+		return;
+	}
+	auto* editor = OpenEditor(ui, nullptr);
+	if (editor == nullptr) {
+		return;
+	}
+	GtkWidget* root = GTK_WIDGET(editor);
+	kyty_input_mapping_window_show_tab(editor, "gamepad");
+	KytyUi::WaitForPaintedFrame(root);
+	for (GtkWidget* button: MappedBindings(root)) {
+		GtkWidget* row = gtk_widget_get_ancestor(button, ADW_TYPE_ACTION_ROW);
+		Check(row == nullptr || !KytyUi::WidgetText(row).starts_with("Touch pad swipe"),
+		      "the Gamepad tab has no swipe row");
+	}
+	kyty_input_mapping_window_show_tab(editor, "keyboard");
+	KytyUi::WaitForPaintedFrame(root);
+	for (const char* title: {"Touch pad swipe up", "Touch pad swipe down", "Touch pad swipe left",
+	                         "Touch pad swipe right"}) {
+		GtkWidget* button = BindingOf(root, title);
+		GtkWidget* group  = button != nullptr
+		                        ? gtk_widget_get_ancestor(button, ADW_TYPE_PREFERENCES_GROUP)
+		                        : nullptr;
+		Check(group != nullptr && adw_preferences_group_get_title(ADW_PREFERENCES_GROUP(group)) ==
+		                              std::string("System"),
+		      std::string(title) + " is a System row");
+	}
+	Check(Bound(editor, core::InputDevice::KeyboardMouse, "TouchPadSwipeUp").empty(),
+	      "a swipe has no default key");
+	GtkWidget* up = BindingOf(root, "Touch pad swipe up");
+	Capture(up, [](KytyBindingCaptureDialog* capture) {
+		Check(kyty_binding_capture_dialog_handle_key(capture, GDK_KEY_u, GdkModifierType(0)) !=
+		          FALSE,
+		      "the capture takes U");
+	});
+	Check(Bound(editor, core::InputDevice::KeyboardMouse, "TouchPadSwipeUp") == "U",
+	      "Touch pad swipe up is bound to U (" +
+	          Bound(editor, core::InputDevice::KeyboardMouse, "TouchPadSwipeUp") + ")");
+	// The rows in sight: the focus scrolls the binding into view.
+	gtk_widget_grab_focus(up);
+	KytyUi::WaitForPaintedFrame(root);
+	Check(KytyUi::Capture(GTK_WINDOW(editor), "keyboard-swipes"), "the editor renders");
+	SaveEditor(editor);
+	const auto stored = KytyUi::StoredSettings(ui).global.host_input_mapping;
+	Check(std::find(stored.begin(), stored.end(), "TouchPadSwipeUp=U") != stored.end(),
+	      "Save writes TouchPadSwipeUp=U");
+}
+
 KYTY_UI_CASE(content_input_mapping_per_game) {
 	KytyUi::UiContext ui;
 	const auto        games = ContentLibrary(ui);

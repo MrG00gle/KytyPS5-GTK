@@ -89,6 +89,8 @@ the four old values. **Global settings** offers the presets 1280 × 720, 1920 ×
 and height. Relative paths in `shader_log_folder`, `command_buffer_dump_folder`, and
 `printf_output_file` are relative to the data directory. **Input mapping** in the main menu edits the
 global `host_input_mapping`; the game menu's **Edit game input mapping…** edits a game's own list.
+Its keyboard tab can also bind keys to touch pad swipes (`TouchPadSwipeUp`, `TouchPadSwipeDown`,
+`TouchPadSwipeLeft`, and `TouchPadSwipeRight`), which have no default key and no gamepad binding.
 
 Older files can contain `shader_optimization_type`. The launcher no longer uses or passes it, and
 keeps an existing value in `Kyty.ini` unchanged.
